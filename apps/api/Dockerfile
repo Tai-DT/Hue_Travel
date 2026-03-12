@@ -1,34 +1,35 @@
 # ============================================
-# Huế Travel API — Multi-stage Dockerfile
+# Huế Travel API — Multi-stage Docker Build
 # ============================================
 
-# Stage 1: Build
-FROM golang:1.22-alpine AS builder
+# ---- Build Stage ----
+FROM golang:1.24-alpine AS builder
 
-RUN apk add --no-cache git ca-certificates tzdata
+RUN apk add --no-cache git ca-certificates
 
 WORKDIR /app
 
+# Cache dependencies
 COPY go.mod go.sum ./
 RUN go mod download
 
+# Build
 COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /bin/server ./cmd/server
 
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /bin/api ./cmd/server/
+# ---- Run Stage ----
+FROM alpine:3.20
 
-# Stage 2: Run
-FROM alpine:3.19
-
-RUN apk add --no-cache ca-certificates tzdata curl
-
-COPY --from=builder /bin/api /bin/api
-COPY --from=builder /app/internal/migration /app/migration
-
+RUN apk add --no-cache ca-certificates tzdata
 ENV TZ=Asia/Ho_Chi_Minh
+
+WORKDIR /app
+COPY --from=builder /bin/server /app/server
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --retries=3 \
+  CMD wget -q --spider http://localhost:8080/api/v1/health || exit 1
 
 EXPOSE 8080
 
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-  CMD curl -f http://localhost:8080/health || exit 1
-
-ENTRYPOINT ["/bin/api"]
+ENTRYPOINT ["/app/server"]

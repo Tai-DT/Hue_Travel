@@ -1,6 +1,16 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, lazy, Suspense } from 'react';
+
+const UsersPage = lazy(() => import('./users/page'));
+const BookingsPage = lazy(() => import('./bookings/page'));
+const ExperiencesPage = lazy(() => import('./experiences/page'));
+
+const PageFallback = () => (
+  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 400, color: 'var(--text-muted)' }}>
+    ⏳ Đang tải trang...
+  </div>
+);
 
 type NavItem = {
   icon: string;
@@ -135,6 +145,14 @@ export default function AdminDashboard() {
 
         {/* Page Content */}
         <div className="page-content">
+          {activePage === 'users' ? (
+            <Suspense fallback={<PageFallback />}><UsersPage /></Suspense>
+          ) : activePage === 'bookings' ? (
+            <Suspense fallback={<PageFallback />}><BookingsPage /></Suspense>
+          ) : activePage === 'experiences' ? (
+            <Suspense fallback={<PageFallback />}><ExperiencesPage /></Suspense>
+          ) : (
+          <>
           {/* Stats Grid */}
           <div className="stats-grid">
             {STATS.map((stat, i) => (
@@ -273,6 +291,8 @@ export default function AdminDashboard() {
               </div>
             </div>
           </div>
+          </>
+          )}
         </div>
       </main>
     </div>
