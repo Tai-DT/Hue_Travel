@@ -55,6 +55,29 @@ class ApiService {
     }
   }
 
+  async uploadFile(file: { uri: string; name: string; type: string }, folder: string = 'uploads') {
+    const formData = new FormData();
+    formData.append('file', {
+      uri: file.uri,
+      name: file.name,
+      type: file.type,
+    } as any);
+    formData.append('folder', folder);
+
+    try {
+      const response = await fetch(`${API_BASE}/upload`, {
+        method: 'POST',
+        headers: {
+          ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
+        },
+        body: formData,
+      });
+      return await response.json();
+    } catch {
+      return { success: false, error: { code: 'HT-NET-001', message: 'Upload thất bại' } };
+    }
+  }
+
   // ---- Auth ----
   async sendOTP(phone: string) {
     return this.request('/auth/otp/send', {
@@ -83,6 +106,19 @@ class ApiService {
     });
   }
 
+  async refreshToken() {
+    return this.request<{
+      token: string;
+      refresh_token: string;
+      expires_in: number;
+      user: User;
+    }>('/auth/refresh', { method: 'POST' });
+  }
+
+  async logout() {
+    return this.request('/auth/logout', { method: 'POST' });
+  }
+
   // ---- Experiences ----
   async getExperiences(params?: {
     category?: string;
@@ -106,6 +142,10 @@ class ApiService {
     return this.request<Experience>(`/experiences/${id}`);
   }
 
+  async deleteExperience(id: string) {
+    return this.request(`/experiences/${id}`, { method: 'DELETE' });
+  }
+
   // ---- Bookings ----
   async createBooking(data: {
     experience_id: string;
@@ -125,9 +165,48 @@ class ApiService {
     return this.request(`/bookings${query}`);
   }
 
+  async getBooking(id: string) {
+    return this.request(`/bookings/${id}`);
+  }
+
+  async cancelBooking(id: string, reason?: string) {
+    return this.request(`/bookings/${id}/cancel`, {
+      method: 'POST',
+      body: { reason },
+    });
+  }
+
+  async confirmBooking(id: string) {
+    return this.request(`/bookings/${id}/confirm`, { method: 'POST' });
+  }
+
+  async completeBooking(id: string) {
+    return this.request(`/bookings/${id}/complete`, { method: 'POST' });
+  }
+
+  async getGuideBookings(status?: string, page?: number) {
+    const params = new URLSearchParams();
+    if (status) params.set('status', status);
+    if (page) params.set('page', String(page));
+    const query = params.toString();
+    return this.request(`/bookings/guide/me${query ? '?' + query : ''}`);
+  }
+
   // ---- User ----
   async getMe() {
     return this.request<{ user: User }>('/me');
+  }
+
+  async updateProfile(data: {
+    full_name: string;
+    bio?: string;
+    avatar_url?: string;
+    languages?: string[];
+  }) {
+    return this.request<{ user: User; message: string }>('/me', {
+      method: 'PUT',
+      body: data,
+    });
   }
 
   // ---- Places ----
@@ -311,6 +390,29 @@ class ApiService {
       method: 'POST',
       body: data,
     });
+  }
+
+  // ---- Search ----
+  async search(query: string, filters?: {
+    type?: string;
+    category?: string;
+    min_price?: number;
+    max_price?: number;
+    limit?: number;
+  }) {
+    const params = new URLSearchParams({ q: query });
+    if (filters?.type) params.set('type', filters.type);
+    if (filters?.category) params.set('category', filters.category);
+    if (filters?.limit) params.set('limit', String(filters.limit));
+    return this.request(`/search?${params}`);
+  }
+
+  async searchSuggest(query: string) {
+    return this.request<string[]>(`/search/suggest?q=${encodeURIComponent(query)}`);
+  }
+
+  async getTrending() {
+    return this.request<string[]>('/search/trending');
   }
 }
 
@@ -500,9 +602,8 @@ class WebSocketService {
   private reconnectTimer: NodeJS.Timeout | null = null;
   private userId: string | null = null;
 
-  connect(userId: string) {
-    this.userId = userId;
-    this.ws = new WebSocket(`${WS_BASE}?user_id=${userId}`);
+  connect(token: string) {
+    this.ws = new WebSocket(`${WS_BASE}?token=${encodeURIComponent(token)}`);
 
     this.ws.onopen = () => {
       console.log('🟢 WebSocket connected');

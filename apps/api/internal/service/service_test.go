@@ -250,3 +250,189 @@ func TestFormatVND(t *testing.T) {
 		}
 	}
 }
+
+// ============================================
+// SMS Service Tests
+// ============================================
+
+func TestSMSService_NotConfigured(t *testing.T) {
+	svc := NewSMSService("", "", "")
+	if svc.IsConfigured() {
+		t.Error("expected not configured without keys")
+	}
+}
+
+func TestSMSService_SendOTP_MockMode(t *testing.T) {
+	svc := NewSMSService("", "", "HueTravel")
+
+	// Should NOT error in mock mode
+	err := svc.SendOTP("0901234567", "123456")
+	if err != nil {
+		t.Errorf("expected no error in mock mode, got: %v", err)
+	}
+}
+
+func TestSMSService_SendNotification_MockMode(t *testing.T) {
+	svc := NewSMSService("", "", "HueTravel")
+
+	err := svc.SendNotification("0901234567", "Booking đã xác nhận")
+	if err != nil {
+		t.Errorf("expected no error in mock mode, got: %v", err)
+	}
+}
+
+func TestSMSService_GetBalance_NotConfigured(t *testing.T) {
+	svc := NewSMSService("", "", "")
+	balance, err := svc.GetBalance()
+	if err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+	if balance != 0 {
+		t.Errorf("expected 0 balance when not configured, got %d", balance)
+	}
+}
+
+// ============================================
+// File Upload Service Tests
+// ============================================
+
+func TestFileUploadService_NotConfigured(t *testing.T) {
+	svc := NewFileUploadService("", "", "", "", false)
+	if svc.client != nil {
+		t.Error("expected nil client when not configured")
+	}
+}
+
+func TestFileUploadService_ValidateUpload(t *testing.T) {
+	svc := NewFileUploadService("", "", "", "", false)
+
+	tests := []struct {
+		name         string
+		filename     string
+		size         int64
+		allowedTypes []string
+		wantErr      bool
+	}{
+		{"valid jpg", "photo.jpg", 1024, nil, false},
+		{"valid png", "avatar.png", 2048, nil, false},
+		{"valid webp", "image.webp", 4096, nil, false},
+		{"too large", "huge.jpg", 11 * 1024 * 1024, nil, true},
+		{"unsupported type", "doc.pdf", 1024, nil, true},
+		{"custom allowed", "doc.pdf", 1024, []string{".pdf"}, false},
+		{"custom not allowed", "photo.jpg", 1024, []string{".pdf"}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := svc.ValidateUpload(tt.filename, tt.size, tt.allowedTypes)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateUpload() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestFileUploadService_GenerateKey(t *testing.T) {
+	svc := NewFileUploadService("", "", "", "", false)
+
+	key := svc.GenerateKey("avatars", "my photo.jpg")
+	if key == "" {
+		t.Error("expected non-empty key")
+	}
+	if !contains(key, "avatars/") {
+		t.Errorf("expected key to start with folder, got: %s", key)
+	}
+	if !contains(key, ".jpg") {
+		t.Errorf("expected key to end with .jpg, got: %s", key)
+	}
+}
+
+func TestFileUploadService_GetPublicURL(t *testing.T) {
+	svc := NewFileUploadService("localhost:9000", "", "", "test-bucket", false)
+	url := svc.GetPublicURL("avatars/test.jpg")
+	if url != "http://localhost:9000/test-bucket/avatars/test.jpg" {
+		t.Errorf("unexpected URL: %s", url)
+	}
+
+	svc2 := NewFileUploadService("s3.example.com", "", "", "prod-bucket", true)
+	url2 := svc2.GetPublicURL("uploads/photo.png")
+	if url2 != "https://s3.example.com/prod-bucket/uploads/photo.png" {
+		t.Errorf("unexpected URL: %s", url2)
+	}
+}
+
+func TestFileUploadService_MockUpload(t *testing.T) {
+	svc := NewFileUploadService("", "", "", "test", false)
+
+	result, err := svc.Upload(context.Background(), "test", "photo.jpg", nil, 1024)
+	if err != nil {
+		t.Errorf("expected no error in mock mode, got: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if result.FileName != "photo.jpg" {
+		t.Errorf("expected filename=photo.jpg, got %s", result.FileName)
+	}
+	if result.FileSize != 1024 {
+		t.Errorf("expected size=1024, got %d", result.FileSize)
+	}
+	if result.MimeType != "image/jpeg" {
+		t.Errorf("expected mime=image/jpeg, got %s", result.MimeType)
+	}
+}
+
+func TestGetMimeType(t *testing.T) {
+	tests := []struct {
+		filename string
+		expected string
+	}{
+		{"photo.jpg", "image/jpeg"},
+		{"photo.JPEG", "image/jpeg"},
+		{"icon.png", "image/png"},
+		{"anim.gif", "image/gif"},
+		{"modern.webp", "image/webp"},
+		{"video.mp4", "video/mp4"},
+		{"clip.mov", "video/quicktime"},
+		{"unknown.xyz", "application/octet-stream"},
+	}
+	for _, tt := range tests {
+		result := getMimeType(tt.filename)
+		if result != tt.expected {
+			t.Errorf("getMimeType(%s) = %q, want %q", tt.filename, result, tt.expected)
+		}
+	}
+}
+
+// ============================================
+// Notification Service — All send methods
+// ============================================
+
+func TestNotificationService_AllSendMethods(t *testing.T) {
+	svc := NewNotificationService("", nil)
+	ctx := context.Background()
+	uid := uuid.New()
+
+	// None of these should panic in mock mode
+	svc.SendBookingConfirmed(ctx, uid, "HT-001", "Tour Ẩm Thực")
+	svc.SendBookingReminder(ctx, uid, "Tour Đại Nội", "09:00")
+	svc.SendNewMessage(ctx, uid, "Nguyễn Văn A", "Chào bạn!")
+	svc.SendPaymentSuccess(ctx, uid, 750000, "HT-001")
+	svc.SendNewReview(ctx, uid, "Trần B", 5)
+	svc.SendLevelUp(ctx, uid, "Explorer", 500)
+	svc.SendPromotion(ctx, uid, "Ưu đãi tháng 3", "Giảm 20% tour ẩm thực")
+}
+
+// helper
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsStr(s, substr))
+}
+
+func containsStr(s, sub string) bool {
+	for i := 0; i <= len(s)-len(sub); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}
