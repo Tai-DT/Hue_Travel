@@ -1,0 +1,61 @@
+# ============================================
+# Huế Travel — Git Ignore
+# ============================================
+
+# Environment
+.env
+.env.local
+.env.production
+
+# Dependencies
+node_modules/
+vendor/
+__pycache__/
+.venv/
+
+# Build
+dist/
+build/
+.next/
+out/
+*.exe
+*.out
+bin/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Docker
+docker-compose.override.yml
+
+# Credentials
+*.pem
+*.key
+firebase-credentials.json
+service-account.json
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Go
+tmp/
+*.test
+cover.out
+coverage.html
+
+# Mobile
+*.jks
+*.keystore
+android/app/build/
+ios/Pods/
+.expo/
