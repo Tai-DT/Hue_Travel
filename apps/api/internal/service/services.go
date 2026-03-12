@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"math/big"
 	"net/http"
 	"time"
@@ -26,6 +27,7 @@ type AuthService struct {
 	userRepo         *repository.UserRepository
 	otpRepo          *repository.OTPRepository
 	redis            *redis.Client
+	smsSvc           *SMSService
 	jwtSecret        string
 	jwtExpiry        time.Duration
 	jwtRefreshExpiry time.Duration
@@ -35,6 +37,7 @@ func NewAuthService(
 	userRepo *repository.UserRepository,
 	otpRepo *repository.OTPRepository,
 	rdb *redis.Client,
+	smsSvc *SMSService,
 	jwtSecret string,
 	jwtExpiry, jwtRefreshExpiry time.Duration,
 ) *AuthService {
@@ -42,6 +45,7 @@ func NewAuthService(
 		userRepo:         userRepo,
 		otpRepo:          otpRepo,
 		redis:            rdb,
+		smsSvc:           smsSvc,
 		jwtSecret:        jwtSecret,
 		jwtExpiry:        jwtExpiry,
 		jwtRefreshExpiry: jwtRefreshExpiry,
@@ -90,9 +94,16 @@ func (s *AuthService) SendOTP(ctx context.Context, req SendOTPRequest) error {
 	// Cache for quick lookup
 	s.redis.Set(ctx, fmt.Sprintf("otp:%s", req.Phone), code, 5*time.Minute)
 
-	// TODO: Send via ESMS.vn
-	// For now, log the OTP (development mode)
-	fmt.Printf("📱 OTP for %s: %s (expires: %s)\n", req.Phone, code, expiresAt.Format("15:04:05"))
+	// Send OTP via SMS
+	if s.smsSvc != nil {
+		if err := s.smsSvc.SendOTP(req.Phone, code); err != nil {
+			log.Printf("⚠️ SMS send failed: %v — OTP logged to console", err)
+			fmt.Printf("📱 OTP for %s: %s (expires: %s)\n", req.Phone, code, expiresAt.Format("15:04:05"))
+		}
+	} else {
+		// Development mode — log OTP
+		fmt.Printf("📱 OTP for %s: %s (expires: %s)\n", req.Phone, code, expiresAt.Format("15:04:05"))
+	}
 
 	return nil
 }

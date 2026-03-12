@@ -72,9 +72,12 @@ func main() {
 	// ============================================
 	// Initialize Services
 	// ============================================
+	// SMS service (ESMS.vn)
+	smsSvc := service.NewSMSService(cfg.ESMS.APIKey, cfg.ESMS.SecretKey, cfg.ESMS.BrandName)
+
 	if userRepo != nil && otpRepo != nil {
 		authSvc = service.NewAuthService(
-			userRepo, otpRepo, rdb,
+			userRepo, otpRepo, rdb, smsSvc,
 			cfg.JWT.Secret, cfg.JWT.Expiry, cfg.JWT.RefreshExpiry,
 		)
 	}
@@ -92,8 +95,8 @@ func main() {
 	aiSvc := service.NewAITripPlannerService(cfg.AI.GeminiAPIKey)
 	vnpaySvc := service.NewVNPayService(cfg.VNPay.TmnCode, cfg.VNPay.HashSecret, cfg.VNPay.ReturnURL, cfg.VNPay.Sandbox)
 
-	notifSvc := service.NewNotificationService("", pool)
-	searchSvc := service.NewSearchService("", "")
+	notifSvc := service.NewNotificationService(cfg.FCM.ServerKey, pool)
+	searchSvc := service.NewSearchService(cfg.Meilisearch.URL, cfg.Meilisearch.MasterKey)
 
 	healthH := handler.NewHealthHandler()
 	placeH := handler.NewPlaceHandler(placesSvc)

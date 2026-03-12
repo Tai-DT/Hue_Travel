@@ -4,12 +4,15 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
 // ============================================
@@ -22,11 +25,12 @@ type FileUploadService struct {
 	accessKey  string
 	secretKey  string
 	useSSL     bool
+	client     *minio.Client
 	httpClient *http.Client
 }
 
 func NewFileUploadService(endpoint, accessKey, secretKey, bucket string, useSSL bool) *FileUploadService {
-	return &FileUploadService{
+	svc := &FileUploadService{
 		endpoint:   endpoint,
 		bucket:     bucket,
 		accessKey:  accessKey,
@@ -34,15 +38,47 @@ func NewFileUploadService(endpoint, accessKey, secretKey, bucket string, useSSL 
 		useSSL:     useSSL,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}
+
+	// Initialize MinIO client
+	if endpoint != "" && accessKey != "" {
+		client, err := minio.New(endpoint, &minio.Options{
+			Creds:  credentials.NewStaticV4(accessKey, secretKey, ""),
+			Secure: useSSL,
+		})
+		if err != nil {
+			log.Printf("⚠️ MinIO client init failed: %v (falling back to mock)", err)
+		} else {
+			svc.client = client
+			log.Printf("✅ MinIO connected: %s (bucket: %s)", endpoint, bucket)
+
+			// Ensure bucket exists
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			exists, err := client.BucketExists(ctx, bucket)
+			if err != nil {
+				log.Printf("⚠️ MinIO bucket check failed: %v", err)
+			} else if !exists {
+				if err := client.MakeBucket(ctx, bucket, minio.MakeBucketOptions{}); err != nil {
+					log.Printf("⚠️ MinIO create bucket failed: %v", err)
+				} else {
+					log.Printf("✅ MinIO bucket created: %s", bucket)
+				}
+			}
+		}
+	} else {
+		log.Println("⚠️ MinIO not configured — file upload will use mock mode")
+	}
+
+	return svc
 }
 
 // UploadResult represents the result of a file upload
 type UploadResult struct {
-	Key       string `json:"key"`
-	URL       string `json:"url"`
-	FileName  string `json:"file_name"`
-	FileSize  int64  `json:"file_size"`
-	MimeType  string `json:"mime_type"`
+	Key        string `json:"key"`
+	URL        string `json:"url"`
+	FileName   string `json:"file_name"`
+	FileSize   int64  `json:"file_size"`
+	MimeType   string `json:"mime_type"`
 	UploadedAt time.Time `json:"uploaded_at"`
 }
 
@@ -96,27 +132,51 @@ func (s *FileUploadService) ValidateUpload(filename string, size int64, allowedT
 	return nil
 }
 
-// Upload simulates file upload (actual MinIO SDK would be used in production)
+// Upload uploads a file to MinIO (or mock if not configured)
 func (s *FileUploadService) Upload(ctx context.Context, folder string, filename string, reader io.Reader, size int64) (*UploadResult, error) {
 	key := s.GenerateKey(folder, filename)
+	mimeType := getMimeType(filename)
 
-	// In production, this would use the MinIO SDK:
-	// client, _ := minio.New(s.endpoint, &minio.Options{
-	//     Creds:  credentials.NewStaticV4(s.accessKey, s.secretKey, ""),
-	//     Secure: s.useSSL,
-	// })
-	// _, err := client.PutObject(ctx, s.bucket, key, reader, size, minio.PutObjectOptions{
-	//     ContentType: mime.TypeByExtension(filepath.Ext(filename)),
-	// })
+	// Real MinIO upload
+	if s.client != nil {
+		_, err := s.client.PutObject(ctx, s.bucket, key, reader, size, minio.PutObjectOptions{
+			ContentType: mimeType,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("MinIO upload failed: %w", err)
+		}
 
+		log.Printf("📁 [MinIO] Uploaded: %s (%d bytes)", key, size)
+
+		return &UploadResult{
+			Key:        key,
+			URL:        s.GetPublicURL(key),
+			FileName:   filename,
+			FileSize:   size,
+			MimeType:   mimeType,
+			UploadedAt: time.Now(),
+		}, nil
+	}
+
+	// Mock mode — return generated URL without actual upload
+	log.Printf("📁 [MOCK] Would upload: %s (%d bytes)", key, size)
 	return &UploadResult{
-		Key:       key,
-		URL:       s.GetPublicURL(key),
-		FileName:  filename,
-		FileSize:  size,
-		MimeType:  getMimeType(filename),
+		Key:        key,
+		URL:        s.GetPublicURL(key),
+		FileName:   filename,
+		FileSize:   size,
+		MimeType:   mimeType,
 		UploadedAt: time.Now(),
 	}, nil
+}
+
+// Delete removes a file from MinIO
+func (s *FileUploadService) Delete(ctx context.Context, key string) error {
+	if s.client != nil {
+		return s.client.RemoveObject(ctx, s.bucket, key, minio.RemoveObjectOptions{})
+	}
+	log.Printf("📁 [MOCK] Would delete: %s", key)
+	return nil
 }
 
 func getMimeType(filename string) string {

@@ -2,7 +2,10 @@ package service
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log"
+	"net/http"
 	"strings"
 	"time"
 )
@@ -16,6 +19,7 @@ type SearchService struct {
 	meilisearchURL string
 	masterKey      string
 	indexed        map[string][]SearchDocument
+	httpClient     *http.Client
 }
 
 type SearchDocument struct {
@@ -34,10 +38,10 @@ type SearchDocument struct {
 }
 
 type SearchResult struct {
-	Documents  []SearchDocument `json:"documents"`
-	TotalCount int              `json:"total_count"`
-	Query      string           `json:"query"`
-	TimeMs     int64            `json:"time_ms"`
+	Documents  []SearchDocument   `json:"documents"`
+	TotalCount int                `json:"total_count"`
+	Query      string             `json:"query"`
+	TimeMs     int64              `json:"time_ms"`
 	Facets     map[string][]Facet `json:"facets,omitempty"`
 }
 
@@ -47,15 +51,15 @@ type Facet struct {
 }
 
 type SearchFilters struct {
-	Type     string   `json:"type,omitempty"`
-	Category string   `json:"category,omitempty"`
-	MinPrice int64    `json:"min_price,omitempty"`
-	MaxPrice int64    `json:"max_price,omitempty"`
-	MinRating float64 `json:"min_rating,omitempty"`
-	Tags     []string `json:"tags,omitempty"`
-	Location string   `json:"location,omitempty"`
-	Limit    int      `json:"limit,omitempty"`
-	Offset   int      `json:"offset,omitempty"`
+	Type      string   `json:"type,omitempty"`
+	Category  string   `json:"category,omitempty"`
+	MinPrice  int64    `json:"min_price,omitempty"`
+	MaxPrice  int64    `json:"max_price,omitempty"`
+	MinRating float64  `json:"min_rating,omitempty"`
+	Tags      []string `json:"tags,omitempty"`
+	Location  string   `json:"location,omitempty"`
+	Limit     int      `json:"limit,omitempty"`
+	Offset    int      `json:"offset,omitempty"`
 }
 
 func NewSearchService(meilisearchURL, masterKey string) *SearchService {
@@ -63,13 +67,49 @@ func NewSearchService(meilisearchURL, masterKey string) *SearchService {
 		meilisearchURL: meilisearchURL,
 		masterKey:      masterKey,
 		indexed:        make(map[string][]SearchDocument),
+		httpClient:     &http.Client{Timeout: 5 * time.Second},
 	}
+
+	if s.IsConfigured() {
+		log.Printf("✅ Meilisearch configured: %s", meilisearchURL)
+		// Setup index settings
+		s.setupMeilisearchIndex()
+	} else {
+		log.Println("⚠️ Meilisearch not configured — using in-memory search")
+	}
+
 	s.seedMockData()
 	return s
 }
 
 func (s *SearchService) IsConfigured() bool {
-	return s.meilisearchURL != ""
+	return s.meilisearchURL != "" && s.meilisearchURL != "http://meilisearch:7700"
+}
+
+// setupMeilisearchIndex creates the index with searchable/filterable attributes
+func (s *SearchService) setupMeilisearchIndex() {
+	// Create index if not exists
+	body := `{"uid": "hue_travel", "primaryKey": "id"}`
+	req, _ := http.NewRequest("POST", s.meilisearchURL+"/indexes", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+s.masterKey)
+	s.httpClient.Do(req) //nolint:errcheck // best-effort
+
+	// Set searchable attributes
+	searchable := `["title", "description", "category", "tags", "location"]`
+	req, _ = http.NewRequest("PUT", s.meilisearchURL+"/indexes/hue_travel/settings/searchable-attributes", strings.NewReader(searchable))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+s.masterKey)
+	s.httpClient.Do(req) //nolint:errcheck
+
+	// Set filterable attributes
+	filterable := `["type", "category", "price", "rating", "location"]`
+	req, _ = http.NewRequest("PUT", s.meilisearchURL+"/indexes/hue_travel/settings/filterable-attributes", strings.NewReader(filterable))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+s.masterKey)
+	s.httpClient.Do(req) //nolint:errcheck
+
+	log.Println("✅ Meilisearch index 'hue_travel' configured")
 }
 
 // ============================================
@@ -80,8 +120,11 @@ func (s *SearchService) Search(ctx context.Context, query string, filters Search
 	start := time.Now()
 
 	if s.IsConfigured() {
-		// In production: call Meilisearch API
-		log.Printf("🔍 [Meilisearch] Search: %s", query)
+		result, err := s.searchMeilisearch(ctx, query, filters)
+		if err == nil {
+			return *result
+		}
+		log.Printf("⚠️ Meilisearch search failed: %v — falling back to in-memory", err)
 	}
 
 	// Fallback: in-memory search
@@ -98,19 +141,22 @@ func (s *SearchService) Search(ctx context.Context, query string, filters Search
 
 	// Apply limit/offset
 	limit := filters.Limit
-	if limit == 0 { limit = 20 }
+	if limit == 0 {
+		limit = 20
+	}
 	offset := filters.Offset
 
 	total := len(results)
 	if offset < len(results) {
 		end := offset + limit
-		if end > len(results) { end = len(results) }
+		if end > len(results) {
+			end = len(results)
+		}
 		results = results[offset:end]
 	} else {
 		results = nil
 	}
 
-	// Build facets
 	facets := s.buildFacets(query, queryLower)
 
 	return SearchResult{
@@ -122,8 +168,91 @@ func (s *SearchService) Search(ctx context.Context, query string, filters Search
 	}
 }
 
+// searchMeilisearch calls the Meilisearch multi-search API
+func (s *SearchService) searchMeilisearch(ctx context.Context, query string, filters SearchFilters) (*SearchResult, error) {
+	// Build filter string
+	var filterParts []string
+	if filters.Type != "" {
+		filterParts = append(filterParts, fmt.Sprintf(`type = "%s"`, filters.Type))
+	}
+	if filters.Category != "" {
+		filterParts = append(filterParts, fmt.Sprintf(`category = "%s"`, filters.Category))
+	}
+	if filters.MinPrice > 0 {
+		filterParts = append(filterParts, fmt.Sprintf(`price >= %d`, filters.MinPrice))
+	}
+	if filters.MaxPrice > 0 {
+		filterParts = append(filterParts, fmt.Sprintf(`price <= %d`, filters.MaxPrice))
+	}
+	if filters.MinRating > 0 {
+		filterParts = append(filterParts, fmt.Sprintf(`rating >= %f`, filters.MinRating))
+	}
+
+	limit := filters.Limit
+	if limit == 0 {
+		limit = 20
+	}
+
+	reqBody := map[string]interface{}{
+		"q":      query,
+		"limit":  limit,
+		"offset": filters.Offset,
+		"facets": []string{"type", "category"},
+	}
+	if len(filterParts) > 0 {
+		reqBody["filter"] = strings.Join(filterParts, " AND ")
+	}
+
+	bodyBytes, _ := json.Marshal(reqBody)
+
+	req, err := http.NewRequestWithContext(ctx, "POST", s.meilisearchURL+"/indexes/hue_travel/search", strings.NewReader(string(bodyBytes)))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+s.masterKey)
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("meilisearch returned status %d", resp.StatusCode)
+	}
+
+	var msResult struct {
+		Hits             []SearchDocument          `json:"hits"`
+		EstimatedTotalHits int                     `json:"estimatedTotalHits"`
+		ProcessingTimeMs int64                     `json:"processingTimeMs"`
+		FacetDistribution map[string]map[string]int `json:"facetDistribution"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&msResult); err != nil {
+		return nil, err
+	}
+
+	// Convert facets
+	facets := make(map[string][]Facet)
+	for facetName, distribution := range msResult.FacetDistribution {
+		for value, count := range distribution {
+			facets[facetName] = append(facets[facetName], Facet{Value: value, Count: count})
+		}
+	}
+
+	return &SearchResult{
+		Documents:  msResult.Hits,
+		TotalCount: msResult.EstimatedTotalHits,
+		Query:      query,
+		TimeMs:     msResult.ProcessingTimeMs,
+		Facets:     facets,
+	}, nil
+}
+
 func (s *SearchService) matchesQuery(doc SearchDocument, query string) bool {
-	if query == "" { return true }
+	if query == "" {
+		return true
+	}
 	title := strings.ToLower(doc.Title)
 	desc := strings.ToLower(doc.Description)
 	cat := strings.ToLower(doc.Category)
@@ -138,18 +267,32 @@ func (s *SearchService) matchesQuery(doc SearchDocument, query string) bool {
 
 func (s *SearchService) matchesTags(tags []string, query string) bool {
 	for _, t := range tags {
-		if strings.Contains(strings.ToLower(t), query) { return true }
+		if strings.Contains(strings.ToLower(t), query) {
+			return true
+		}
 	}
 	return false
 }
 
 func (s *SearchService) matchesFilters(doc SearchDocument, f SearchFilters) bool {
-	if f.Type != "" && doc.Type != f.Type { return false }
-	if f.Category != "" && !strings.EqualFold(doc.Category, f.Category) { return false }
-	if f.MinPrice > 0 && doc.Price < f.MinPrice { return false }
-	if f.MaxPrice > 0 && doc.Price > f.MaxPrice { return false }
-	if f.MinRating > 0 && doc.Rating < f.MinRating { return false }
-	if f.Location != "" && !strings.Contains(strings.ToLower(doc.Location), strings.ToLower(f.Location)) { return false }
+	if f.Type != "" && doc.Type != f.Type {
+		return false
+	}
+	if f.Category != "" && !strings.EqualFold(doc.Category, f.Category) {
+		return false
+	}
+	if f.MinPrice > 0 && doc.Price < f.MinPrice {
+		return false
+	}
+	if f.MaxPrice > 0 && doc.Price > f.MaxPrice {
+		return false
+	}
+	if f.MinRating > 0 && doc.Rating < f.MinRating {
+		return false
+	}
+	if f.Location != "" && !strings.Contains(strings.ToLower(doc.Location), strings.ToLower(f.Location)) {
+		return false
+	}
 	return true
 }
 
@@ -181,7 +324,9 @@ func (s *SearchService) buildFacets(query, queryLower string) map[string][]Facet
 // ============================================
 
 func (s *SearchService) Suggest(ctx context.Context, query string, limit int) []string {
-	if limit == 0 { limit = 5 }
+	if limit == 0 {
+		limit = 5
+	}
 	queryLower := strings.ToLower(query)
 	suggestions := make(map[string]bool)
 
@@ -199,9 +344,11 @@ func (s *SearchService) Suggest(ctx context.Context, query string, limit int) []
 	}
 
 	var result []string
-	for s := range suggestions {
-		if len(result) >= limit { break }
-		result = append(result, s)
+	for sg := range suggestions {
+		if len(result) >= limit {
+			break
+		}
+		result = append(result, sg)
 	}
 	return result
 }
@@ -231,6 +378,20 @@ func (s *SearchService) IndexDocument(docType string, doc SearchDocument) {
 	doc.Type = docType
 	doc.CreatedAt = time.Now()
 	s.indexed[docType] = append(s.indexed[docType], doc)
+
+	// Also index to Meilisearch if configured
+	if s.IsConfigured() {
+		bodyBytes, _ := json.Marshal([]SearchDocument{doc})
+		req, _ := http.NewRequest("POST", s.meilisearchURL+"/indexes/hue_travel/documents", strings.NewReader(string(bodyBytes)))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+s.masterKey)
+		resp, err := s.httpClient.Do(req)
+		if err != nil {
+			log.Printf("⚠️ Meilisearch index failed: %v", err)
+		} else {
+			resp.Body.Close()
+		}
+	}
 }
 
 func (s *SearchService) GetStats() map[string]int {

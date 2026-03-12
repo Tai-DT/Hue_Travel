@@ -9,14 +9,17 @@ import (
 )
 
 type Config struct {
-	App      AppConfig
-	Database DatabaseConfig
-	Redis    RedisConfig
-	JWT      JWTConfig
-	MinIO    MinIOConfig
-	Google   GoogleConfig
-	VNPay    VNPayConfig
-	AI       AIConfig
+	App         AppConfig
+	Database    DatabaseConfig
+	Redis       RedisConfig
+	JWT         JWTConfig
+	MinIO       MinIOConfig
+	Google      GoogleConfig
+	VNPay       VNPayConfig
+	AI          AIConfig
+	ESMS        ESMSConfig
+	FCM         FCMConfig
+	Meilisearch MeilisearchConfig
 }
 
 type AppConfig struct {
@@ -70,6 +73,21 @@ type AIConfig struct {
 	GeminiAPIKey string
 }
 
+type ESMSConfig struct {
+	APIKey    string
+	SecretKey string
+	BrandName string
+}
+
+type FCMConfig struct {
+	ServerKey string
+}
+
+type MeilisearchConfig struct {
+	URL       string
+	MasterKey string
+}
+
 func Load() (*Config, error) {
 	// Load .env file (optional in production)
 	_ = godotenv.Load("../../.env")
@@ -120,6 +138,18 @@ func Load() (*Config, error) {
 		},
 		AI: AIConfig{
 			GeminiAPIKey: getEnv("GEMINI_API_KEY", ""),
+		},
+		ESMS: ESMSConfig{
+			APIKey:    getEnv("ESMS_API_KEY", ""),
+			SecretKey: getEnv("ESMS_SECRET_KEY", ""),
+			BrandName: getEnv("ESMS_BRAND_NAME", "HueTravel"),
+		},
+		FCM: FCMConfig{
+			ServerKey: getEnv("FCM_SERVER_KEY", ""),
+		},
+		Meilisearch: MeilisearchConfig{
+			URL:       getEnv("MEILISEARCH_URL", ""),
+			MasterKey: getEnv("MEILISEARCH_MASTER_KEY", ""),
 		},
 	}
 

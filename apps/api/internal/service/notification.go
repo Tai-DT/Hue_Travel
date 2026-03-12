@@ -1,9 +1,12 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"time"
 
 	"github.com/google/uuid"
@@ -154,9 +157,76 @@ func (s *NotificationService) send(ctx context.Context, notif Notification) {
 		return
 	}
 
-	// In production: Firebase Cloud Messaging HTTP v1 API
-	// POST https://fcm.googleapis.com/v1/projects/{project_id}/messages:send
-	log.Printf("📣 [FCM] Sent to %s: %s", notif.UserID.String()[:8], notif.Title)
+	// Real FCM push notification
+	s.pushFCM(ctx, notif)
+}
+
+// pushFCM sends a real push notification via Firebase Cloud Messaging Legacy HTTP API
+func (s *NotificationService) pushFCM(ctx context.Context, notif Notification) {
+	if s.pool == nil {
+		return
+	}
+
+	// Get device token(s) for user
+	rows, err := s.pool.Query(ctx,
+		`SELECT fcm_token FROM device_tokens WHERE user_id = $1`, notif.UserID)
+	if err != nil {
+		log.Printf("⚠️ FCM: failed to get device tokens: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	var tokens []string
+	for rows.Next() {
+		var token string
+		rows.Scan(&token)
+		tokens = append(tokens, token)
+	}
+
+	if len(tokens) == 0 {
+		log.Printf("📣 [FCM] No device tokens for user %s — notification saved to DB only", notif.UserID.String()[:8])
+		return
+	}
+
+	// Send to each device token
+	for _, token := range tokens {
+		payload := map[string]interface{}{
+			"to": token,
+			"notification": map[string]string{
+				"title": notif.Title,
+				"body":  notif.Body,
+				"sound": "default",
+			},
+			"data": map[string]interface{}{
+				"type":            string(notif.Type),
+				"notification_id": notif.ID.String(),
+			},
+		}
+		if notif.Data != nil {
+			for k, v := range notif.Data {
+				payload["data"].(map[string]interface{})[k] = v
+			}
+		}
+
+		bodyBytes, _ := json.Marshal(payload)
+		req, _ := http.NewRequestWithContext(ctx, "POST", "https://fcm.googleapis.com/fcm/send", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "key="+s.fcmServerKey)
+
+		client := &http.Client{Timeout: 10 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			log.Printf("⚠️ FCM send failed: %v", err)
+			continue
+		}
+		resp.Body.Close()
+
+		if resp.StatusCode == 200 {
+			log.Printf("📣 [FCM] Sent to %s: %s", notif.UserID.String()[:8], notif.Title)
+		} else {
+			log.Printf("⚠️ FCM returned status %d for user %s", resp.StatusCode, notif.UserID.String()[:8])
+		}
+	}
 }
 
 // ============================================
