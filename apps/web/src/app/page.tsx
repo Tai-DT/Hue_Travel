@@ -5,6 +5,8 @@ import { useState, lazy, Suspense } from 'react';
 const UsersPage = lazy(() => import('./users/page'));
 const BookingsPage = lazy(() => import('./bookings/page'));
 const ExperiencesPage = lazy(() => import('./experiences/page'));
+const SettingsPage = lazy(() => import('./settings/page'));
+const AnalyticsPage = lazy(() => import('./analytics/page'));
 
 const PageFallback = () => (
   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 400, color: 'var(--text-muted)' }}>
@@ -151,6 +153,10 @@ export default function AdminDashboard() {
             <Suspense fallback={<PageFallback />}><BookingsPage /></Suspense>
           ) : activePage === 'experiences' ? (
             <Suspense fallback={<PageFallback />}><ExperiencesPage /></Suspense>
+          ) : activePage === 'settings' ? (
+            <Suspense fallback={<PageFallback />}><SettingsPage /></Suspense>
+          ) : activePage === 'analytics' ? (
+            <Suspense fallback={<PageFallback />}><AnalyticsPage /></Suspense>
           ) : (
           <>
           {/* Stats Grid */}

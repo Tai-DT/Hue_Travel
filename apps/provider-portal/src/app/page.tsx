@@ -1,6 +1,14 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, lazy, Suspense } from 'react';
+
+const GuideBookingsPage = lazy(() => import('./bookings/page'));
+const ProfilePage = lazy(() => import('./profile/page'));
+const MyToursPage = lazy(() => import('./my-tours/page'));
+
+const Loader = () => (
+  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 300 }}>⏳ Đang tải...</div>
+);
 
 type NavItem = {
   icon: string;
@@ -130,6 +138,14 @@ export default function ProviderDashboard() {
         </header>
 
         <div className="p-page">
+          {activePage === 'bookings' ? (
+            <Suspense fallback={<Loader />}><GuideBookingsPage /></Suspense>
+          ) : activePage === 'profile' ? (
+            <Suspense fallback={<Loader />}><ProfilePage /></Suspense>
+          ) : activePage === 'my-tours' ? (
+            <Suspense fallback={<Loader />}><MyToursPage /></Suspense>
+          ) : (
+          <>
           {/* Stats */}
           <div className="p-stats">
             {STATS.map((s, i) => (
@@ -277,6 +293,8 @@ export default function ProviderDashboard() {
               </tbody>
             </table>
           </div>
+          </>
+          )}
         </div>
       </main>
     </div>

@@ -1,27 +1,80 @@
-import React from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
+  RefreshControl,
+  Alert,
 } from 'react-native';
 import { Colors, Fonts, Spacing, BorderRadius } from '@/constants/theme';
+import api from '@/services/api';
+
+type UserProfile = {
+  id: string;
+  full_name: string;
+  phone?: string;
+  email?: string;
+  role: string;
+  level: string;
+  xp: number;
+  avatar_url?: string;
+};
 
 export default function ProfileScreen() {
+  const [user, setUser] = useState<UserProfile | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const loadProfile = useCallback(async () => {
+    const res = await api.getMe();
+    if (res.success && res.data) {
+      setUser((res.data as any).user || res.data);
+    }
+  }, []);
+
+  useEffect(() => { loadProfile(); }, [loadProfile]);
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await loadProfile();
+    setRefreshing(false);
+  };
+
+  const handleLogout = async () => {
+    Alert.alert('Đăng xuất', 'Bạn có chắc chắn?', [
+      { text: 'Huỷ', style: 'cancel' },
+      {
+        text: 'Đăng xuất',
+        style: 'destructive',
+        onPress: async () => {
+          await api.logout();
+          api.setToken('');
+        },
+      },
+    ]);
+  };
+
+  const displayName = user?.full_name || 'Traveler';
+  const displayLevel = user?.level || 'Khách mới';
+  const displayXP = user?.xp || 0;
+
   return (
     <View style={styles.container}>
-      <ScrollView showsVerticalScrollIndicator={false}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}
+      >
         {/* Header */}
         <View style={styles.header}>
           <View style={styles.avatar}>
-            <Text style={styles.avatarText}>T</Text>
+            <Text style={styles.avatarText}>{displayName[0]}</Text>
           </View>
-          <Text style={styles.name}>Traveler</Text>
+          <Text style={styles.name}>{displayName}</Text>
           <View style={styles.levelBadge}>
-            <Text style={styles.levelText}>🏆 Newbie</Text>
+            <Text style={styles.levelText}>🏆 {displayLevel}</Text>
           </View>
-          <Text style={styles.xpText}>0 XP — Đặt trải nghiệm để nhận XP!</Text>
+          <Text style={styles.xpText}>{displayXP} XP — Đặt trải nghiệm để nhận XP!</Text>
         </View>
 
         {/* Stats */}
@@ -57,7 +110,7 @@ export default function ProfileScreen() {
           <MenuItem icon="🛡️" label="Chính sách bảo mật" />
         </View>
 
-        <TouchableOpacity style={styles.logoutButton}>
+        <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
           <Text style={styles.logoutText}>Đăng xuất</Text>
         </TouchableOpacity>
 
