@@ -50,6 +50,7 @@ type Hub struct {
 	register   chan *Client
 	unregister chan *Client
 	broadcast  chan []byte
+	done       chan struct{}
 	mu         sync.RWMutex
 }
 
@@ -60,12 +61,28 @@ func NewHub() *Hub {
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
 		broadcast:  make(chan []byte, 256),
+		done:       make(chan struct{}),
 	}
+}
+
+// Stop gracefully shuts down the hub: close all client connections then stop the Run loop.
+func (h *Hub) Stop() {
+	h.mu.Lock()
+	for _, client := range h.clients {
+		close(client.Send)
+		client.Conn.Close()
+	}
+	h.clients = make(map[uuid.UUID]*Client)
+	h.mu.Unlock()
+	close(h.done)
+	log.Println("🛑 WebSocket hub stopped")
 }
 
 func (h *Hub) Run() {
 	for {
 		select {
+		case <-h.done:
+			return
 		case client := <-h.register:
 			h.mu.Lock()
 			// Close existing connection for the same user (prevent duplicate sessions)

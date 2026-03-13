@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -14,7 +17,11 @@ import (
 	"github.com/huetravel/api/internal/repository"
 	"github.com/huetravel/api/internal/service"
 	ws "github.com/huetravel/api/internal/websocket"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 )
+
+const apiVersion = "1.0.0"
 
 func main() {
 	ctx := context.Background()
@@ -98,7 +105,7 @@ func main() {
 	notifSvc := service.NewNotificationService(cfg.FCM.ServerKey, pool)
 	searchSvc := service.NewSearchService(cfg.Meilisearch.URL, cfg.Meilisearch.MasterKey)
 
-	healthH := handler.NewHealthHandler()
+	healthH := handler.NewHealthHandler(pool, rdb)
 	placeH := handler.NewPlaceHandler(placesSvc)
 	aiH := handler.NewAIHandler(aiSvc)
 	notifH := handler.NewNotificationHandler(notifSvc, pool)
@@ -155,6 +162,13 @@ func main() {
 		adminMgmtH = handler.NewAdminManagementHandler(userRepo, expRepo, bookingRepo)
 	}
 
+	// Background worker — cleanup expired bookings & OTPs
+	var bgWorker *service.BackgroundWorker
+	if pool != nil {
+		bgWorker = service.NewBackgroundWorker(pool, rdb)
+		bgWorker.Start()
+	}
+
 	// ============================================
 	// Router Setup
 	// ============================================
@@ -163,13 +177,14 @@ func main() {
 	r.Use(middleware.RequestID())
 	r.Use(middleware.Logger())
 	r.Use(middleware.CORS())
+	r.Use(middleware.APIVersion(apiVersion))
 	r.Use(middleware.RateLimit(100, time.Minute)) // 100 requests per minute per IP
 
 	// WebSocket Hub
 	hub := ws.NewHub()
 	go hub.Run()
 
-	// Health check
+	// Health check — detailed with DB/Redis status
 	r.GET("/health", healthH.Check)
 
 	// WebSocket endpoint — JWT auth via query param "token" or Sec-WebSocket-Protocol
@@ -307,6 +322,16 @@ func main() {
 		if authH != nil {
 			v1.GET("/me", middleware.Auth(cfg.JWT.Secret), authH.Me)
 			v1.PUT("/me", middleware.Auth(cfg.JWT.Secret), authH.UpdateProfile)
+			v1.DELETE("/me", middleware.Auth(cfg.JWT.Secret), authH.DeleteAccount)
+		}
+
+		// ---- Guide Profile (auth + guide role) ----
+		if guideH != nil {
+			guideAuth := v1.Group("/guides")
+			guideAuth.Use(middleware.Auth(cfg.JWT.Secret))
+			{
+				guideAuth.PUT("/me/profile", middleware.RequireRole("guide", "admin"), guideH.UpdateProfile)
+			}
 		}
 
 		// ---- File Upload (auth required) ----
@@ -360,7 +385,7 @@ func main() {
 	}
 
 	// ============================================
-	// Start Server
+	// Graceful Shutdown with Signal Handling
 	// ============================================
 	port := cfg.App.Port
 	dbStatus := "❌ disconnected"
@@ -375,7 +400,7 @@ func main() {
 	fmt.Fprintf(os.Stdout, `
   ╔══════════════════════════════════════════╗
   ║                                          ║
-  ║   🌏 Huế Travel API v1.0.0              ║
+  ║   🌏 Huế Travel API v%-19s ║
   ║                                          ║
   ║   Environment: %-25s ║
   ║   Port:        %-25s ║
@@ -383,9 +408,49 @@ func main() {
   ║   Redis:       %-25s ║
   ║                                          ║
   ╚══════════════════════════════════════════╝
-`, cfg.App.Env, port, dbStatus, redisStatus)
+`, apiVersion, cfg.App.Env, port, dbStatus, redisStatus)
 
-	if err := r.Run(":" + port); err != nil {
-		log.Fatalf("Failed to start server: %v", err)
+	// Create HTTP server for graceful shutdown
+	srv := &http.Server{
+		Addr:         ":" + port,
+		Handler:      r,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  60 * time.Second,
 	}
+
+	// Start server in goroutine
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Failed to start server: %v", err)
+		}
+	}()
+
+	// Wait for interrupt signal
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	sig := <-quit
+	log.Printf("🛑 Received signal %v — shutting down gracefully...", sig)
+
+	// Give outstanding requests 10 seconds to complete
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Fatalf("Server forced to shutdown: %v", err)
+	}
+
+	// Stop background worker
+	if bgWorker != nil {
+		bgWorker.Stop()
+	}
+
+	// Stop WebSocket hub
+	hub.Stop()
+
+	log.Println("✅ Server exited gracefully")
 }
+
+// unused but kept for reference — original pool/rdb types
+var _ *pgxpool.Pool
+var _ *redis.Client

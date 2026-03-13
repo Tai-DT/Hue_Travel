@@ -1,11 +1,16 @@
 package handler
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/huetravel/api/internal/model"
@@ -15,20 +20,66 @@ import (
 )
 
 // ============================================
-// Health Handler
+// Health Handler — Detailed health check
 // ============================================
 
-type HealthHandler struct{}
+type HealthHandler struct {
+	pool *pgxpool.Pool
+	rdb  *redis.Client
+}
 
-func NewHealthHandler() *HealthHandler {
-	return &HealthHandler{}
+func NewHealthHandler(pool *pgxpool.Pool, rdb *redis.Client) *HealthHandler {
+	return &HealthHandler{pool: pool, rdb: rdb}
 }
 
 func (h *HealthHandler) Check(c *gin.Context) {
+	overall := "healthy"
+	deps := []gin.H{}
+
+	// Check PostgreSQL
+	if h.pool != nil {
+		start := time.Now()
+		err := h.pool.Ping(c.Request.Context())
+		latency := time.Since(start).Milliseconds()
+		status := "connected"
+		if err != nil {
+			status = "error"
+			overall = "degraded"
+		}
+		deps = append(deps, gin.H{
+			"name": "postgresql", "status": status, "latency_ms": latency,
+		})
+	} else {
+		deps = append(deps, gin.H{
+			"name": "postgresql", "status": "not_configured", "latency_ms": 0,
+		})
+	}
+
+	// Check Redis
+	if h.rdb != nil {
+		start := time.Now()
+		err := h.rdb.Ping(c.Request.Context()).Err()
+		latency := time.Since(start).Milliseconds()
+		status := "connected"
+		if err != nil {
+			status = "error"
+			overall = "degraded"
+		}
+		deps = append(deps, gin.H{
+			"name": "redis", "status": status, "latency_ms": latency,
+		})
+	} else {
+		deps = append(deps, gin.H{
+			"name": "redis", "status": "not_configured", "latency_ms": 0,
+		})
+	}
+
 	response.OK(c, gin.H{
-		"status":  "healthy",
-		"service": "hue-travel-api",
-		"version": "1.0.0",
+		"status":       overall,
+		"service":      "hue-travel-api",
+		"version":      "1.0.0",
+		"dependencies": deps,
+		"timestamp":    time.Now().Format(time.RFC3339),
 	})
 }
 
@@ -54,6 +105,10 @@ func (h *AuthHandler) SendOTP(c *gin.Context) {
 	}
 
 	if err := h.authService.SendOTP(c.Request.Context(), req); err != nil {
+		if errors.Is(err, service.ErrServiceNotConfigured) || errors.Is(err, service.ErrServiceUnavailable) {
+			response.ServiceUnavailable(c, "HT-AUTH-006", "Dịch vụ OTP hiện chưa sẵn sàng")
+			return
+		}
 		response.BadRequest(c, "HT-AUTH-002", err.Error())
 		return
 	}
@@ -137,6 +192,7 @@ func (h *AuthHandler) UpdateProfile(c *gin.Context) {
 
 	var req struct {
 		FullName  string   `json:"full_name" binding:"required,min=2"`
+		Email     *string  `json:"email" binding:"omitempty,email"`
 		Bio       *string  `json:"bio"`
 		AvatarURL *string  `json:"avatar_url"`
 		Languages []string `json:"languages"`
@@ -147,8 +203,22 @@ func (h *AuthHandler) UpdateProfile(c *gin.Context) {
 		return
 	}
 
-	err := h.userRepo.UpdateProfile(c.Request.Context(), userID.(uuid.UUID), req.FullName, req.Bio, req.AvatarURL, req.Languages)
+	if req.Email != nil {
+		email := strings.TrimSpace(*req.Email)
+		if email == "" {
+			req.Email = nil
+		} else {
+			req.Email = &email
+		}
+	}
+
+	err := h.userRepo.UpdateProfile(c.Request.Context(), userID.(uuid.UUID), req.FullName, req.Email, req.Bio, req.AvatarURL, req.Languages)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			response.BadRequest(c, "HT-VAL-002", "Email đã được sử dụng")
+			return
+		}
 		response.InternalError(c, "Không thể cập nhật")
 		return
 	}
@@ -173,6 +243,28 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	response.OK(c, gin.H{"message": "Đã đăng xuất"})
 }
 
+// DeleteAccount — user self-deactivates account (soft delete)
+func (h *AuthHandler) DeleteAccount(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		response.Unauthorized(c, "Chưa xác thực")
+		return
+	}
+
+	// Soft-delete: set is_active = false
+	if err := h.userRepo.SetActive(c.Request.Context(), userID.(uuid.UUID), false); err != nil {
+		response.InternalError(c, "Không thể xóa tài khoản")
+		return
+	}
+
+	// Invalidate tokens
+	if h.redis != nil {
+		h.redis.Del(c.Request.Context(), fmt.Sprintf("refresh:%s", userID.(uuid.UUID).String()))
+	}
+
+	response.OK(c, gin.H{"message": "Tài khoản đã được xóa. Bạn có thể liên hệ hỗ trợ để khôi phục."})
+}
+
 // ============================================
 // Experience Handler
 // ============================================
@@ -191,10 +283,21 @@ func (h *ExperienceHandler) List(c *gin.Context) {
 	minPrice, _ := strconv.ParseInt(c.Query("min_price"), 10, 64)
 	maxPrice, _ := strconv.ParseInt(c.Query("max_price"), 10, 64)
 
+	var guideID *uuid.UUID
+	if guideIDStr := c.Query("guide_id"); guideIDStr != "" {
+		parsedGuideID, err := uuid.Parse(guideIDStr)
+		if err != nil {
+			response.BadRequest(c, "HT-VAL-001", "Guide ID không hợp lệ")
+			return
+		}
+		guideID = &parsedGuideID
+	}
+
 	filter := repository.ExperienceFilter{
 		Category: c.Query("category"),
 		MinPrice: minPrice,
 		MaxPrice: maxPrice,
+		GuideID:  guideID,
 		Search:   c.Query("q"),
 		SortBy:   c.DefaultQuery("sort", "rating"),
 		Page:     page,
@@ -444,6 +547,10 @@ func (h *PlaceHandler) Search(c *gin.Context) {
 
 	places, err := h.placesSvc.TextSearch(c.Request.Context(), query, hueCenterLat, hueCenterLng)
 	if err != nil {
+		if errors.Is(err, service.ErrServiceNotConfigured) || errors.Is(err, service.ErrServiceUnavailable) {
+			response.ServiceUnavailable(c, "HT-PLACE-001", "Dịch vụ bản đồ hiện chưa sẵn sàng")
+			return
+		}
 		response.InternalError(c, "Không thể tìm kiếm: "+err.Error())
 		return
 	}
@@ -480,6 +587,10 @@ func (h *PlaceHandler) NearbyRestaurants(c *gin.Context) {
 
 	places, err := h.placesSvc.NearbySearch(c.Request.Context(), lat, lng, radius, placeType)
 	if err != nil {
+		if errors.Is(err, service.ErrServiceNotConfigured) || errors.Is(err, service.ErrServiceUnavailable) {
+			response.ServiceUnavailable(c, "HT-PLACE-002", "Dịch vụ địa điểm hiện chưa sẵn sàng")
+			return
+		}
 		response.InternalError(c, "Không thể tải quán ăn gần đây")
 		return
 	}
@@ -506,6 +617,10 @@ func (h *PlaceHandler) GetDirections(c *gin.Context) {
 
 	dir, err := h.placesSvc.GetDirections(c.Request.Context(), originLat, originLng, destLat, destLng, mode)
 	if err != nil {
+		if errors.Is(err, service.ErrServiceNotConfigured) || errors.Is(err, service.ErrServiceUnavailable) {
+			response.ServiceUnavailable(c, "HT-PLACE-003", "Dịch vụ chỉ đường hiện chưa sẵn sàng")
+			return
+		}
 		response.InternalError(c, "Không thể lấy đường đi")
 		return
 	}

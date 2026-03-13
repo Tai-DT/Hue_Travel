@@ -142,15 +142,25 @@ func (h *FavoriteHandler) Toggle(c *gin.Context) {
 
 func (h *FavoriteHandler) List(c *gin.Context) {
 	userID, _ := c.Get("user_id")
-	experiences, err := h.favRepo.ListByUser(c.Request.Context(), userID.(uuid.UUID))
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	perPage, _ := strconv.Atoi(c.DefaultQuery("per_page", "20"))
+
+	experiences, total, err := h.favRepo.ListByUser(c.Request.Context(), userID.(uuid.UUID), page, perPage)
 	if err != nil {
 		response.InternalError(c, "Không thể tải danh sách yêu thích")
 		return
 	}
 
-	response.OK(c, gin.H{
-		"favorites": experiences,
-		"total":     len(experiences),
+	totalPages := int(total) / perPage
+	if int(total)%perPage > 0 {
+		totalPages++
+	}
+
+	response.Paginated(c, experiences, response.Meta{
+		Page:       page,
+		PerPage:    perPage,
+		Total:      total,
+		TotalPages: totalPages,
 	})
 }
 
@@ -203,4 +213,36 @@ func (h *GuideHandler) TopGuides(c *gin.Context) {
 	}
 
 	response.OK(c, gin.H{"guides": guides})
+}
+
+// UpdateProfile — guide creates or updates their own profile
+func (h *GuideHandler) UpdateProfile(c *gin.Context) {
+	userID, _ := c.Get("user_id")
+
+	var req struct {
+		Specialties      []string `json:"specialties"`
+		ExperienceYears  int      `json:"experience_years" binding:"min=0,max=50"`
+		ResponseTimeMins int      `json:"response_time_mins" binding:"min=1"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "HT-VAL-001", "Dữ liệu không hợp lệ: "+err.Error())
+		return
+	}
+
+	gp := &model.GuideProfile{
+		UserID:           userID.(uuid.UUID),
+		Specialties:      req.Specialties,
+		ExperienceYears:  req.ExperienceYears,
+		ResponseTimeMins: req.ResponseTimeMins,
+	}
+
+	if err := h.guideRepo.CreateOrUpdate(c.Request.Context(), gp); err != nil {
+		response.InternalError(c, "Không thể cập nhật hồ sơ hướng dẫn viên")
+		return
+	}
+
+	// Re-fetch with user info
+	profile, _ := h.guideRepo.GetByUserID(c.Request.Context(), userID.(uuid.UUID))
+
+	response.OK(c, gin.H{"guide": profile, "message": "Đã cập nhật hồ sơ hướng dẫn viên"})
 }

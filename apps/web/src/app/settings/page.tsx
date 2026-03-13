@@ -1,7 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { adminApi } from '@/lib/api';
+import { adminApi, SystemHealth } from '@/lib/api';
+
+const SETTINGS_STORAGE_KEY = 'admin_settings_draft';
 
 const SETTINGS_SECTIONS = [
   {
@@ -55,11 +57,22 @@ const SETTINGS_SECTIONS = [
 export default function SettingsPage() {
   const [values, setValues] = useState<Record<string, string>>({});
   const [saved, setSaved] = useState(false);
-  const [health, setHealth] = useState<any>(null);
+  const [health, setHealth] = useState<SystemHealth | null>(null);
 
   useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const draft = localStorage.getItem(SETTINGS_STORAGE_KEY);
+      if (draft) {
+        try {
+          setValues(JSON.parse(draft));
+        } catch {
+          localStorage.removeItem(SETTINGS_STORAGE_KEY);
+        }
+      }
+    }
+
     adminApi.getHealth().then(res => {
-      if (res.success) setHealth(res.data);
+      if (res.success && res.data) setHealth(res.data);
     });
   }, []);
 
@@ -69,8 +82,21 @@ export default function SettingsPage() {
   };
 
   const handleSave = () => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(values));
+    }
     setSaved(true);
     setTimeout(() => setSaved(false), 3000);
+  };
+
+  const getDependencyStatus = (name: string) =>
+    health?.dependencies.find((dependency) => dependency.name === name)?.status;
+
+  const formatDependencyLabel = (status?: string) => {
+    if (status === 'connected') return 'Connected';
+    if (status === 'error') return 'Error';
+    if (status === 'not_configured') return 'Missing';
+    return '...';
   };
 
   return (
@@ -82,25 +108,31 @@ export default function SettingsPage() {
           onClick={handleSave}
           style={{ padding: '10px 24px', fontSize: 14 }}
         >
-          {saved ? '✅ Đã lưu!' : '💾 Lưu thay đổi'}
+          {saved ? '✅ Đã lưu nháp!' : '💾 Lưu bản nháp'}
         </button>
+      </div>
+
+      <div className="data-card" style={{ padding: 16, marginBottom: 24, color: 'var(--text-secondary)' }}>
+        Trang này hiện lưu cấu hình nháp trên trình duyệt. Backend chưa có endpoint để áp dụng các thay đổi này cho hệ thống.
       </div>
 
       {/* System Health */}
       <div className="stats-grid" style={{ marginBottom: 24 }}>
         <div className="stat-card success">
           <div className="stat-icon">🟢</div>
-          <div className="stat-value">{health?.status === 'ok' ? 'Online' : 'Checking...'}</div>
+          <div className="stat-value">
+            {health?.status === 'healthy' ? 'Online' : health?.status === 'degraded' ? 'Degraded' : 'Checking...'}
+          </div>
           <div className="stat-label">API Server</div>
         </div>
         <div className="stat-card info">
           <div className="stat-icon">🐘</div>
-          <div className="stat-value">{health?.database ? 'Connected' : '...'}</div>
+          <div className="stat-value">{formatDependencyLabel(getDependencyStatus('postgresql'))}</div>
           <div className="stat-label">PostgreSQL</div>
         </div>
         <div className="stat-card warning">
           <div className="stat-icon">⚡</div>
-          <div className="stat-value">{health?.redis ? 'Connected' : '...'}</div>
+          <div className="stat-value">{formatDependencyLabel(getDependencyStatus('redis'))}</div>
           <div className="stat-label">Redis</div>
         </div>
         <div className="stat-card primary">
@@ -127,7 +159,7 @@ export default function SettingsPage() {
                     {setting.label}
                   </label>
                   <input
-                    type={setting.type === 'password' ? 'password' : 'text'}
+                    type={setting.type}
                     placeholder={setting.placeholder}
                     value={values[setting.key] || ''}
                     onChange={(e) => handleChange(setting.key, e.target.value)}

@@ -10,10 +10,24 @@ import {
   RefreshControl,
 } from 'react-native';
 import { Colors, Fonts, Spacing, BorderRadius, Shadows } from '@/constants/theme';
-import api, { Experience } from '@/services/api';
+import api, { Experience, Guide } from '@/services/api';
 
 const { width } = Dimensions.get('window');
 const CARD_WIDTH = width * 0.7;
+
+type Props = {
+  onSelectExperience: (experience: Experience) => void;
+  onOpenExplore: () => void;
+  onOpenAI: () => void;
+  userName?: string;
+};
+
+type GuideCardItem = {
+  id: string;
+  name: string;
+  rating: string;
+  badge: string;
+};
 
 // Categories
 const CATEGORIES = [
@@ -25,27 +39,78 @@ const CATEGORIES = [
   { key: 'stay', label: 'Lưu trú', icon: '🏨' },
 ];
 
-export default function HomeScreen() {
+function formatGuideBadge(level?: string) {
+  switch (level) {
+    case 'platinum':
+      return '💎 Platinum';
+    case 'gold':
+      return '🥇 Gold';
+    case 'silver':
+      return '🥈 Silver';
+    case 'bronze':
+      return '🥉 Bronze';
+    default:
+      return '⭐ Huế Travel';
+  }
+}
+
+function toGuideCard(guide: Guide): GuideCardItem {
+  return {
+    id: guide.id,
+    name: guide.user?.full_name || 'Hướng dẫn viên Huế',
+    rating: (guide.avg_rating || 0).toFixed(1),
+    badge: formatGuideBadge(guide.badge_level),
+  };
+}
+
+function getGreetingName(userName?: string) {
+  if (!userName || userName === 'Người dùng mới') return 'bạn';
+  return userName.trim().split(' ').slice(-1)[0];
+}
+
+export default function HomeScreen({ onSelectExperience, onOpenExplore, onOpenAI, userName }: Props) {
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [experiences, setExperiences] = useState<Experience[]>([]);
+  const [guides, setGuides] = useState<GuideCardItem[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [experiencesError, setExperiencesError] = useState('');
+  const [guidesError, setGuidesError] = useState('');
 
   useEffect(() => {
     loadExperiences();
   }, [selectedCategory]);
+
+  useEffect(() => {
+    loadTopGuides();
+  }, []);
 
   const loadExperiences = async () => {
     const params = selectedCategory !== 'all' ? { category: selectedCategory } : {};
     const result = await api.getExperiences(params);
     if (result.success && result.data) {
       setExperiences(result.data);
+      setExperiencesError('');
+      return;
     }
+    setExperiences([]);
+    setExperiencesError(result.error?.message || 'Không thể tải trải nghiệm');
   };
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadExperiences();
+    await Promise.all([loadExperiences(), loadTopGuides()]);
     setRefreshing(false);
+  };
+
+  const loadTopGuides = async () => {
+    const result = await api.getTopGuides();
+    if (result.success && result.data?.guides?.length) {
+      setGuides(result.data.guides.map(toGuideCard));
+      setGuidesError('');
+      return;
+    }
+    setGuides([]);
+    setGuidesError(result.error?.message || 'Chưa có hướng dẫn viên nổi bật');
   };
 
   return (
@@ -59,7 +124,7 @@ export default function HomeScreen() {
         {/* Header */}
         <View style={styles.header}>
           <View>
-            <Text style={styles.greeting}>Xin chào! 👋</Text>
+            <Text style={styles.greeting}>Xin chào, {getGreetingName(userName)}! 👋</Text>
             <Text style={styles.headerTitle}>Khám phá Huế</Text>
           </View>
           <TouchableOpacity style={styles.profileButton}>
@@ -68,13 +133,13 @@ export default function HomeScreen() {
         </View>
 
         {/* Search Bar */}
-        <TouchableOpacity style={styles.searchBar} activeOpacity={0.7}>
+        <TouchableOpacity style={styles.searchBar} activeOpacity={0.7} onPress={onOpenExplore}>
           <Text style={styles.searchIcon}>🔍</Text>
           <Text style={styles.searchPlaceholder}>Tìm tour, quán ăn, trải nghiệm...</Text>
         </TouchableOpacity>
 
         {/* AI Trip Planner Banner */}
-        <TouchableOpacity style={styles.aiBanner} activeOpacity={0.85}>
+        <TouchableOpacity style={styles.aiBanner} activeOpacity={0.85} onPress={onOpenAI}>
           <View style={styles.aiBannerContent}>
             <View style={styles.aiIconContainer}>
               <Text style={styles.aiIcon}>🤖</Text>
@@ -122,41 +187,59 @@ export default function HomeScreen() {
         {/* Popular Experiences */}
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Trải nghiệm nổi bật</Text>
-          <TouchableOpacity>
+          <TouchableOpacity onPress={onOpenExplore}>
             <Text style={styles.seeAll}>Xem tất cả →</Text>
           </TouchableOpacity>
         </View>
 
-        <FlatList
-          data={experiences.length > 0 ? experiences : MOCK_EXPERIENCES}
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.experiencesList}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => <ExperienceCard experience={item} />}
-        />
+        {experiences.length > 0 ? (
+          <FlatList
+            data={experiences}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.experiencesList}
+            keyExtractor={(item) => item.id}
+            renderItem={({ item }) => (
+              <ExperienceCard experience={item} onPress={() => onSelectExperience(item)} />
+            )}
+          />
+        ) : (
+          <EmptyStateCard
+            title="Chưa có trải nghiệm phù hợp"
+            description={experiencesError || 'Hãy đổi danh mục hoặc kéo xuống để tải lại dữ liệu.'}
+            actionLabel="Khám phá ngay"
+            onPress={onOpenExplore}
+          />
+        )}
 
         {/* Top Guides */}
         <Text style={styles.sectionTitle}>Hướng dẫn viên hàng đầu</Text>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.guidesContainer}
-        >
-          {MOCK_GUIDES.map((guide) => (
-            <TouchableOpacity key={guide.id} style={styles.guideCard} activeOpacity={0.7}>
-              <View style={styles.guideAvatar}>
-                <Text style={styles.guideAvatarText}>{guide.name[0]}</Text>
-              </View>
-              <Text style={styles.guideName} numberOfLines={1}>{guide.name}</Text>
-              <View style={styles.guideRating}>
-                <Text style={styles.guideStar}>⭐</Text>
-                <Text style={styles.guideRatingText}>{guide.rating}</Text>
-              </View>
-              <Text style={styles.guideBadge}>{guide.badge}</Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
+        {guides.length > 0 ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.guidesContainer}
+          >
+            {guides.map((guide) => (
+              <TouchableOpacity key={guide.id} style={styles.guideCard} activeOpacity={0.7}>
+                <View style={styles.guideAvatar}>
+                  <Text style={styles.guideAvatarText}>{guide.name[0]}</Text>
+                </View>
+                <Text style={styles.guideName} numberOfLines={1}>{guide.name}</Text>
+                <View style={styles.guideRating}>
+                  <Text style={styles.guideStar}>⭐</Text>
+                  <Text style={styles.guideRatingText}>{guide.rating}</Text>
+                </View>
+                <Text style={styles.guideBadge}>{guide.badge}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        ) : (
+          <EmptyStateCard
+            title="Chưa có hướng dẫn viên nổi bật"
+            description={guidesError || 'Dữ liệu hướng dẫn viên sẽ xuất hiện khi hệ thống có thêm hồ sơ được duyệt.'}
+          />
+        )}
 
         <View style={{ height: 100 }} />
       </ScrollView>
@@ -164,14 +247,44 @@ export default function HomeScreen() {
   );
 }
 
+function EmptyStateCard({
+  title,
+  description,
+  actionLabel,
+  onPress,
+}: {
+  title: string;
+  description: string;
+  actionLabel?: string;
+  onPress?: () => void;
+}) {
+  return (
+    <View style={styles.emptyCard}>
+      <Text style={styles.emptyTitle}>{title}</Text>
+      <Text style={styles.emptyDescription}>{description}</Text>
+      {actionLabel && onPress ? (
+        <TouchableOpacity style={styles.emptyAction} onPress={onPress}>
+          <Text style={styles.emptyActionText}>{actionLabel}</Text>
+        </TouchableOpacity>
+      ) : null}
+    </View>
+  );
+}
+
 // Experience Card Component
-function ExperienceCard({ experience }: { experience: Experience }) {
+function ExperienceCard({
+  experience,
+  onPress,
+}: {
+  experience: Experience;
+  onPress: () => void;
+}) {
   const formatPrice = (price: number) => {
     return new Intl.NumberFormat('vi-VN').format(price) + '₫';
   };
 
   return (
-    <TouchableOpacity style={styles.expCard} activeOpacity={0.85}>
+    <TouchableOpacity style={styles.expCard} activeOpacity={0.85} onPress={onPress}>
       {/* Image */}
       <View style={styles.expImageContainer}>
         <View style={styles.expImagePlaceholder}>
@@ -212,70 +325,6 @@ function ExperienceCard({ experience }: { experience: Experience }) {
     </TouchableOpacity>
   );
 }
-
-// ============================================
-// Mock Data (will be replaced by API)
-// ============================================
-
-const MOCK_EXPERIENCES: Experience[] = [
-  {
-    id: '1',
-    title: 'Food Tour Đêm Huế — Ẩm thực đường phố',
-    description: '',
-    category: 'food',
-    price: 350000,
-    max_guests: 6,
-    duration_mins: 180,
-    meeting_point: '',
-    meeting_lat: 0,
-    meeting_lng: 0,
-    rating: 4.9,
-    rating_count: 89,
-    image_urls: [],
-    is_instant: true,
-    guide: { id: '1', full_name: 'Minh Tuấn', role: 'guide' },
-  },
-  {
-    id: '2',
-    title: 'Di sản Cung đình Huế — Khám phá lịch sử',
-    description: '',
-    category: 'tour',
-    price: 500000,
-    max_guests: 10,
-    duration_mins: 300,
-    meeting_point: '',
-    meeting_lat: 0,
-    meeting_lng: 0,
-    rating: 4.8,
-    rating_count: 38,
-    image_urls: [],
-    is_instant: false,
-    guide: { id: '2', full_name: 'Thanh Hà', role: 'guide' },
-  },
-  {
-    id: '3',
-    title: 'Workshop Nón Lá — Làm nón truyền thống',
-    description: '',
-    category: 'experience',
-    price: 250000,
-    max_guests: 8,
-    duration_mins: 120,
-    meeting_point: '',
-    meeting_lat: 0,
-    meeting_lng: 0,
-    rating: 4.7,
-    rating_count: 52,
-    image_urls: [],
-    is_instant: true,
-  },
-];
-
-const MOCK_GUIDES = [
-  { id: '1', name: 'Minh Tuấn', rating: 4.9, badge: '🥇 Gold' },
-  { id: '2', name: 'Thanh Hà', rating: 4.8, badge: '🥈 Silver' },
-  { id: '3', name: 'Bảo Long', rating: 4.7, badge: '🥈 Silver' },
-  { id: '4', name: 'Hoa Mai', rating: 4.6, badge: '🥉 Bronze' },
-];
 
 // ============================================
 // Styles
@@ -445,6 +494,38 @@ const styles = StyleSheet.create({
   experiencesList: {
     paddingHorizontal: Spacing.xl,
     gap: Spacing.base,
+  },
+  emptyCard: {
+    marginHorizontal: Spacing.xl,
+    marginBottom: Spacing.xl,
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.xl,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: Spacing.base,
+    gap: Spacing.sm,
+  },
+  emptyTitle: {
+    color: Colors.text,
+    fontSize: Fonts.sizes.base,
+    fontWeight: Fonts.weights.bold as any,
+  },
+  emptyDescription: {
+    color: Colors.textSecondary,
+    fontSize: Fonts.sizes.sm,
+    lineHeight: 20,
+  },
+  emptyAction: {
+    alignSelf: 'flex-start',
+    backgroundColor: Colors.primary,
+    borderRadius: BorderRadius.full,
+    paddingHorizontal: Spacing.base,
+    paddingVertical: Spacing.sm,
+  },
+  emptyActionText: {
+    color: Colors.textOnPrimary,
+    fontSize: Fonts.sizes.sm,
+    fontWeight: Fonts.weights.semibold as any,
   },
   expCard: {
     width: CARD_WIDTH,

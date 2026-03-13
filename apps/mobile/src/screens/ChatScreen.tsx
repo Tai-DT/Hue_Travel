@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -9,12 +9,10 @@ import {
   FlatList,
   KeyboardAvoidingView,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import { Colors, Fonts, Spacing, BorderRadius } from '@/constants/theme';
-
-// ============================================
-// Chat Room List Screen
-// ============================================
+import api, { ChatMessage as APIChatMessage, ChatRoom as APIChatRoom } from '@/services/api';
 
 type ChatRoom = {
   id: string;
@@ -36,117 +34,300 @@ type ChatMessage = {
   created_at: string;
 };
 
-// Mock Data
-const mockRooms: ChatRoom[] = [
-  { id: '1', other_name: 'Nguyễn Văn Minh', other_role: 'guide', last_message: 'Chào bạn! Mình sẽ đón bạn lúc 9h sáng nhé 🙌', last_message_time: '2 phút trước', unread_count: 2 },
-  { id: '2', other_name: 'Trần Thị Lan', other_role: 'guide', last_message: 'Tour ẩm thực rất tuyệt vời ạ!', last_message_time: '1 giờ trước', unread_count: 0 },
-  { id: '3', other_name: 'Hỗ trợ Huế Travel', other_role: 'admin', last_message: 'Cảm ơn bạn đã liên hệ. Chúng tôi sẽ xử lý ngay ạ.', last_message_time: 'Hôm qua', unread_count: 0 },
-  { id: '4', other_name: 'Lê Hoàng Dũng', other_role: 'guide', last_message: 'Điểm hẹn tại cổng Ngọ Môn nhé bạn 📍', last_message_time: '2 ngày trước', unread_count: 0 },
-];
+function formatRelativeTime(value?: string) {
+  if (!value) return 'Vừa xong';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Vừa xong';
 
-const mockMessages: ChatMessage[] = [
-  { id: '1', sender_id: 'other', sender_name: 'Nguyễn Văn Minh', content: 'Chào bạn! Mình là guide của bạn cho tour ngày mai 👋', message_type: 'text', is_mine: false, created_at: '08:30' },
-  { id: '2', sender_id: 'me', sender_name: 'Tôi', content: 'Chào anh Minh! Em rất mong chờ ạ', message_type: 'text', is_mine: true, created_at: '08:32' },
-  { id: '3', sender_id: 'other', sender_name: 'Nguyễn Văn Minh', content: 'Mình sẽ đón bạn tại 15 Lê Lợi lúc 9h sáng. Bạn nhớ mặc đồ thoải mái nhé!', message_type: 'text', is_mine: false, created_at: '08:33' },
-  { id: '4', sender_id: 'me', sender_name: 'Tôi', content: 'Dạ em sẽ đến đúng giờ ạ. Em có cần chuẩn bị gì không anh?', message_type: 'text', is_mine: true, created_at: '08:35' },
-  { id: '5', sender_id: 'other', sender_name: 'Nguyễn Văn Minh', content: 'Bạn chỉ cần mang theo nước uống và camera thôi nhé. Đồ ăn mình sẽ lo hết 🍜', message_type: 'text', is_mine: false, created_at: '08:36' },
-  { id: '6', sender_id: 'other', sender_name: 'Nguyễn Văn Minh', content: 'Chào bạn! Mình sẽ đón bạn lúc 9h sáng nhé 🙌', message_type: 'text', is_mine: false, created_at: '09:00' },
-];
+  const diffMs = Date.now() - date.getTime();
+  const diffMinutes = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMinutes / 60);
+  const diffDays = Math.floor(diffHours / 24);
 
-export function ChatListScreen({ onSelectRoom }: { onSelectRoom: (room: ChatRoom) => void }) {
+  if (diffMinutes < 1) return 'Vừa xong';
+  if (diffMinutes < 60) return `${diffMinutes} phút trước`;
+  if (diffHours < 24) return `${diffHours} giờ trước`;
+  return `${diffDays} ngày trước`;
+}
+
+function formatClock(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+}
+
+function normalizeRoom(room: APIChatRoom): ChatRoom {
+  return {
+    id: room.id,
+    other_name: room.other_participant?.full_name || 'Huế Travel',
+    other_avatar: room.other_participant?.avatar_url,
+    other_role: room.other_participant?.role || 'support',
+    last_message: room.last_message,
+    last_message_time: formatRelativeTime(room.last_message_at || room.updated_at),
+    unread_count: room.unread_count || 0,
+  };
+}
+
+function normalizeMessage(message: APIChatMessage, currentUserId: string | null): ChatMessage {
+  return {
+    id: message.id,
+    sender_id: message.sender_id,
+    sender_name: message.sender_name,
+    content: message.content,
+    message_type: message.message_type,
+    is_mine: currentUserId === message.sender_id,
+    created_at: formatClock(message.created_at),
+  };
+}
+
+export default function ChatScreen() {
+  const [rooms, setRooms] = useState<ChatRoom[]>([]);
+  const [selectedRoom, setSelectedRoom] = useState<ChatRoom | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [message, setMessage] = useState('');
+  const [search, setSearch] = useState('');
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [loadingRooms, setLoadingRooms] = useState(true);
+  const [loadingMessages, setLoadingMessages] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState('');
+
+  const scrollRef = useRef<FlatList>(null);
+
+  const filteredRooms = useMemo(
+    () => rooms.filter((room) => room.other_name.toLowerCase().includes(search.trim().toLowerCase())),
+    [rooms, search]
+  );
+
+  const loadRooms = async () => {
+    const [meResult, roomsResult] = await Promise.all([api.getMe(), api.getChatRooms()]);
+
+    if (meResult.success && meResult.data) {
+      const me = (meResult.data as any).user || meResult.data;
+      setCurrentUserId(me.id);
+    }
+
+    if (roomsResult.success && roomsResult.data?.rooms) {
+      setRooms(roomsResult.data.rooms.map(normalizeRoom));
+      setError('');
+    } else {
+      setError(roomsResult.error?.message || 'Không thể tải danh sách chat');
+    }
+
+    setLoadingRooms(false);
+  };
+
+  const loadMessages = async (roomId: string) => {
+    setLoadingMessages(true);
+
+    const result = await api.getChatMessages(roomId);
+    if (result.success && result.data?.messages) {
+      const normalized = [...result.data.messages]
+        .reverse()
+        .map((item) => normalizeMessage(item, currentUserId));
+      setMessages(normalized);
+      setError('');
+    } else {
+      setError(result.error?.message || 'Không thể tải tin nhắn');
+    }
+
+    setLoadingMessages(false);
+    setTimeout(() => scrollRef.current?.scrollToEnd(), 80);
+  };
+
+  useEffect(() => {
+    loadRooms();
+  }, []);
+
+  useEffect(() => {
+    if (selectedRoom) {
+      loadMessages(selectedRoom.id);
+    }
+  }, [selectedRoom, currentUserId]);
+
+  const sendMessage = async () => {
+    if (!selectedRoom || !message.trim() || sending) return;
+
+    setSending(true);
+    const result = await api.sendChatMessage(selectedRoom.id, message.trim());
+    setSending(false);
+
+    if (result.success && result.data?.message) {
+      const normalized = normalizeMessage(result.data.message, currentUserId);
+      setMessages((prev) => [...prev, normalized]);
+      setMessage('');
+      setTimeout(() => scrollRef.current?.scrollToEnd(), 80);
+      await loadRooms();
+      return;
+    }
+
+    setError(result.error?.message || 'Không thể gửi tin nhắn');
+  };
+
+  if (selectedRoom) {
+    return (
+      <KeyboardAvoidingView
+        style={styles.container}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={0}
+      >
+        <View style={styles.convHeader}>
+          <TouchableOpacity onPress={() => setSelectedRoom(null)} style={styles.backBtn}>
+            <Text style={styles.backIcon}>←</Text>
+          </TouchableOpacity>
+          <View style={styles.convHeaderAvatar}>
+            <Text style={styles.convHeaderInitial}>{selectedRoom.other_name[0]}</Text>
+          </View>
+          <View style={styles.convHeaderInfo}>
+            <Text style={styles.convHeaderName}>{selectedRoom.other_name}</Text>
+            <Text style={styles.convHeaderStatus}>
+              {selectedRoom.other_role === 'guide' ? 'Guide Huế Travel' : 'Hỗ trợ'}
+            </Text>
+          </View>
+        </View>
+
+        {error ? (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        ) : null}
+
+        {loadingMessages ? (
+          <View style={styles.loadingWrap}>
+            <ActivityIndicator color={Colors.primary} />
+            <Text style={styles.loadingText}>Đang tải tin nhắn...</Text>
+          </View>
+        ) : (
+          <FlatList
+            ref={scrollRef}
+            data={messages}
+            renderItem={({ item }) => <MessageBubble item={item} />}
+            keyExtractor={(item) => item.id}
+            style={styles.messageList}
+            contentContainerStyle={{ paddingVertical: Spacing.md }}
+            showsVerticalScrollIndicator={false}
+            onContentSizeChange={() => scrollRef.current?.scrollToEnd()}
+            ListEmptyComponent={
+              <View style={styles.empty}>
+                <Text style={styles.emptyIcon}>💬</Text>
+                <Text style={styles.emptyTitle}>Chưa có tin nhắn</Text>
+                <Text style={styles.emptyText}>Hãy gửi lời chào đầu tiên để bắt đầu cuộc trò chuyện.</Text>
+              </View>
+            }
+          />
+        )}
+
+        <View style={styles.inputContainer}>
+          <TextInput
+            style={styles.msgInput}
+            placeholder="Nhập tin nhắn..."
+            placeholderTextColor={Colors.textMuted}
+            value={message}
+            onChangeText={setMessage}
+            multiline
+            maxLength={500}
+          />
+          <TouchableOpacity
+            style={[styles.sendBtn, (!message.trim() || sending) && styles.sendBtnDisabled]}
+            onPress={sendMessage}
+            disabled={!message.trim() || sending}
+          >
+            {sending ? (
+              <ActivityIndicator color={Colors.textOnPrimary} size="small" />
+            ) : (
+              <Text style={styles.sendIcon}>➤</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+    );
+  }
+
   return (
     <View style={styles.container}>
-      {/* Header */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Tin nhắn</Text>
         <View style={styles.headerBadge}>
-          <Text style={styles.headerBadgeText}>2</Text>
+          <Text style={styles.headerBadgeText}>{rooms.reduce((sum, room) => sum + room.unread_count, 0)}</Text>
         </View>
       </View>
 
-      {/* Search */}
       <View style={styles.searchContainer}>
         <Text style={styles.searchIcon}>🔍</Text>
         <TextInput
           style={styles.searchInput}
           placeholder="Tìm kiếm tin nhắn..."
           placeholderTextColor={Colors.textMuted}
+          value={search}
+          onChangeText={setSearch}
         />
       </View>
 
-      {/* Room List */}
-      <ScrollView showsVerticalScrollIndicator={false}>
-        {mockRooms.map((room) => (
-          <TouchableOpacity
-            key={room.id}
-            style={styles.roomItem}
-            onPress={() => onSelectRoom(room)}
-            activeOpacity={0.7}
-          >
-            <View style={styles.roomAvatar}>
-              <Text style={styles.roomInitial}>{room.other_name[0]}</Text>
-              {room.other_role === 'guide' && (
-                <View style={styles.guideDot} />
-              )}
-            </View>
+      {error ? (
+        <View style={styles.errorBanner}>
+          <Text style={styles.errorText}>{error}</Text>
+        </View>
+      ) : null}
 
-            <View style={styles.roomInfo}>
-              <View style={styles.roomHeader}>
-                <Text style={styles.roomName} numberOfLines={1}>{room.other_name}</Text>
-                <Text style={styles.roomTime}>{room.last_message_time}</Text>
-              </View>
-              <View style={styles.roomFooter}>
-                <Text style={[styles.roomLastMsg, room.unread_count > 0 && styles.roomLastMsgUnread]} numberOfLines={1}>
-                  {room.last_message}
-                </Text>
-                {room.unread_count > 0 && (
-                  <View style={styles.unreadBadge}>
-                    <Text style={styles.unreadText}>{room.unread_count}</Text>
-                  </View>
-                )}
-              </View>
+      {loadingRooms ? (
+        <View style={styles.loadingWrap}>
+          <ActivityIndicator color={Colors.primary} />
+          <Text style={styles.loadingText}>Đang tải phòng chat...</Text>
+        </View>
+      ) : (
+        <ScrollView showsVerticalScrollIndicator={false}>
+          {filteredRooms.length === 0 ? (
+            <View style={styles.empty}>
+              <Text style={styles.emptyIcon}>📭</Text>
+              <Text style={styles.emptyTitle}>Chưa có cuộc trò chuyện nào</Text>
+              <Text style={styles.emptyText}>Khi bạn nhắn với guide hoặc hỗ trợ, phòng chat sẽ xuất hiện ở đây.</Text>
             </View>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
+          ) : (
+            filteredRooms.map((room) => (
+              <TouchableOpacity
+                key={room.id}
+                style={styles.roomItem}
+                onPress={() => setSelectedRoom(room)}
+                activeOpacity={0.7}
+              >
+                <View style={styles.roomAvatar}>
+                  <Text style={styles.roomInitial}>{room.other_name[0]}</Text>
+                  {room.other_role === 'guide' ? <View style={styles.guideDot} /> : null}
+                </View>
+
+                <View style={styles.roomInfo}>
+                  <View style={styles.roomHeader}>
+                    <Text style={styles.roomName} numberOfLines={1}>{room.other_name}</Text>
+                    <Text style={styles.roomTime}>{room.last_message_time}</Text>
+                  </View>
+                  <View style={styles.roomFooter}>
+                    <Text style={[styles.roomLastMsg, room.unread_count > 0 && styles.roomLastMsgUnread]} numberOfLines={1}>
+                      {room.last_message || 'Chưa có tin nhắn nào'}
+                    </Text>
+                    {room.unread_count > 0 ? (
+                      <View style={styles.unreadBadge}>
+                        <Text style={styles.unreadText}>{room.unread_count}</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                </View>
+              </TouchableOpacity>
+            ))
+          )}
+        </ScrollView>
+      )}
     </View>
   );
 }
 
-// ============================================
-// Chat Conversation Screen
-// ============================================
-
-export function ChatConversationScreen({ room, onBack }: { room: ChatRoom; onBack: () => void }) {
-  const [message, setMessage] = useState('');
-  const [messages, setMessages] = useState(mockMessages);
-  const scrollRef = useRef<FlatList>(null);
-
-  const sendMessage = () => {
-    if (!message.trim()) return;
-
-    const newMsg: ChatMessage = {
-      id: String(Date.now()),
-      sender_id: 'me',
-      sender_name: 'Tôi',
-      content: message.trim(),
-      message_type: 'text',
-      is_mine: true,
-      created_at: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
-    };
-
-    setMessages((prev) => [...prev, newMsg]);
-    setMessage('');
-    setTimeout(() => scrollRef.current?.scrollToEnd(), 100);
-  };
-
-  const renderMessage = ({ item }: { item: ChatMessage }) => (
+function MessageBubble({ item }: { item: ChatMessage }) {
+  return (
     <View style={[msgStyles.bubble, item.is_mine ? msgStyles.mine : msgStyles.other]}>
-      {!item.is_mine && (
+      {!item.is_mine ? (
         <View style={msgStyles.avatarSmall}>
           <Text style={msgStyles.avatarSmallText}>{item.sender_name[0]}</Text>
         </View>
-      )}
+      ) : null}
       <View style={[msgStyles.content, item.is_mine ? msgStyles.contentMine : msgStyles.contentOther]}>
         <Text style={[msgStyles.text, item.is_mine ? msgStyles.textMine : msgStyles.textOther]}>
           {item.content}
@@ -157,132 +338,83 @@ export function ChatConversationScreen({ room, onBack }: { room: ChatRoom; onBac
       </View>
     </View>
   );
-
-  return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={0}
-    >
-      {/* Header */}
-      <View style={styles.convHeader}>
-        <TouchableOpacity onPress={onBack} style={styles.backBtn}>
-          <Text style={styles.backIcon}>←</Text>
-        </TouchableOpacity>
-        <View style={styles.convHeaderAvatar}>
-          <Text style={styles.convHeaderInitial}>{room.other_name[0]}</Text>
-        </View>
-        <View style={styles.convHeaderInfo}>
-          <Text style={styles.convHeaderName}>{room.other_name}</Text>
-          <Text style={styles.convHeaderStatus}>
-            {room.other_role === 'guide' ? '🟢 Đang hoạt động' : 'Hỗ trợ'}
-          </Text>
-        </View>
-        <TouchableOpacity style={styles.convHeaderAction}>
-          <Text style={{ fontSize: 20 }}>📞</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Booking Context Card */}
-      <View style={styles.contextCard}>
-        <Text style={styles.contextEmoji}>🏛️</Text>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.contextTitle}>Khám phá Đại Nội Huế</Text>
-          <Text style={styles.contextMeta}>📅 Ngày mai, 09:00 • 3 khách</Text>
-        </View>
-        <TouchableOpacity style={styles.contextBtn}>
-          <Text style={styles.contextBtnText}>Chi tiết</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Messages */}
-      <FlatList
-        ref={scrollRef}
-        data={messages}
-        renderItem={renderMessage}
-        keyExtractor={(item) => item.id}
-        style={styles.messageList}
-        contentContainerStyle={{ paddingVertical: Spacing.md }}
-        showsVerticalScrollIndicator={false}
-        onContentSizeChange={() => scrollRef.current?.scrollToEnd()}
-      />
-
-      {/* Quick Actions */}
-      <View style={styles.quickActions}>
-        {['📍 Gửi vị trí', '📷 Ảnh', '⏰ Đổi giờ'].map((action, i) => (
-          <TouchableOpacity key={i} style={styles.quickChip}>
-            <Text style={styles.quickChipText}>{action}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      {/* Input */}
-      <View style={styles.inputContainer}>
-        <TouchableOpacity style={styles.attachBtn}>
-          <Text style={{ fontSize: 22 }}>+</Text>
-        </TouchableOpacity>
-        <TextInput
-          style={styles.msgInput}
-          placeholder="Nhập tin nhắn..."
-          placeholderTextColor={Colors.textMuted}
-          value={message}
-          onChangeText={setMessage}
-          multiline
-          maxLength={500}
-        />
-        <TouchableOpacity
-          style={[styles.sendBtn, !message.trim() && styles.sendBtnDisabled]}
-          onPress={sendMessage}
-          disabled={!message.trim()}
-        >
-          <Text style={styles.sendIcon}>➤</Text>
-        </TouchableOpacity>
-      </View>
-    </KeyboardAvoidingView>
-  );
 }
-
-// ============================================
-// Styles
-// ============================================
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
-
-  // Header
   header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: Spacing.xl, paddingTop: 60, paddingBottom: Spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.xl,
+    paddingTop: 60,
+    paddingBottom: Spacing.md,
   },
   headerTitle: { fontSize: Fonts.sizes.xxl, fontWeight: Fonts.weights.bold as any, color: Colors.text },
   headerBadge: {
-    backgroundColor: Colors.error, width: 24, height: 24, borderRadius: 12,
-    justifyContent: 'center', alignItems: 'center',
+    backgroundColor: Colors.error,
+    minWidth: 24,
+    height: 24,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 4,
   },
   headerBadgeText: { fontSize: Fonts.sizes.xs, fontWeight: Fonts.weights.bold as any, color: '#FFF' },
-
-  // Search
   searchContainer: {
-    flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.surface,
-    marginHorizontal: Spacing.xl, borderRadius: BorderRadius.xl, paddingHorizontal: Spacing.md,
-    marginBottom: Spacing.md, borderWidth: 1, borderColor: Colors.border,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.surface,
+    marginHorizontal: Spacing.xl,
+    borderRadius: BorderRadius.xl,
+    paddingHorizontal: Spacing.md,
+    marginBottom: Spacing.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
   },
   searchIcon: { fontSize: 16, marginRight: Spacing.sm },
   searchInput: { flex: 1, paddingVertical: Spacing.md, color: Colors.text, fontSize: Fonts.sizes.md },
-
-  // Room List
+  errorBanner: {
+    marginHorizontal: Spacing.xl,
+    marginBottom: Spacing.md,
+    padding: Spacing.base,
+    backgroundColor: 'rgba(244,67,54,0.12)',
+    borderRadius: BorderRadius.lg,
+  },
+  errorText: { color: Colors.error, fontSize: Fonts.sizes.sm },
+  loadingWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: Spacing.sm },
+  loadingText: { color: Colors.textSecondary, fontSize: Fonts.sizes.sm },
+  empty: { alignItems: 'center', paddingTop: 80, paddingHorizontal: Spacing.xl },
+  emptyIcon: { fontSize: 48, marginBottom: Spacing.md },
+  emptyTitle: { fontSize: Fonts.sizes.lg, fontWeight: Fonts.weights.bold as any, color: Colors.text, marginBottom: Spacing.sm },
+  emptyText: { fontSize: Fonts.sizes.md, color: Colors.textSecondary, textAlign: 'center' },
   roomItem: {
-    flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.xl,
-    paddingVertical: Spacing.md, gap: Spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.xl,
+    paddingVertical: Spacing.md,
+    gap: Spacing.md,
   },
   roomAvatar: {
-    width: 52, height: 52, borderRadius: 26, backgroundColor: Colors.surfaceLight,
-    justifyContent: 'center', alignItems: 'center', position: 'relative',
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: Colors.surfaceLight,
+    justifyContent: 'center',
+    alignItems: 'center',
+    position: 'relative',
   },
   roomInitial: { fontSize: 22, fontWeight: Fonts.weights.bold as any, color: Colors.primary },
   guideDot: {
-    position: 'absolute', bottom: 2, right: 2, width: 12, height: 12,
-    borderRadius: 6, backgroundColor: Colors.success, borderWidth: 2, borderColor: Colors.background,
+    position: 'absolute',
+    bottom: 2,
+    right: 2,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: Colors.success,
+    borderWidth: 2,
+    borderColor: Colors.background,
   },
   roomInfo: { flex: 1 },
   roomHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
@@ -292,76 +424,71 @@ const styles = StyleSheet.create({
   roomLastMsg: { fontSize: Fonts.sizes.sm, color: Colors.textMuted, flex: 1 },
   roomLastMsgUnread: { color: Colors.text, fontWeight: Fonts.weights.medium as any },
   unreadBadge: {
-    backgroundColor: Colors.primary, minWidth: 20, height: 20, borderRadius: 10,
-    justifyContent: 'center', alignItems: 'center', paddingHorizontal: 6,
+    backgroundColor: Colors.primary,
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 6,
   },
   unreadText: { fontSize: 11, fontWeight: Fonts.weights.bold as any, color: Colors.textOnPrimary },
-
-  // Conversation Header
   convHeader: {
-    flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.base,
-    paddingTop: 55, paddingBottom: Spacing.md, backgroundColor: Colors.surface,
-    borderBottomWidth: 1, borderBottomColor: Colors.border, gap: Spacing.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.base,
+    paddingTop: 55,
+    paddingBottom: Spacing.md,
+    backgroundColor: Colors.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+    gap: Spacing.sm,
   },
   backBtn: { padding: Spacing.sm },
   backIcon: { fontSize: 24, color: Colors.text },
   convHeaderAvatar: {
-    width: 40, height: 40, borderRadius: 20, backgroundColor: Colors.surfaceLight,
-    justifyContent: 'center', alignItems: 'center',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: Colors.surfaceLight,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   convHeaderInitial: { fontSize: 18, fontWeight: Fonts.weights.bold as any, color: Colors.primary },
   convHeaderInfo: { flex: 1 },
   convHeaderName: { fontSize: Fonts.sizes.base, fontWeight: Fonts.weights.semibold as any, color: Colors.text },
-  convHeaderStatus: { fontSize: Fonts.sizes.xs, color: Colors.success },
-  convHeaderAction: { padding: Spacing.sm },
-
-  // Context Card
-  contextCard: {
-    flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(249,168,37,0.1)',
-    marginHorizontal: Spacing.base, marginTop: Spacing.sm, padding: Spacing.md,
-    borderRadius: BorderRadius.lg, gap: Spacing.sm, borderWidth: 1, borderColor: 'rgba(249,168,37,0.2)',
-  },
-  contextEmoji: { fontSize: 24 },
-  contextTitle: { fontSize: Fonts.sizes.sm, fontWeight: Fonts.weights.semibold as any, color: Colors.text },
-  contextMeta: { fontSize: Fonts.sizes.xs, color: Colors.textSecondary, marginTop: 2 },
-  contextBtn: {
-    backgroundColor: Colors.primary, paddingHorizontal: Spacing.md,
-    paddingVertical: 6, borderRadius: BorderRadius.sm,
-  },
-  contextBtnText: { fontSize: Fonts.sizes.xs, fontWeight: Fonts.weights.bold as any, color: Colors.textOnPrimary },
-
-  // Messages
+  convHeaderStatus: { fontSize: Fonts.sizes.xs, color: Colors.textSecondary },
   messageList: { flex: 1, paddingHorizontal: Spacing.base },
-
-  // Quick Actions
-  quickActions: {
-    flexDirection: 'row', paddingHorizontal: Spacing.base, paddingVertical: Spacing.sm,
+  inputContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    paddingHorizontal: Spacing.base,
+    paddingVertical: Spacing.sm,
+    paddingBottom: 34,
+    backgroundColor: Colors.surface,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
     gap: Spacing.sm,
   },
-  quickChip: {
-    backgroundColor: Colors.surface, paddingHorizontal: Spacing.md, paddingVertical: 6,
-    borderRadius: BorderRadius.full, borderWidth: 1, borderColor: Colors.border,
-  },
-  quickChipText: { fontSize: Fonts.sizes.xs, color: Colors.textSecondary },
-
-  // Input
-  inputContainer: {
-    flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: Spacing.base,
-    paddingVertical: Spacing.sm, paddingBottom: 34, backgroundColor: Colors.surface,
-    borderTopWidth: 1, borderTopColor: Colors.border, gap: Spacing.sm,
-  },
-  attachBtn: {
-    width: 40, height: 40, borderRadius: 20, backgroundColor: Colors.surfaceLight,
-    justifyContent: 'center', alignItems: 'center',
-  },
   msgInput: {
-    flex: 1, backgroundColor: Colors.surfaceElevated, borderRadius: 20,
-    paddingHorizontal: Spacing.base, paddingVertical: Spacing.sm, color: Colors.text,
-    fontSize: Fonts.sizes.md, maxHeight: 100, borderWidth: 1, borderColor: Colors.border,
+    flex: 1,
+    backgroundColor: Colors.surfaceElevated,
+    borderRadius: 20,
+    paddingHorizontal: Spacing.base,
+    paddingVertical: Spacing.sm,
+    color: Colors.text,
+    fontSize: Fonts.sizes.md,
+    maxHeight: 100,
+    borderWidth: 1,
+    borderColor: Colors.border,
   },
   sendBtn: {
-    width: 40, height: 40, borderRadius: 20, backgroundColor: Colors.primary,
-    justifyContent: 'center', alignItems: 'center',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: Colors.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   sendBtnDisabled: { backgroundColor: Colors.surfaceLight },
   sendIcon: { fontSize: 18, color: Colors.textOnPrimary },
@@ -371,39 +498,29 @@ const msgStyles = StyleSheet.create({
   bubble: { flexDirection: 'row', marginBottom: Spacing.sm, maxWidth: '80%' },
   mine: { alignSelf: 'flex-end', flexDirection: 'row-reverse' },
   other: { alignSelf: 'flex-start' },
-
   avatarSmall: {
-    width: 28, height: 28, borderRadius: 14, backgroundColor: Colors.surfaceLight,
-    justifyContent: 'center', alignItems: 'center', marginRight: Spacing.xs,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: Colors.surfaceLight,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: Spacing.xs,
     marginTop: 4,
   },
   avatarSmallText: { fontSize: 12, fontWeight: Fonts.weights.bold as any, color: Colors.primary },
-
   content: { borderRadius: 18, paddingHorizontal: Spacing.base, paddingVertical: Spacing.sm },
   contentMine: { backgroundColor: Colors.primary, borderBottomRightRadius: 4 },
   contentOther: {
-    backgroundColor: Colors.surface, borderBottomLeftRadius: 4,
-    borderWidth: 1, borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+    borderBottomLeftRadius: 4,
+    borderWidth: 1,
+    borderColor: Colors.border,
   },
-
   text: { fontSize: Fonts.sizes.md, lineHeight: 20 },
   textMine: { color: Colors.textOnPrimary },
   textOther: { color: Colors.text },
-
   time: { fontSize: 10, marginTop: 4 },
   timeMine: { color: 'rgba(255,255,255,0.6)', textAlign: 'right' as const },
   timeOther: { color: Colors.textMuted },
 });
-
-// ============================================
-// Default Export — combined screen
-// ============================================
-export default function ChatScreen() {
-  const [selectedRoom, setSelectedRoom] = useState<ChatRoom | null>(null);
-
-  if (selectedRoom) {
-    return <ChatConversationScreen room={selectedRoom} onBack={() => setSelectedRoom(null)} />;
-  }
-
-  return <ChatListScreen onSelectRoom={setSelectedRoom} />;
-}

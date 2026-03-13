@@ -74,7 +74,10 @@ func TestSearchService_Search(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := svc.Search(context.Background(), tt.query, tt.filters)
+			result, err := svc.Search(context.Background(), tt.query, tt.filters)
+			if err != nil {
+				t.Fatalf("Search() unexpected error: %v", err)
+			}
 
 			if tt.wantZero && result.TotalCount != 0 {
 				t.Errorf("expected 0 results, got %d", result.TotalCount)
@@ -157,7 +160,10 @@ func TestSearchService_IndexStats(t *testing.T) {
 func TestSearchService_Facets(t *testing.T) {
 	svc := NewSearchService("", "")
 
-	result := svc.Search(context.Background(), "", SearchFilters{})
+	result, err := svc.Search(context.Background(), "", SearchFilters{})
+	if err != nil {
+		t.Fatalf("Search() unexpected error: %v", err)
+	}
 	if result.Facets == nil {
 		t.Fatal("expected facets to be non-nil")
 	}

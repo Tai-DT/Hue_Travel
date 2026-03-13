@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -68,7 +69,7 @@ func (h *PaymentHandler) CreatePayment(c *gin.Context) {
 		return
 	}
 
-	totalAmount := booking.TotalPrice + booking.ServiceFee
+	totalAmount := booking.TotalPrice
 
 	paymentReq := service.PaymentRequest{
 		BookingID:   bookingID,
@@ -80,7 +81,28 @@ func (h *PaymentHandler) CreatePayment(c *gin.Context) {
 
 	result, err := h.vnpayService.CreatePaymentURL(paymentReq)
 	if err != nil {
+		if errors.Is(err, service.ErrServiceNotConfigured) || errors.Is(err, service.ErrServiceUnavailable) {
+			response.ServiceUnavailable(c, "HT-PAY-003", "Cổng thanh toán hiện chưa sẵn sàng")
+			return
+		}
 		response.InternalError(c, "Không thể tạo thanh toán")
+		return
+	}
+
+	if !h.vnpayService.IsConfigured() {
+		now := time.Now()
+		_ = h.bookingRepo.UpdateStatus(c.Request.Context(), bookingID, "confirmed")
+		_ = h.bookingRepo.UpdatePaymentInfo(c.Request.Context(), bookingID, result.TxnRef, &now)
+		_ = h.userRepo.AddXP(c.Request.Context(), booking.TravelerID, 50)
+
+		response.OK(c, gin.H{
+			"payment_url": result.PaymentURL,
+			"txn_ref":     result.TxnRef,
+			"amount":      totalAmount,
+			"expires_in":  900,
+			"status":      "success",
+			"message":     "Mock payment thành công. Booking đã được xác nhận.",
+		})
 		return
 	}
 
@@ -122,8 +144,8 @@ func (h *PaymentHandler) PaymentCallback(c *gin.Context) {
 		h.userRepo.AddXP(c.Request.Context(), booking.TravelerID, 50)
 
 		response.OK(c, gin.H{
-			"status":  "success",
-			"message": "Thanh toán thành công! Booking đã được xác nhận.",
+			"status":         "success",
+			"message":        "Thanh toán thành công! Booking đã được xác nhận.",
 			"booking_id":     booking.ID,
 			"transaction_no": callback.TransactionNo,
 		})

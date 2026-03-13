@@ -41,7 +41,8 @@ func (h *ChatHandler) ListRooms(c *gin.Context) {
 // GetOrCreateRoom — tạo/lấy phòng chat direct
 func (h *ChatHandler) GetOrCreateRoom(c *gin.Context) {
 	var req struct {
-		RecipientID string `json:"recipient_id" binding:"required"`
+		RecipientID string `json:"recipient_id"`
+		OtherUserID string `json:"other_user_id"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -49,8 +50,21 @@ func (h *ChatHandler) GetOrCreateRoom(c *gin.Context) {
 		return
 	}
 
+	recipientIDStr := req.RecipientID
+	if recipientIDStr == "" {
+		recipientIDStr = req.OtherUserID
+	}
+	if recipientIDStr == "" {
+		response.BadRequest(c, "HT-VAL-001", "Thiếu recipient_id")
+		return
+	}
+
 	userID, _ := c.Get("user_id")
-	recipientID, _ := uuid.Parse(req.RecipientID)
+	recipientID, err := uuid.Parse(recipientIDStr)
+	if err != nil {
+		response.BadRequest(c, "HT-VAL-001", "Recipient ID không hợp lệ")
+		return
+	}
 
 	room, err := h.chatRepo.GetOrCreateDirectRoom(
 		c.Request.Context(),
@@ -103,6 +117,7 @@ func (h *ChatHandler) SendMessage(c *gin.Context) {
 	var req struct {
 		Content     string  `json:"content" binding:"required"`
 		MessageType string  `json:"message_type"` // text, image, location
+		Type        string  `json:"type"`
 		Metadata    *string `json:"metadata,omitempty"`
 	}
 
@@ -111,6 +126,9 @@ func (h *ChatHandler) SendMessage(c *gin.Context) {
 		return
 	}
 
+	if req.MessageType == "" {
+		req.MessageType = req.Type
+	}
 	if req.MessageType == "" {
 		req.MessageType = "text"
 	}

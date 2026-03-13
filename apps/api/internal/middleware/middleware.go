@@ -24,13 +24,7 @@ func CORS() gin.HandlerFunc {
 		allowedOrigins := getAllowedOrigins()
 
 		// Check if origin is allowed
-		allowed := false
-		for _, ao := range allowedOrigins {
-			if ao == "*" || ao == origin {
-				allowed = true
-				break
-			}
-		}
+		allowed := isOriginAllowed(origin, allowedOrigins)
 
 		if allowed && origin != "" {
 			c.Header("Access-Control-Allow-Origin", origin)
@@ -52,6 +46,25 @@ func CORS() gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+func isOriginAllowed(origin string, allowedOrigins []string) bool {
+	if origin == "" {
+		return false
+	}
+
+	for _, ao := range allowedOrigins {
+		if ao == "*" || ao == origin {
+			return true
+		}
+	}
+
+	// In development, allow any localhost / loopback origin to avoid port friction.
+	if strings.HasPrefix(origin, "http://localhost:") || strings.HasPrefix(origin, "http://127.0.0.1:") {
+		return true
+	}
+
+	return false
 }
 
 // getAllowedOrigins returns allowed CORS origins based on environment
@@ -382,6 +395,17 @@ func Recovery() gin.HandlerFunc {
 				})
 			}
 		}()
+		c.Next()
+	}
+}
+
+// ============================================
+// API Version Middleware — Sets X-API-Version header
+// ============================================
+
+func APIVersion(version string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Header("X-API-Version", version)
 		c.Next()
 	}
 }

@@ -20,23 +20,29 @@ import (
 // ============================================
 
 type FileUploadService struct {
-	endpoint   string
-	bucket     string
-	accessKey  string
-	secretKey  string
-	useSSL     bool
-	client     *minio.Client
-	httpClient *http.Client
+	endpoint        string
+	bucket          string
+	accessKey       string
+	secretKey       string
+	useSSL          bool
+	client          *minio.Client
+	httpClient      *http.Client
+	fallbackEnabled bool
 }
 
 func NewFileUploadService(endpoint, accessKey, secretKey, bucket string, useSSL bool) *FileUploadService {
+	return NewFileUploadServiceWithFallback(endpoint, accessKey, secretKey, bucket, useSSL, true)
+}
+
+func NewFileUploadServiceWithFallback(endpoint, accessKey, secretKey, bucket string, useSSL bool, fallbackEnabled bool) *FileUploadService {
 	svc := &FileUploadService{
-		endpoint:   endpoint,
-		bucket:     bucket,
-		accessKey:  accessKey,
-		secretKey:  secretKey,
-		useSSL:     useSSL,
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		endpoint:        endpoint,
+		bucket:          bucket,
+		accessKey:       accessKey,
+		secretKey:       secretKey,
+		useSSL:          useSSL,
+		httpClient:      &http.Client{Timeout: 30 * time.Second},
+		fallbackEnabled: fallbackEnabled,
 	}
 
 	// Initialize MinIO client
@@ -74,11 +80,11 @@ func NewFileUploadService(endpoint, accessKey, secretKey, bucket string, useSSL 
 
 // UploadResult represents the result of a file upload
 type UploadResult struct {
-	Key        string `json:"key"`
-	URL        string `json:"url"`
-	FileName   string `json:"file_name"`
-	FileSize   int64  `json:"file_size"`
-	MimeType   string `json:"mime_type"`
+	Key        string    `json:"key"`
+	URL        string    `json:"url"`
+	FileName   string    `json:"file_name"`
+	FileSize   int64     `json:"file_size"`
+	MimeType   string    `json:"mime_type"`
 	UploadedAt time.Time `json:"uploaded_at"`
 }
 
@@ -158,6 +164,10 @@ func (s *FileUploadService) Upload(ctx context.Context, folder string, filename 
 		}, nil
 	}
 
+	if !s.fallbackEnabled {
+		return nil, fmt.Errorf("%w: object storage is not configured", ErrServiceNotConfigured)
+	}
+
 	// Mock mode — return generated URL without actual upload
 	log.Printf("📁 [MOCK] Would upload: %s (%d bytes)", key, size)
 	return &UploadResult{
@@ -174,6 +184,9 @@ func (s *FileUploadService) Upload(ctx context.Context, folder string, filename 
 func (s *FileUploadService) Delete(ctx context.Context, key string) error {
 	if s.client != nil {
 		return s.client.RemoveObject(ctx, s.bucket, key, minio.RemoveObjectOptions{})
+	}
+	if !s.fallbackEnabled {
+		return fmt.Errorf("%w: object storage is not configured", ErrServiceNotConfigured)
 	}
 	log.Printf("📁 [MOCK] Would delete: %s", key)
 	return nil

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -7,33 +7,65 @@ import {
   TouchableOpacity,
   RefreshControl,
   Alert,
+  Modal,
+  TextInput,
+  ActivityIndicator,
 } from 'react-native';
 import { Colors, Fonts, Spacing, BorderRadius } from '@/constants/theme';
-import api from '@/services/api';
+import api, { User } from '@/services/api';
 
-type UserProfile = {
-  id: string;
+type EditForm = {
   full_name: string;
-  phone?: string;
-  email?: string;
-  role: string;
-  level: string;
-  xp: number;
-  avatar_url?: string;
+  email: string;
+  bio: string;
 };
 
-export default function ProfileScreen() {
-  const [user, setUser] = useState<UserProfile | null>(null);
+type Props = {
+  highlightIncompleteProfile?: boolean;
+  onProfileUpdated?: (user: User) => void;
+  onLogout?: () => void;
+};
+
+export default function ProfileScreen({
+  highlightIncompleteProfile = false,
+  onProfileUpdated,
+  onLogout,
+}: Props) {
+  const [user, setUser] = useState<User | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [form, setForm] = useState<EditForm>({
+    full_name: '',
+    email: '',
+    bio: '',
+  });
+
+  const syncForm = useCallback((nextUser: User | null) => {
+    setForm({
+      full_name: nextUser?.full_name || '',
+      email: nextUser?.email || '',
+      bio: nextUser?.bio || '',
+    });
+  }, []);
 
   const loadProfile = useCallback(async () => {
     const res = await api.getMe();
     if (res.success && res.data) {
-      setUser((res.data as any).user || res.data);
+      const nextUser = (res.data as any).user || res.data;
+      setUser(nextUser);
+      syncForm(nextUser);
+      setError('');
+      return;
     }
-  }, []);
 
-  useEffect(() => { loadProfile(); }, [loadProfile]);
+    setError(res.error?.message || 'Không thể tải hồ sơ');
+  }, [syncForm]);
+
+  useEffect(() => {
+    loadProfile();
+  }, [loadProfile]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -49,23 +81,52 @@ export default function ProfileScreen() {
         style: 'destructive',
         onPress: async () => {
           await api.logout();
-          api.setToken('');
+          api.setToken(null);
+          onLogout?.();
         },
       },
     ]);
   };
 
+  const handleSaveProfile = async () => {
+    if (!form.full_name.trim()) {
+      setError('Vui lòng nhập họ tên');
+      return;
+    }
+
+    setSaving(true);
+    const res = await api.updateProfile({
+      full_name: form.full_name.trim(),
+      email: form.email.trim() || undefined,
+      bio: form.bio.trim() || undefined,
+    });
+    setSaving(false);
+
+    if (res.success && res.data?.user) {
+      setUser(res.data.user);
+      syncForm(res.data.user);
+      setEditing(false);
+      setError('');
+      onProfileUpdated?.(res.data.user);
+      return;
+    }
+
+    setError(res.error?.message || 'Không thể cập nhật hồ sơ');
+  };
+
   const displayName = user?.full_name || 'Traveler';
   const displayLevel = user?.level || 'Khách mới';
   const displayXP = user?.xp || 0;
+  const displayRole = user?.role ? user.role.toUpperCase() : 'TRAVELER';
 
   return (
     <View style={styles.container}>
       <ScrollView
         showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />
+        }
       >
-        {/* Header */}
         <View style={styles.header}>
           <View style={styles.avatar}>
             <Text style={styles.avatarText}>{displayName[0]}</Text>
@@ -74,33 +135,54 @@ export default function ProfileScreen() {
           <View style={styles.levelBadge}>
             <Text style={styles.levelText}>🏆 {displayLevel}</Text>
           </View>
-          <Text style={styles.xpText}>{displayXP} XP — Đặt trải nghiệm để nhận XP!</Text>
+          <Text style={styles.xpText}>{displayXP} XP</Text>
         </View>
 
-        {/* Stats */}
+        <View style={styles.contactCard}>
+          {highlightIncompleteProfile ? (
+            <View style={styles.profileBanner}>
+              <Text style={styles.profileBannerTitle}>Hoàn thiện hồ sơ</Text>
+              <Text style={styles.profileBannerText}>
+                Thêm tên thật và email để nhận đề xuất phù hợp hơn và dễ khôi phục tài khoản.
+              </Text>
+            </View>
+          ) : null}
+
+          <View style={styles.contactHeader}>
+            <View>
+              <Text style={styles.contactTitle}>Thông tin tài khoản</Text>
+              <Text style={styles.contactSub}>Role: {displayRole}</Text>
+            </View>
+            <TouchableOpacity style={styles.editButton} onPress={() => setEditing(true)}>
+              <Text style={styles.editButtonText}>{user?.email ? 'Chỉnh sửa' : 'Thêm email'}</Text>
+            </TouchableOpacity>
+          </View>
+
+          <InfoRow label="Số điện thoại" value={user?.phone || 'Chưa có'} />
+          <InfoRow label="Email" value={user?.email || 'Chưa thêm email'} highlight={!user?.email} />
+          <InfoRow label="Giới thiệu" value={user?.bio || 'Chưa có mô tả'} />
+        </View>
+
+        {error ? (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        ) : null}
+
         <View style={styles.statsContainer}>
-          <StatItem value="0" label="Bookings" />
+          <StatItem value={String(displayXP)} label="XP" />
           <View style={styles.statDivider} />
-          <StatItem value="0" label="Reviews" />
+          <StatItem value={user?.is_verified ? 'Có' : 'Chưa'} label="Xác minh" />
           <View style={styles.statDivider} />
-          <StatItem value="0" label="Favorites" />
+          <StatItem value={user?.email ? 'Đủ' : 'Thiếu'} label="Hồ sơ" />
         </View>
 
-        {/* Menu */}
         <View style={styles.menuSection}>
           <Text style={styles.menuTitle}>Tài khoản</Text>
-          <MenuItem icon="👤" label="Chỉnh sửa hồ sơ" />
+          <MenuItem icon="👤" label="Chỉnh sửa hồ sơ" onPress={() => setEditing(true)} />
+          <MenuItem icon="📧" label="Bổ sung email" value={user?.email ? 'Đã có' : 'Cần cập nhật'} onPress={() => setEditing(true)} />
           <MenuItem icon="📋" label="Lịch sử đặt chỗ" />
-          <MenuItem icon="❤️" label="Yêu thích" />
-          <MenuItem icon="💬" label="Tin nhắn" badge="2" />
-        </View>
-
-        <View style={styles.menuSection}>
-          <Text style={styles.menuTitle}>Cài đặt</Text>
-          <MenuItem icon="🔔" label="Thông báo" />
-          <MenuItem icon="🌙" label="Giao diện tối" value="Bật" />
-          <MenuItem icon="🌐" label="Ngôn ngữ" value="Tiếng Việt" />
-          <MenuItem icon="❓" label="Trợ giúp & Hỗ trợ" />
+          <MenuItem icon="💬" label="Tin nhắn" />
         </View>
 
         <View style={styles.menuSection}>
@@ -117,6 +199,57 @@ export default function ProfileScreen() {
         <Text style={styles.version}>Huế Travel v1.0.0</Text>
         <View style={{ height: 100 }} />
       </ScrollView>
+
+      <Modal visible={editing} animationType="slide" transparent onRequestClose={() => setEditing(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Cập nhật hồ sơ</Text>
+              <TouchableOpacity onPress={() => setEditing(false)}>
+                <Text style={styles.modalClose}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.inputLabel}>Họ tên</Text>
+            <TextInput
+              style={styles.input}
+              value={form.full_name}
+              onChangeText={(value) => setForm((prev) => ({ ...prev, full_name: value }))}
+              placeholder="Nguyễn Văn A"
+              placeholderTextColor={Colors.textMuted}
+            />
+
+            <Text style={styles.inputLabel}>Email</Text>
+            <TextInput
+              style={styles.input}
+              value={form.email}
+              onChangeText={(value) => setForm((prev) => ({ ...prev, email: value }))}
+              placeholder="you@example.com"
+              placeholderTextColor={Colors.textMuted}
+              autoCapitalize="none"
+              keyboardType="email-address"
+            />
+
+            <Text style={styles.inputLabel}>Giới thiệu</Text>
+            <TextInput
+              style={[styles.input, styles.textarea]}
+              value={form.bio}
+              onChangeText={(value) => setForm((prev) => ({ ...prev, bio: value }))}
+              placeholder="Chia sẻ một chút về bạn..."
+              placeholderTextColor={Colors.textMuted}
+              multiline
+            />
+
+            <TouchableOpacity style={styles.saveButton} onPress={handleSaveProfile} disabled={saving}>
+              {saving ? (
+                <ActivityIndicator color={Colors.textOnPrimary} />
+              ) : (
+                <Text style={styles.saveButtonText}>Lưu hồ sơ</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -130,22 +263,40 @@ function StatItem({ value, label }: { value: string; label: string }) {
   );
 }
 
-function MenuItem({
-  icon, label, value, badge,
+function InfoRow({
+  label,
+  value,
+  highlight,
 }: {
-  icon: string; label: string; value?: string; badge?: string;
+  label: string;
+  value: string;
+  highlight?: boolean;
 }) {
   return (
-    <TouchableOpacity style={styles.menuItem} activeOpacity={0.6}>
+    <View style={styles.infoRow}>
+      <Text style={styles.infoLabel}>{label}</Text>
+      <Text style={[styles.infoValue, highlight && styles.infoValueHighlight]}>{value}</Text>
+    </View>
+  );
+}
+
+function MenuItem({
+  icon,
+  label,
+  value,
+  onPress,
+}: {
+  icon: string;
+  label: string;
+  value?: string;
+  onPress?: () => void;
+}) {
+  return (
+    <TouchableOpacity style={styles.menuItem} activeOpacity={0.7} onPress={onPress}>
       <Text style={styles.menuIcon}>{icon}</Text>
       <Text style={styles.menuLabel}>{label}</Text>
       <View style={styles.menuRight}>
-        {value && <Text style={styles.menuValue}>{value}</Text>}
-        {badge && (
-          <View style={styles.badge}>
-            <Text style={styles.badgeText}>{badge}</Text>
-          </View>
-        )}
+        {value ? <Text style={styles.menuValue}>{value}</Text> : null}
         <Text style={styles.menuArrow}>›</Text>
       </View>
     </TouchableOpacity>
@@ -163,9 +314,9 @@ const styles = StyleSheet.create({
     paddingBottom: Spacing.xl,
   },
   avatar: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
+    width: 88,
+    height: 88,
+    borderRadius: 44,
     backgroundColor: Colors.surface,
     justifyContent: 'center',
     alignItems: 'center',
@@ -174,13 +325,13 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.md,
   },
   avatarText: {
-    fontSize: 32,
-    fontWeight: Fonts.weights.bold,
+    fontSize: 34,
+    fontWeight: Fonts.weights.bold as any,
     color: Colors.primary,
   },
   name: {
     fontSize: Fonts.sizes.xl,
-    fontWeight: Fonts.weights.bold,
+    fontWeight: Fonts.weights.bold as any,
     color: Colors.text,
   },
   levelBadge: {
@@ -193,15 +344,93 @@ const styles = StyleSheet.create({
   levelText: {
     fontSize: Fonts.sizes.sm,
     color: Colors.primary,
-    fontWeight: Fonts.weights.semibold,
+    fontWeight: Fonts.weights.semibold as any,
   },
   xpText: {
-    fontSize: Fonts.sizes.xs,
+    fontSize: Fonts.sizes.sm,
     color: Colors.textMuted,
     marginTop: Spacing.sm,
   },
-
-  // Stats
+  contactCard: {
+    marginHorizontal: Spacing.xl,
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.xl,
+    padding: Spacing.base,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    marginBottom: Spacing.lg,
+  },
+  profileBanner: {
+    backgroundColor: 'rgba(249, 168, 37, 0.14)',
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.base,
+    gap: Spacing.xs,
+    marginBottom: Spacing.base,
+  },
+  profileBannerTitle: {
+    color: Colors.text,
+    fontSize: Fonts.sizes.base,
+    fontWeight: Fonts.weights.bold as any,
+  },
+  profileBannerText: {
+    color: Colors.textSecondary,
+    fontSize: Fonts.sizes.sm,
+    lineHeight: 20,
+  },
+  contactHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: Spacing.md,
+  },
+  contactTitle: {
+    fontSize: Fonts.sizes.base,
+    color: Colors.text,
+    fontWeight: Fonts.weights.semibold as any,
+  },
+  contactSub: {
+    fontSize: Fonts.sizes.xs,
+    color: Colors.textMuted,
+    marginTop: 4,
+  },
+  editButton: {
+    backgroundColor: Colors.primary,
+    borderRadius: BorderRadius.full,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 8,
+  },
+  editButtonText: {
+    color: Colors.textOnPrimary,
+    fontSize: Fonts.sizes.sm,
+    fontWeight: Fonts.weights.semibold as any,
+  },
+  infoRow: {
+    marginBottom: Spacing.sm,
+  },
+  infoLabel: {
+    fontSize: Fonts.sizes.xs,
+    color: Colors.textMuted,
+    marginBottom: 4,
+  },
+  infoValue: {
+    fontSize: Fonts.sizes.sm,
+    color: Colors.text,
+  },
+  infoValueHighlight: {
+    color: Colors.primary,
+    fontWeight: Fonts.weights.semibold as any,
+  },
+  errorBanner: {
+    marginHorizontal: Spacing.xl,
+    marginBottom: Spacing.lg,
+    backgroundColor: 'rgba(244,67,54,0.12)',
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.base,
+  },
+  errorText: {
+    color: Colors.error,
+    fontSize: Fonts.sizes.sm,
+  },
   statsContainer: {
     flexDirection: 'row',
     marginHorizontal: Spacing.xl,
@@ -218,52 +447,47 @@ const styles = StyleSheet.create({
   },
   statValue: {
     fontSize: Fonts.sizes.xl,
-    fontWeight: Fonts.weights.bold,
+    fontWeight: Fonts.weights.bold as any,
     color: Colors.text,
   },
   statLabel: {
     fontSize: Fonts.sizes.xs,
-    color: Colors.textSecondary,
-    marginTop: 2,
+    color: Colors.textMuted,
+    marginTop: 4,
   },
   statDivider: {
     width: 1,
     backgroundColor: Colors.border,
   },
-
-  // Menu
   menuSection: {
-    paddingHorizontal: Spacing.xl,
+    marginHorizontal: Spacing.xl,
     marginBottom: Spacing.lg,
   },
   menuTitle: {
     fontSize: Fonts.sizes.sm,
-    fontWeight: Fonts.weights.semibold,
     color: Colors.textMuted,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
     marginBottom: Spacing.sm,
+    textTransform: 'uppercase',
   },
   menuItem: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: Colors.surface,
-    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.lg,
     paddingHorizontal: Spacing.base,
-    borderRadius: BorderRadius.md,
-    marginBottom: Spacing.xs,
-    gap: Spacing.md,
+    paddingVertical: Spacing.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    marginBottom: Spacing.sm,
   },
   menuIcon: {
-    fontSize: 18,
-    width: 24,
-    textAlign: 'center',
+    width: 28,
+    fontSize: Fonts.sizes.base,
   },
   menuLabel: {
     flex: 1,
-    fontSize: Fonts.sizes.md,
+    fontSize: Fonts.sizes.base,
     color: Colors.text,
-    fontWeight: Fonts.weights.medium,
   },
   menuRight: {
     flexDirection: 'row',
@@ -272,47 +496,89 @@ const styles = StyleSheet.create({
   },
   menuValue: {
     fontSize: Fonts.sizes.sm,
-    color: Colors.textSecondary,
-  },
-  badge: {
-    backgroundColor: Colors.primary,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 10,
-    minWidth: 20,
-    alignItems: 'center',
-  },
-  badgeText: {
-    fontSize: 10,
-    fontWeight: Fonts.weights.bold,
-    color: Colors.textOnPrimary,
-  },
-  menuArrow: {
-    fontSize: 20,
     color: Colors.textMuted,
   },
-
-  // Logout
+  menuArrow: {
+    fontSize: 22,
+    color: Colors.textMuted,
+  },
   logoutButton: {
     marginHorizontal: Spacing.xl,
     backgroundColor: Colors.surface,
-    paddingVertical: Spacing.md,
-    borderRadius: BorderRadius.lg,
+    borderRadius: BorderRadius.xl,
+    paddingVertical: Spacing.base,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: Colors.error + '40',
-    marginTop: Spacing.sm,
+    borderColor: Colors.border,
   },
   logoutText: {
-    fontSize: Fonts.sizes.md,
-    fontWeight: Fonts.weights.semibold,
     color: Colors.error,
+    fontSize: Fonts.sizes.base,
+    fontWeight: Fonts.weights.semibold as any,
   },
   version: {
     textAlign: 'center',
-    fontSize: Fonts.sizes.xs,
     color: Colors.textMuted,
+    fontSize: Fonts.sizes.xs,
     marginTop: Spacing.lg,
-    marginBottom: Spacing.xl,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'flex-end',
+  },
+  modalCard: {
+    backgroundColor: Colors.surface,
+    borderTopLeftRadius: BorderRadius.xl,
+    borderTopRightRadius: BorderRadius.xl,
+    padding: Spacing.xl,
+    paddingBottom: Spacing.xxxl,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: Spacing.base,
+  },
+  modalTitle: {
+    fontSize: Fonts.sizes.lg,
+    color: Colors.text,
+    fontWeight: Fonts.weights.bold as any,
+  },
+  modalClose: {
+    fontSize: 22,
+    color: Colors.textMuted,
+  },
+  inputLabel: {
+    fontSize: Fonts.sizes.sm,
+    color: Colors.textSecondary,
+    marginBottom: 6,
+    marginTop: Spacing.sm,
+  },
+  input: {
+    backgroundColor: Colors.surfaceElevated,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: Spacing.base,
+    paddingVertical: Spacing.md,
+    color: Colors.text,
+    fontSize: Fonts.sizes.base,
+  },
+  textarea: {
+    minHeight: 100,
+    textAlignVertical: 'top',
+  },
+  saveButton: {
+    marginTop: Spacing.xl,
+    backgroundColor: Colors.primary,
+    borderRadius: BorderRadius.xl,
+    paddingVertical: Spacing.base,
+    alignItems: 'center',
+  },
+  saveButtonText: {
+    color: Colors.textOnPrimary,
+    fontSize: Fonts.sizes.base,
+    fontWeight: Fonts.weights.bold as any,
   },
 });

@@ -1,23 +1,27 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   StatusBar,
-  Animated,
 } from 'react-native';
 import { Colors, Fonts, Spacing } from './src/constants/theme';
+import api, { Booking, Experience, User } from './src/services/api';
+import { getInitialDeepLink, onDeepLink, DeepLinkRoute } from './src/services/deeplink';
+import { offlineCache, CacheKeys } from './src/services/cache';
+import { pushService } from './src/services/push';
 import WelcomeScreen from './src/screens/WelcomeScreen';
 import LoginScreen from './src/screens/LoginScreen';
 import HomeScreen from './src/screens/HomeScreen';
-import ExploreScreen from './src/screens/ExploreScreen';
 import MapScreen from './src/screens/MapScreen';
 import BookingScreen from './src/screens/BookingScreen';
 import ChatScreen from './src/screens/ChatScreen';
 import AIGuideScreen from './src/screens/AIGuideScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 import NotificationScreen from './src/screens/NotificationScreen';
+import ExperienceDetailScreen from './src/screens/ExperienceDetailScreen';
+import PaymentScreen from './src/screens/PaymentScreen';
 
 // ============================================
 // App State & Types
@@ -43,21 +47,162 @@ export default function App() {
   const [screen, setScreen] = useState<AppScreen>('welcome');
   const [activeTab, setActiveTab] = useState<MainTab>('home');
   const [token, setToken] = useState<string | null>(null);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [profileNeedsAttention, setProfileNeedsAttention] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [showNotifs, setShowNotifs] = useState(false);
+  const [selectedExperience, setSelectedExperience] = useState<Experience | null>(null);
+  const [paymentBooking, setPaymentBooking] = useState<Booking | null>(null);
+  const [chatUnread, setChatUnread] = useState(0);
+  const [notifUnread, setNotifUnread] = useState(0);
+
+  const requiresProfileCompletion = useCallback((user: User | null | undefined) => {
+    if (!user) return true;
+    return user.full_name === 'Người dùng mới' || !user.email;
+  }, []);
 
   const handleGetStarted = useCallback(() => {
     setScreen('login');
   }, []);
 
-  const handleLoginSuccess = useCallback((t: string) => {
+  const handleLoginSuccess = useCallback((t: string, user?: User, isNewUser?: boolean) => {
     setToken(t);
+    setCurrentUser(user || null);
+    const needsAttention = Boolean(isNewUser) || requiresProfileCompletion(user);
+    setProfileNeedsAttention(needsAttention);
+    setActiveTab(needsAttention ? 'profile' : 'home');
     setScreen('main');
+  }, [requiresProfileCompletion]);
+
+  const handleLogout = useCallback(async () => {
+    await api.logout();
+    api.setToken(null);
+    setToken(null);
+    setCurrentUser(null);
+    setProfileNeedsAttention(false);
+    setActiveTab('home');
+    setScreen('login');
+    offlineCache.clear();
   }, []);
 
   const handleOpenChat = useCallback(() => {
     setShowChat(true);
   }, []);
+
+  const handleOpenExperience = useCallback((experience: Experience) => {
+    setSelectedExperience(experience);
+  }, []);
+
+  const handleBookingCreated = useCallback((booking: Booking) => {
+    setSelectedExperience(null);
+    setPaymentBooking(booking);
+  }, []);
+
+  const handleClosePayment = useCallback(() => {
+    setPaymentBooking(null);
+    setActiveTab('bookings');
+  }, []);
+
+  const refreshBadges = useCallback(async () => {
+    if (screen !== 'main' || !token) return;
+
+    const [roomsRes, notifRes] = await Promise.all([
+      api.getChatRooms(),
+      api.getUnreadNotificationCount(),
+    ]);
+
+    if (roomsRes.success && roomsRes.data?.rooms) {
+      setChatUnread(roomsRes.data.rooms.reduce((sum, room) => sum + (room.unread_count || 0), 0));
+    }
+
+    if (notifRes.success && notifRes.data) {
+      setNotifUnread(notifRes.data.unread_count || 0);
+    }
+  }, [screen, token]);
+
+  useEffect(() => {
+    refreshBadges();
+  }, [refreshBadges, activeTab, showChat, showNotifs]);
+
+  // Deep Linking handler
+  const handleDeepLinkRoute = useCallback(async (route: DeepLinkRoute) => {
+    if (screen !== 'main') return;
+    switch (route.type) {
+      case 'experience':
+        const expRes = await api.getExperience(route.id);
+        if (expRes.success && expRes.data) setSelectedExperience(expRes.data);
+        break;
+      case 'booking':
+        setActiveTab('bookings');
+        break;
+      case 'chat':
+        setShowChat(true);
+        break;
+      case 'profile':
+        setActiveTab('profile');
+        break;
+    }
+  }, [screen]);
+
+  // Deep linking — initial URL (cold start)
+  useEffect(() => {
+    if (screen !== 'main') return;
+    getInitialDeepLink().then(route => {
+      if (route) handleDeepLinkRoute(route);
+    });
+  }, [screen, handleDeepLinkRoute]);
+
+  // Deep linking — incoming URLs (warm start)
+  useEffect(() => {
+    if (screen !== 'main') return;
+    return onDeepLink(handleDeepLinkRoute);
+  }, [screen, handleDeepLinkRoute]);
+
+  // Push notification foreground handler
+  useEffect(() => {
+    if (screen !== 'main') return;
+    return pushService.onNotification((notification) => {
+      // Refresh badges when a notification arrives
+      refreshBadges();
+
+      // Auto-navigate for certain notification types
+      const type = notification.data?.type;
+      if (type === 'new_message') {
+        setChatUnread(prev => prev + 1);
+      } else if (type === 'booking_confirmed' || type === 'booking_cancelled') {
+        // Invalidate booking cache
+        offlineCache.invalidate(CacheKeys.BOOKINGS);
+        setNotifUnread(prev => prev + 1);
+      }
+    });
+  }, [screen, refreshBadges]);
+
+  useEffect(() => {
+    if (screen !== 'main' || !token || currentUser) return;
+
+    let cancelled = false;
+    (async () => {
+      // Try cached user first
+      const cached = await offlineCache.get<User>(CacheKeys.USER_PROFILE);
+      if (!cancelled && cached) {
+        setCurrentUser(cached);
+        setProfileNeedsAttention(requiresProfileCompletion(cached));
+      }
+
+      // Then fetch fresh
+      const res = await api.getMe();
+      if (!cancelled && res.success && res.data) {
+        const nextUser = (res.data as any).user || res.data;
+        setCurrentUser(nextUser);
+        setProfileNeedsAttention(requiresProfileCompletion(nextUser));
+        offlineCache.set(CacheKeys.USER_PROFILE, nextUser, 30 * 60 * 1000);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [screen, token, currentUser, requiresProfileCompletion]);
 
   // Auth screens
   if (screen === 'welcome') {
@@ -74,6 +219,28 @@ export default function App() {
       <>
         <StatusBar barStyle="light-content" backgroundColor={Colors.background} />
         <LoginScreen onLoginSuccess={handleLoginSuccess} />
+      </>
+    );
+  }
+
+  if (paymentBooking) {
+    return (
+      <>
+        <StatusBar barStyle="light-content" backgroundColor={Colors.background} />
+        <PaymentScreen booking={paymentBooking} onBack={handleClosePayment} />
+      </>
+    );
+  }
+
+  if (selectedExperience) {
+    return (
+      <>
+        <StatusBar barStyle="light-content" backgroundColor={Colors.background} />
+        <ExperienceDetailScreen
+          experience={selectedExperience}
+          onBack={() => setSelectedExperience(null)}
+          onBookingCreated={handleBookingCreated}
+        />
       </>
     );
   }
@@ -111,26 +278,48 @@ export default function App() {
 
       {/* Screen Content */}
       <View style={styles.content}>
-        {activeTab === 'home' && <HomeScreen />}
+        {activeTab === 'home' && (
+          <HomeScreen
+            onOpenExplore={() => setActiveTab('explore')}
+            onOpenAI={() => setActiveTab('ai')}
+            onSelectExperience={handleOpenExperience}
+            userName={currentUser?.full_name}
+          />
+        )}
         {activeTab === 'explore' && <MapScreen />}
         {activeTab === 'ai' && <AIGuideScreen />}
-        {activeTab === 'bookings' && <BookingScreen />}
-        {activeTab === 'profile' && <ProfileScreen />}
+        {activeTab === 'bookings' && (
+          <BookingScreen onOpenPayment={setPaymentBooking} />
+        )}
+        {activeTab === 'profile' && (
+          <ProfileScreen
+            highlightIncompleteProfile={profileNeedsAttention}
+            onProfileUpdated={(user) => {
+              setCurrentUser(user);
+              setProfileNeedsAttention(requiresProfileCompletion(user));
+            }}
+            onLogout={handleLogout}
+          />
+        )}
       </View>
 
       {/* Floating Buttons */}
       <TouchableOpacity style={styles.floatingNotif} onPress={() => setShowNotifs(true)}>
         <Text style={styles.floatingNotifIcon}>🔔</Text>
-        <View style={styles.floatingChatBadge}>
-          <Text style={styles.floatingChatBadgeText}>2</Text>
-        </View>
+        {notifUnread > 0 ? (
+          <View style={styles.floatingChatBadge}>
+            <Text style={styles.floatingChatBadgeText}>{notifUnread}</Text>
+          </View>
+        ) : null}
       </TouchableOpacity>
 
       <TouchableOpacity style={styles.floatingChat} onPress={handleOpenChat}>
         <Text style={styles.floatingChatIcon}>💬</Text>
-        <View style={styles.floatingChatBadge}>
-          <Text style={styles.floatingChatBadgeText}>2</Text>
-        </View>
+        {chatUnread > 0 ? (
+          <View style={styles.floatingChatBadge}>
+            <Text style={styles.floatingChatBadgeText}>{chatUnread}</Text>
+          </View>
+        ) : null}
       </TouchableOpacity>
 
       {/* Bottom Tab Bar */}

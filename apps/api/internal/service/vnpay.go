@@ -18,25 +18,31 @@ import (
 // ============================================
 
 type VNPayService struct {
-	tmnCode    string
-	hashSecret string
-	paymentURL string
-	returnURL  string
-	sandbox    bool
+	tmnCode         string
+	hashSecret      string
+	paymentURL      string
+	returnURL       string
+	sandbox         bool
+	fallbackEnabled bool
 }
 
 func NewVNPayService(tmnCode, hashSecret, returnURL string, sandbox bool) *VNPayService {
+	return NewVNPayServiceWithFallback(tmnCode, hashSecret, returnURL, sandbox, true)
+}
+
+func NewVNPayServiceWithFallback(tmnCode, hashSecret, returnURL string, sandbox bool, fallbackEnabled bool) *VNPayService {
 	paymentURL := "https://pay.vnpay.vn/vpcpay.html"
 	if sandbox {
 		paymentURL = "https://sandbox.vnpay.vn/paymentv2/vpcpay.html"
 	}
 
 	return &VNPayService{
-		tmnCode:    tmnCode,
-		hashSecret: hashSecret,
-		paymentURL: paymentURL,
-		returnURL:  returnURL,
-		sandbox:    sandbox,
+		tmnCode:         tmnCode,
+		hashSecret:      hashSecret,
+		paymentURL:      paymentURL,
+		returnURL:       returnURL,
+		sandbox:         sandbox,
+		fallbackEnabled: fallbackEnabled,
 	}
 }
 
@@ -47,7 +53,7 @@ func (s *VNPayService) IsConfigured() bool {
 // PaymentRequest represents a VNPay payment request
 type PaymentRequest struct {
 	BookingID   uuid.UUID
-	Amount      int64  // VND (must be integer)
+	Amount      int64 // VND (must be integer)
 	Description string
 	ClientIP    string
 	BankCode    string // optional, e.g., "VNPAYQR", "VNBANK"
@@ -77,6 +83,9 @@ type PaymentCallback struct {
 
 func (s *VNPayService) CreatePaymentURL(req PaymentRequest) (*PaymentResult, error) {
 	if !s.IsConfigured() {
+		if !s.fallbackEnabled {
+			return nil, fmt.Errorf("%w: VNPay credentials are missing", ErrServiceNotConfigured)
+		}
 		return s.mockPayment(req), nil
 	}
 

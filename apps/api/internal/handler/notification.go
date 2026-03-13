@@ -163,10 +163,10 @@ func (h *NotificationHandler) RegisterDevice(c *gin.Context) {
 	if h.pool != nil {
 		ctx := c.Request.Context()
 		_, err := h.pool.Exec(ctx, `
-			INSERT INTO device_tokens (id, user_id, fcm_token, platform, created_at) 
-			VALUES (gen_random_uuid(), $1, $2, $3, NOW())
+			INSERT INTO device_tokens (id, user_id, fcm_token, platform, created_at, updated_at) 
+			VALUES ($1, $2, $3, $4, NOW(), NOW())
 			ON CONFLICT (user_id, fcm_token) DO UPDATE SET updated_at = NOW()`,
-			uid, req.FCMToken, req.Platform)
+			uuid.New(), uid, req.FCMToken, req.Platform)
 		if err != nil {
 			// Table might not exist yet — fall through to mock response
 			_ = err

@@ -16,10 +16,11 @@ import (
 // ============================================
 
 type SearchService struct {
-	meilisearchURL string
-	masterKey      string
-	indexed        map[string][]SearchDocument
-	httpClient     *http.Client
+	meilisearchURL  string
+	masterKey       string
+	indexed         map[string][]SearchDocument
+	httpClient      *http.Client
+	fallbackEnabled bool
 }
 
 type SearchDocument struct {
@@ -63,11 +64,16 @@ type SearchFilters struct {
 }
 
 func NewSearchService(meilisearchURL, masterKey string) *SearchService {
+	return NewSearchServiceWithFallback(meilisearchURL, masterKey, true)
+}
+
+func NewSearchServiceWithFallback(meilisearchURL, masterKey string, fallbackEnabled bool) *SearchService {
 	s := &SearchService{
-		meilisearchURL: meilisearchURL,
-		masterKey:      masterKey,
-		indexed:        make(map[string][]SearchDocument),
-		httpClient:     &http.Client{Timeout: 5 * time.Second},
+		meilisearchURL:  meilisearchURL,
+		masterKey:       masterKey,
+		indexed:         make(map[string][]SearchDocument),
+		httpClient:      &http.Client{Timeout: 5 * time.Second},
+		fallbackEnabled: fallbackEnabled,
 	}
 
 	if s.IsConfigured() {
@@ -78,12 +84,14 @@ func NewSearchService(meilisearchURL, masterKey string) *SearchService {
 		log.Println("⚠️ Meilisearch not configured — using in-memory search")
 	}
 
-	s.seedMockData()
+	if fallbackEnabled {
+		s.seedMockData()
+	}
 	return s
 }
 
 func (s *SearchService) IsConfigured() bool {
-	return s.meilisearchURL != "" && s.meilisearchURL != "http://meilisearch:7700"
+	return s.meilisearchURL != "" && s.masterKey != ""
 }
 
 // setupMeilisearchIndex creates the index with searchable/filterable attributes
@@ -116,15 +124,24 @@ func (s *SearchService) setupMeilisearchIndex() {
 // Search
 // ============================================
 
-func (s *SearchService) Search(ctx context.Context, query string, filters SearchFilters) SearchResult {
+func (s *SearchService) IsReady() bool {
+	return s.IsConfigured() || s.fallbackEnabled
+}
+
+func (s *SearchService) Search(ctx context.Context, query string, filters SearchFilters) (SearchResult, error) {
 	start := time.Now()
 
 	if s.IsConfigured() {
 		result, err := s.searchMeilisearch(ctx, query, filters)
 		if err == nil {
-			return *result
+			return *result, nil
+		}
+		if !s.fallbackEnabled {
+			return SearchResult{}, fmt.Errorf("%w: Meilisearch query failed: %v", ErrServiceUnavailable, err)
 		}
 		log.Printf("⚠️ Meilisearch search failed: %v — falling back to in-memory", err)
+	} else if !s.fallbackEnabled {
+		return SearchResult{}, fmt.Errorf("%w: Meilisearch is not configured", ErrServiceNotConfigured)
 	}
 
 	// Fallback: in-memory search
@@ -165,7 +182,7 @@ func (s *SearchService) Search(ctx context.Context, query string, filters Search
 		Query:      query,
 		TimeMs:     time.Since(start).Milliseconds(),
 		Facets:     facets,
-	}
+	}, nil
 }
 
 // searchMeilisearch calls the Meilisearch multi-search API
@@ -223,10 +240,10 @@ func (s *SearchService) searchMeilisearch(ctx context.Context, query string, fil
 	}
 
 	var msResult struct {
-		Hits             []SearchDocument          `json:"hits"`
-		EstimatedTotalHits int                     `json:"estimatedTotalHits"`
-		ProcessingTimeMs int64                     `json:"processingTimeMs"`
-		FacetDistribution map[string]map[string]int `json:"facetDistribution"`
+		Hits               []SearchDocument          `json:"hits"`
+		EstimatedTotalHits int                       `json:"estimatedTotalHits"`
+		ProcessingTimeMs   int64                     `json:"processingTimeMs"`
+		FacetDistribution  map[string]map[string]int `json:"facetDistribution"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&msResult); err != nil {
 		return nil, err
@@ -403,6 +420,106 @@ func (s *SearchService) GetStats() map[string]int {
 	}
 	stats["total"] = total
 	return stats
+}
+
+// ============================================
+// Sync from PostgreSQL Database
+// ============================================
+
+// SyncFromDB indexes all experiences from the database into search.
+// Called on startup when DB is available.
+func (s *SearchService) SyncFromDB(ctx context.Context, pool interface {
+	Query(ctx context.Context, sql string, args ...interface{}) (interface{ Next() bool; Scan(dest ...interface{}) error; Close() }, error)
+}) {
+	if pool == nil {
+		log.Println("⚠️ [Search] No DB pool — skipping sync")
+		return
+	}
+
+	log.Println("🔄 [Search] Syncing from database...")
+
+	// This method is intentionally simple — it uses the raw pgxpool.Pool pattern
+	// but accepts an interface for testability
+	s.syncExperiencesFromDB(ctx, pool)
+	s.syncPlacesFromDB(ctx)
+
+	log.Printf("✅ [Search] Sync complete — %d documents indexed", s.GetStats()["total"])
+}
+
+// SyncExperiencesFromPool syncs experiences from a pgxpool.Pool
+func (s *SearchService) SyncExperiencesFromPool(ctx context.Context, pool interface{}) {
+	// Type-assert to pgxpool.Pool
+	type querier interface {
+		Query(ctx context.Context, sql string, args ...interface{}) (interface{ Next() bool; Scan(dest ...interface{}) error; Close() }, error)
+	}
+	if q, ok := pool.(querier); ok {
+		s.syncExperiencesFromDB(ctx, q)
+	}
+}
+
+func (s *SearchService) syncExperiencesFromDB(ctx context.Context, pool interface {
+	Query(ctx context.Context, sql string, args ...interface{}) (interface{ Next() bool; Scan(dest ...interface{}) error; Close() }, error)
+}) {
+	rows, err := pool.Query(ctx, `
+		SELECT id, title, COALESCE(description, ''), COALESCE(category, ''),
+			   COALESCE(price, 0), COALESCE(rating, 0), COALESCE(location, '')
+		FROM experiences WHERE is_active = TRUE`)
+	if err != nil {
+		log.Printf("⚠️ [Search] Failed to query experiences: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	count := 0
+	var docs []SearchDocument
+	for rows.Next() {
+		var doc SearchDocument
+		var price int64
+		rows.Scan(&doc.ID, &doc.Title, &doc.Description, &doc.Category,
+			&price, &doc.Rating, &doc.Location)
+		doc.Type = "experience"
+		doc.Price = price
+		doc.CreatedAt = time.Now()
+		docs = append(docs, doc)
+		count++
+	}
+
+	if len(docs) > 0 {
+		s.BulkIndex("experience", docs)
+		log.Printf("🔍 [Search] Indexed %d experiences from DB", count)
+	}
+}
+
+func (s *SearchService) syncPlacesFromDB(_ context.Context) {
+	// Places come from Google Maps, not DB — keep mock data as fallback
+	// In production, this would sync from a places cache table
+}
+
+// BulkIndex indexes multiple documents at once.
+func (s *SearchService) BulkIndex(docType string, docs []SearchDocument) {
+	for i := range docs {
+		docs[i].Type = docType
+		if docs[i].CreatedAt.IsZero() {
+			docs[i].CreatedAt = time.Now()
+		}
+	}
+
+	s.indexed[docType] = docs
+
+	// Also bulk-push to Meilisearch if configured
+	if s.IsConfigured() && len(docs) > 0 {
+		bodyBytes, _ := json.Marshal(docs)
+		req, _ := http.NewRequest("POST", s.meilisearchURL+"/indexes/hue_travel/documents", strings.NewReader(string(bodyBytes)))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+s.masterKey)
+		resp, err := s.httpClient.Do(req)
+		if err != nil {
+			log.Printf("⚠️ [Search] Meilisearch bulk index failed: %v", err)
+		} else {
+			resp.Body.Close()
+			log.Printf("✅ [Search] Pushed %d %s docs to Meilisearch", len(docs), docType)
+		}
+	}
 }
 
 // ============================================

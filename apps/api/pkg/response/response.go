@@ -83,3 +83,10 @@ func InternalError(c *gin.Context, message string) {
 		Error:   &APIError{Code: "HT-SYS-001", Message: message},
 	})
 }
+
+func ServiceUnavailable(c *gin.Context, code, message string) {
+	c.JSON(http.StatusServiceUnavailable, APIResponse{
+		Success: false,
+		Error:   &APIError{Code: code, Message: message},
+	})
+}

@@ -1,246 +1,338 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
+  RefreshControl,
+  ActivityIndicator,
 } from 'react-native';
 import { Colors, Fonts, Spacing, BorderRadius } from '@/constants/theme';
+import api, { Booking } from '@/services/api';
 
-type BookingStatus = 'upcoming' | 'completed' | 'cancelled';
+type BookingTab = 'all' | 'upcoming' | 'completed' | 'cancelled';
 
-type Booking = {
-  id: string;
-  title: string;
-  category: string;
-  guide_name: string;
-  date: string;
-  time: string;
-  guests: number;
-  total_price: number;
-  status: BookingStatus;
+type Props = {
+  onOpenPayment: (booking: Booking) => void;
 };
 
-const mockBookings: Booking[] = [
-  { id: '1', title: 'Khám phá Ẩm thực Hoàng Cung', category: 'food', guide_name: 'Nguyễn Văn Minh', date: '15/03/2026', time: '09:00', guests: 2, total_price: 630000, status: 'upcoming' },
-  { id: '2', title: 'Tour Đại Nội buổi sáng', category: 'tour', guide_name: 'Lê Hoàng Dũng', date: '18/03/2026', time: '07:00', guests: 4, total_price: 1260000, status: 'upcoming' },
-  { id: '3', title: 'Chèo thuyền sông Hương', category: 'experience', guide_name: 'Trần Thị Lan', date: '10/03/2026', time: '17:00', guests: 2, total_price: 420000, status: 'completed' },
-  { id: '4', title: 'Lăng Tự Đức & Khải Định', category: 'tour', guide_name: 'Phạm Quốc Bảo', date: '05/03/2026', time: '14:00', guests: 1, total_price: 350000, status: 'cancelled' },
-];
-
-const formatPrice = (price: number) =>
-  new Intl.NumberFormat('vi-VN').format(price) + '₫';
-
-const statusConfig: Record<BookingStatus, { label: string; color: string; bg: string; icon: string }> = {
-  upcoming: { label: 'Sắp tới', color: Colors.primary, bg: 'rgba(249,168,37,0.15)', icon: '📅' },
-  completed: { label: 'Hoàn thành', color: Colors.success, bg: 'rgba(76,175,80,0.15)', icon: '✅' },
+const STATUS_CONFIG: Record<Booking['status'], { label: string; color: string; bg: string; icon: string }> = {
+  pending: { label: 'Chờ thanh toán', color: '#FF9800', bg: 'rgba(255,152,0,0.14)', icon: '💳' },
+  confirmed: { label: 'Đã xác nhận', color: Colors.success, bg: 'rgba(76,175,80,0.15)', icon: '✅' },
+  active: { label: 'Đang diễn ra', color: '#42A5F5', bg: 'rgba(66,165,245,0.14)', icon: '🚀' },
+  completed: { label: 'Hoàn thành', color: Colors.success, bg: 'rgba(76,175,80,0.15)', icon: '🎉' },
   cancelled: { label: 'Đã huỷ', color: Colors.error, bg: 'rgba(244,67,54,0.15)', icon: '❌' },
+  refunded: { label: 'Đã hoàn tiền', color: Colors.textSecondary, bg: 'rgba(158,158,158,0.16)', icon: '↩️' },
 };
 
-const categoryEmojis: Record<string, string> = {
-  food: '🍜', tour: '🏛️', experience: '🎭', sightseeing: '🌸',
-};
+function formatPrice(price: number) {
+  return new Intl.NumberFormat('vi-VN').format(price) + '₫';
+}
 
-export default function BookingScreen() {
-  const [activeTab, setActiveTab] = useState<BookingStatus>('upcoming');
+function formatDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString('vi-VN');
+}
 
-  const filtered = mockBookings.filter((b) => b.status === activeTab);
+function matchesTab(tab: BookingTab, booking: Booking) {
+  if (tab === 'all') return true;
+  if (tab === 'completed') return booking.status === 'completed';
+  if (tab === 'cancelled') return booking.status === 'cancelled' || booking.status === 'refunded';
+  return booking.status === 'pending' || booking.status === 'confirmed' || booking.status === 'active';
+}
+
+export default function BookingScreen({ onOpenPayment }: Props) {
+  const [activeTab, setActiveTab] = useState<BookingTab>('all');
+  const [bookings, setBookings] = useState<Booking[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const loadBookings = useCallback(async () => {
+    const result = await api.getBookings();
+    if (result.success && result.data) {
+      setBookings(result.data);
+      setError('');
+    } else {
+      setError(result.error?.message || 'Không thể tải booking');
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    loadBookings();
+  }, [loadBookings]);
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await loadBookings();
+    setRefreshing(false);
+  };
+
+  const filtered = useMemo(
+    () => bookings.filter((booking) => matchesTab(activeTab, booking)),
+    [activeTab, bookings]
+  );
+
+  const handleCancelBooking = async (booking: Booking) => {
+    const result = await api.cancelBooking(booking.id, 'Huỷ từ ứng dụng mobile');
+    if (!result.success) {
+      setError(result.error?.message || 'Không thể huỷ booking');
+      return;
+    }
+
+    await loadBookings();
+  };
 
   return (
     <View style={styles.container}>
-      {/* Header */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Đặt chỗ</Text>
-        <TouchableOpacity style={styles.calendarBtn}>
-          <Text style={{ fontSize: 22 }}>📅</Text>
+        <TouchableOpacity style={styles.refreshBtn} onPress={onRefresh}>
+          <Text style={styles.refreshIcon}>↻</Text>
         </TouchableOpacity>
       </View>
 
-      {/* Tabs */}
       <View style={styles.tabs}>
-        {(['upcoming', 'completed', 'cancelled'] as BookingStatus[]).map((tab) => {
-          const count = mockBookings.filter((b) => b.status === tab).length;
+        {(['all', 'upcoming', 'completed', 'cancelled'] as BookingTab[]).map((tab) => {
+          const count = bookings.filter((booking) => matchesTab(tab, booking)).length;
+          const label =
+            tab === 'all' ? 'Tất cả' : tab === 'upcoming' ? 'Sắp tới' : tab === 'completed' ? 'Hoàn thành' : 'Đã huỷ';
           return (
             <TouchableOpacity
               key={tab}
               style={[styles.tab, activeTab === tab && styles.tabActive]}
               onPress={() => setActiveTab(tab)}
             >
-              <Text style={[styles.tabText, activeTab === tab && styles.tabTextActive]}>
-                {statusConfig[tab].label}
-              </Text>
-              {count > 0 && (
-                <View style={[styles.tabBadge, activeTab === tab && styles.tabBadgeActive]}>
-                  <Text style={[styles.tabBadgeText, activeTab === tab && styles.tabBadgeTextActive]}>
-                    {count}
-                  </Text>
-                </View>
-              )}
+              <Text style={[styles.tabText, activeTab === tab && styles.tabTextActive]}>{label}</Text>
+              <View style={[styles.tabBadge, activeTab === tab && styles.tabBadgeActive]}>
+                <Text style={[styles.tabBadgeText, activeTab === tab && styles.tabBadgeTextActive]}>{count}</Text>
+              </View>
             </TouchableOpacity>
           );
         })}
       </View>
 
-      {/* Booking List */}
-      <ScrollView showsVerticalScrollIndicator={false} style={styles.list}>
-        {filtered.length === 0 ? (
-          <View style={styles.empty}>
-            <Text style={styles.emptyIcon}>📋</Text>
-            <Text style={styles.emptyTitle}>Chưa có booking nào</Text>
-            <Text style={styles.emptyText}>
-              {activeTab === 'upcoming' ? 'Hãy khám phá và đặt trải nghiệm đầu tiên!' : 'Không có booking trong mục này.'}
-            </Text>
-          </View>
-        ) : (
-          filtered.map((booking) => (
-            <TouchableOpacity key={booking.id} style={styles.bookingCard} activeOpacity={0.8}>
-              {/* Status Badge */}
-              <View style={[styles.statusBadge, { backgroundColor: statusConfig[booking.status].bg }]}>
-                <Text style={[styles.statusText, { color: statusConfig[booking.status].color }]}>
-                  {statusConfig[booking.status].icon} {statusConfig[booking.status].label}
-                </Text>
-              </View>
+      {error ? (
+        <View style={styles.errorBanner}>
+          <Text style={styles.errorText}>{error}</Text>
+        </View>
+      ) : null}
 
-              {/* Main Content */}
-              <View style={styles.cardContent}>
-                <View style={styles.cardImage}>
-                  <Text style={{ fontSize: 32 }}>{categoryEmojis[booking.category] || '🎭'}</Text>
-                </View>
+      {loading ? (
+        <View style={styles.loadingWrap}>
+          <ActivityIndicator color={Colors.primary} />
+          <Text style={styles.loadingText}>Đang tải booking...</Text>
+        </View>
+      ) : (
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          style={styles.list}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}
+        >
+          {filtered.length === 0 ? (
+            <View style={styles.empty}>
+              <Text style={styles.emptyIcon}>📋</Text>
+              <Text style={styles.emptyTitle}>Chưa có booking nào</Text>
+              <Text style={styles.emptyText}>Tạo booking từ một trải nghiệm để thấy dữ liệu thật ở đây.</Text>
+            </View>
+          ) : (
+            filtered.map((booking) => {
+              const status = STATUS_CONFIG[booking.status];
+              return (
+                <View key={booking.id} style={styles.bookingCard}>
+                  <View style={[styles.statusBadge, { backgroundColor: status.bg }]}>
+                    <Text style={[styles.statusText, { color: status.color }]}>
+                      {status.icon} {status.label}
+                    </Text>
+                  </View>
 
-                <View style={styles.cardInfo}>
-                  <Text style={styles.cardTitle} numberOfLines={2}>{booking.title}</Text>
-                  <Text style={styles.cardGuide}>👤 {booking.guide_name}</Text>
-                  <View style={styles.cardMeta}>
-                    <Text style={styles.cardMetaText}>📅 {booking.date}</Text>
-                    <Text style={styles.cardMetaText}>🕐 {booking.time}</Text>
-                    <Text style={styles.cardMetaText}>👥 {booking.guests}</Text>
+                  <View style={styles.cardContent}>
+                    <View style={styles.cardImage}>
+                      <Text style={{ fontSize: 30 }}>
+                        {booking.experience?.category === 'food'
+                          ? '🍜'
+                          : booking.experience?.category === 'tour'
+                            ? '🏛️'
+                            : '🎭'}
+                      </Text>
+                    </View>
+
+                    <View style={styles.cardInfo}>
+                      <Text style={styles.cardTitle} numberOfLines={2}>
+                        {booking.experience?.title || 'Trải nghiệm Huế Travel'}
+                      </Text>
+                      <Text style={styles.cardGuide}>
+                        👤 {booking.guide?.full_name || booking.experience?.guide?.full_name || 'Guide Huế Travel'}
+                      </Text>
+                      <View style={styles.cardMeta}>
+                        <Text style={styles.cardMetaText}>📅 {formatDate(booking.booking_date)}</Text>
+                        <Text style={styles.cardMetaText}>🕐 {booking.start_time}</Text>
+                        <Text style={styles.cardMetaText}>👥 {booking.guest_count}</Text>
+                      </View>
+                    </View>
+                  </View>
+
+                  <View style={styles.cardFooter}>
+                    <View>
+                      <Text style={styles.priceLabel}>Tổng cộng</Text>
+                      <Text style={styles.price}>{formatPrice(booking.total_price)}</Text>
+                    </View>
+
+                    <View style={styles.actions}>
+                      {booking.status === 'pending' ? (
+                        <>
+                          <TouchableOpacity style={styles.payBtn} onPress={() => onOpenPayment(booking)}>
+                            <Text style={styles.payBtnText}>Thanh toán</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity style={styles.cancelBtn} onPress={() => handleCancelBooking(booking)}>
+                            <Text style={styles.cancelBtnText}>Huỷ</Text>
+                          </TouchableOpacity>
+                        </>
+                      ) : null}
+
+                      {booking.status === 'confirmed' || booking.status === 'active' ? (
+                        <TouchableOpacity style={styles.refreshInlineBtn} onPress={onRefresh}>
+                          <Text style={styles.refreshInlineText}>Làm mới</Text>
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
                   </View>
                 </View>
-              </View>
+              );
+            })
+          )}
 
-              {/* Price & Actions */}
-              <View style={styles.cardFooter}>
-                <View>
-                  <Text style={styles.priceLabel}>Tổng cộng</Text>
-                  <Text style={styles.price}>{formatPrice(booking.total_price)}</Text>
-                </View>
-
-                <View style={styles.actions}>
-                  {booking.status === 'upcoming' && (
-                    <>
-                      <TouchableOpacity style={styles.chatBtn}>
-                        <Text style={styles.chatBtnText}>💬 Chat</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={styles.cancelBtn}>
-                        <Text style={styles.cancelBtnText}>Huỷ</Text>
-                      </TouchableOpacity>
-                    </>
-                  )}
-                  {booking.status === 'completed' && (
-                    <TouchableOpacity style={styles.reviewBtn}>
-                      <Text style={styles.reviewBtnText}>⭐ Đánh giá</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              </View>
-            </TouchableOpacity>
-          ))
-        )}
-
-        <View style={{ height: 100 }} />
-      </ScrollView>
+          <View style={{ height: 100 }} />
+        </ScrollView>
+      )}
     </View>
   );
 }
 
-// ============================================
-// Styles
-// ============================================
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
-
   header: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    paddingHorizontal: Spacing.xl, paddingTop: 60, paddingBottom: Spacing.md,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.xl,
+    paddingTop: 60,
+    paddingBottom: Spacing.md,
   },
-  headerTitle: { fontSize: Fonts.sizes.xxl, fontWeight: Fonts.weights.bold as any, color: Colors.text },
-  calendarBtn: { padding: Spacing.sm },
-
-  // Tabs
+  headerTitle: {
+    fontSize: Fonts.sizes.xxl,
+    fontWeight: Fonts.weights.bold as any,
+    color: Colors.text,
+  },
+  refreshBtn: { padding: Spacing.sm },
+  refreshIcon: { fontSize: 22, color: Colors.primary },
   tabs: {
-    flexDirection: 'row', marginHorizontal: Spacing.xl, backgroundColor: Colors.surface,
-    borderRadius: BorderRadius.xl, padding: 4, marginBottom: Spacing.md,
-    borderWidth: 1, borderColor: Colors.border,
+    flexDirection: 'row',
+    marginHorizontal: Spacing.xl,
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.xl,
+    padding: 4,
+    marginBottom: Spacing.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
   },
   tab: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    paddingVertical: Spacing.sm, borderRadius: BorderRadius.lg, gap: 4,
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.lg,
   },
   tabActive: { backgroundColor: Colors.primary },
-  tabText: { fontSize: Fonts.sizes.sm, fontWeight: Fonts.weights.medium as any, color: Colors.textMuted },
+  tabText: { fontSize: Fonts.sizes.sm, color: Colors.textMuted, fontWeight: Fonts.weights.medium as any },
   tabTextActive: { color: Colors.textOnPrimary, fontWeight: Fonts.weights.bold as any },
   tabBadge: {
-    minWidth: 18, height: 18, borderRadius: 9, backgroundColor: Colors.surfaceLight,
-    justifyContent: 'center', alignItems: 'center', paddingHorizontal: 4,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: Colors.surfaceLight,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 4,
   },
   tabBadgeActive: { backgroundColor: 'rgba(0,0,0,0.2)' },
-  tabBadgeText: { fontSize: 10, fontWeight: Fonts.weights.bold as any, color: Colors.textMuted },
+  tabBadgeText: { fontSize: 10, color: Colors.textMuted, fontWeight: Fonts.weights.bold as any },
   tabBadgeTextActive: { color: Colors.textOnPrimary },
-
-  // List
+  errorBanner: {
+    marginHorizontal: Spacing.xl,
+    marginBottom: Spacing.md,
+    borderRadius: BorderRadius.lg,
+    backgroundColor: 'rgba(244,67,54,0.12)',
+    padding: Spacing.base,
+  },
+  errorText: { color: Colors.error, fontSize: Fonts.sizes.sm },
+  loadingWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: Spacing.sm },
+  loadingText: { color: Colors.textSecondary, fontSize: Fonts.sizes.sm },
   list: { paddingHorizontal: Spacing.xl },
-
-  // Empty State
   empty: { alignItems: 'center', paddingTop: 80 },
   emptyIcon: { fontSize: 48, marginBottom: Spacing.md },
   emptyTitle: { fontSize: Fonts.sizes.lg, fontWeight: Fonts.weights.bold as any, color: Colors.text, marginBottom: Spacing.sm },
   emptyText: { fontSize: Fonts.sizes.md, color: Colors.textSecondary, textAlign: 'center' },
-
-  // Booking Card
   bookingCard: {
-    backgroundColor: Colors.surface, borderRadius: BorderRadius.xl,
-    padding: Spacing.base, marginBottom: Spacing.md,
-    borderWidth: 1, borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.xl,
+    padding: Spacing.base,
+    marginBottom: Spacing.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
   },
   statusBadge: {
-    alignSelf: 'flex-start', paddingHorizontal: Spacing.md, paddingVertical: 4,
-    borderRadius: BorderRadius.full, marginBottom: Spacing.sm,
+    alignSelf: 'flex-start',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 4,
+    borderRadius: BorderRadius.full,
+    marginBottom: Spacing.sm,
   },
   statusText: { fontSize: Fonts.sizes.xs, fontWeight: Fonts.weights.semibold as any },
-
   cardContent: { flexDirection: 'row', gap: Spacing.md, marginBottom: Spacing.md },
   cardImage: {
-    width: 64, height: 64, borderRadius: BorderRadius.lg, backgroundColor: Colors.surfaceElevated,
-    justifyContent: 'center', alignItems: 'center',
+    width: 64,
+    height: 64,
+    borderRadius: BorderRadius.lg,
+    backgroundColor: Colors.surfaceElevated,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   cardInfo: { flex: 1 },
   cardTitle: { fontSize: Fonts.sizes.base, fontWeight: Fonts.weights.semibold as any, color: Colors.text, lineHeight: 20 },
   cardGuide: { fontSize: Fonts.sizes.sm, color: Colors.textSecondary, marginTop: 4 },
-  cardMeta: { flexDirection: 'row', gap: Spacing.md, marginTop: 6 },
+  cardMeta: { flexDirection: 'row', gap: Spacing.md, marginTop: 6, flexWrap: 'wrap' },
   cardMetaText: { fontSize: Fonts.sizes.xs, color: Colors.textMuted },
-
-  cardFooter: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    borderTopWidth: 1, borderTopColor: Colors.border, paddingTop: Spacing.md,
-  },
+  cardFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   priceLabel: { fontSize: Fonts.sizes.xs, color: Colors.textMuted },
-  price: { fontSize: Fonts.sizes.lg, fontWeight: Fonts.weights.bold as any, color: Colors.primary },
-
-  actions: { flexDirection: 'row', gap: Spacing.sm },
-  chatBtn: {
-    backgroundColor: 'rgba(249,168,37,0.15)', paddingHorizontal: Spacing.md,
-    paddingVertical: 8, borderRadius: BorderRadius.md,
+  price: { fontSize: Fonts.sizes.lg, color: Colors.text, fontWeight: Fonts.weights.bold as any, marginTop: 4 },
+  actions: { flexDirection: 'row', gap: Spacing.sm, alignItems: 'center' },
+  payBtn: {
+    backgroundColor: Colors.primary,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 10,
+    borderRadius: BorderRadius.full,
   },
-  chatBtnText: { fontSize: Fonts.sizes.sm, color: Colors.primary, fontWeight: Fonts.weights.semibold as any },
+  payBtnText: { color: Colors.textOnPrimary, fontSize: Fonts.sizes.sm, fontWeight: Fonts.weights.bold as any },
   cancelBtn: {
-    backgroundColor: 'rgba(244,67,54,0.1)', paddingHorizontal: Spacing.md,
-    paddingVertical: 8, borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 10,
+    borderRadius: BorderRadius.full,
   },
-  cancelBtnText: { fontSize: Fonts.sizes.sm, color: Colors.error, fontWeight: Fonts.weights.semibold as any },
-  reviewBtn: {
-    backgroundColor: 'rgba(249,168,37,0.15)', paddingHorizontal: Spacing.md,
-    paddingVertical: 8, borderRadius: BorderRadius.md,
+  cancelBtnText: { color: Colors.textSecondary, fontSize: Fonts.sizes.sm, fontWeight: Fonts.weights.semibold as any },
+  refreshInlineBtn: {
+    borderWidth: 1,
+    borderColor: Colors.primary,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 10,
+    borderRadius: BorderRadius.full,
   },
-  reviewBtnText: { fontSize: Fonts.sizes.sm, color: Colors.primary, fontWeight: Fonts.weights.semibold as any },
+  refreshInlineText: { color: Colors.primary, fontSize: Fonts.sizes.sm, fontWeight: Fonts.weights.semibold as any },
 });

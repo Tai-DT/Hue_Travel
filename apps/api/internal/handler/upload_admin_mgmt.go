@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"errors"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -43,6 +45,10 @@ func (h *UploadHandler) UploadFile(c *gin.Context) {
 
 	result, err := h.uploadSvc.Upload(c.Request.Context(), folder, header.Filename, file, header.Size)
 	if err != nil {
+		if errors.Is(err, service.ErrServiceNotConfigured) || errors.Is(err, service.ErrServiceUnavailable) {
+			response.ServiceUnavailable(c, "HT-UP-001", "Dịch vụ upload hiện chưa sẵn sàng")
+			return
+		}
 		response.InternalError(c, "Không thể upload file: "+err.Error())
 		return
 	}
@@ -70,6 +76,10 @@ func (h *UploadHandler) UploadAvatar(c *gin.Context) {
 
 	result, err := h.uploadSvc.Upload(c.Request.Context(), folder, header.Filename, file, header.Size)
 	if err != nil {
+		if errors.Is(err, service.ErrServiceNotConfigured) || errors.Is(err, service.ErrServiceUnavailable) {
+			response.ServiceUnavailable(c, "HT-UP-002", "Dịch vụ upload avatar hiện chưa sẵn sàng")
+			return
+		}
 		response.InternalError(c, "Không thể upload avatar")
 		return
 	}
@@ -215,11 +225,12 @@ func (h *AdminManagementHandler) ListExperiences(c *gin.Context) {
 	perPage, _ := strconv.Atoi(c.DefaultQuery("per_page", "20"))
 
 	filter := repository.ExperienceFilter{
-		Category: c.Query("category"),
-		Search:   c.Query("q"),
-		SortBy:   c.DefaultQuery("sort", "created_at"),
-		Page:     page,
-		PerPage:  perPage,
+		Category:        c.Query("category"),
+		Search:          c.Query("q"),
+		SortBy:          c.DefaultQuery("sort", "created_at"),
+		Page:            page,
+		PerPage:         perPage,
+		IncludeInactive: c.DefaultQuery("include_inactive", "true") == "true",
 	}
 
 	experiences, total, err := h.expRepo.List(c.Request.Context(), filter)
@@ -263,8 +274,15 @@ func (h *AdminManagementHandler) ListBookings(c *gin.Context) {
 	status := c.Query("status")
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	perPage, _ := strconv.Atoi(c.DefaultQuery("per_page", "20"))
+	days, _ := strconv.Atoi(c.DefaultQuery("days", "0"))
 
-	bookings, total, err := h.bookingRepo.ListAll(c.Request.Context(), status, page, perPage)
+	var startDate *time.Time
+	if days > 0 {
+		start := time.Now().AddDate(0, 0, -days)
+		startDate = &start
+	}
+
+	bookings, total, err := h.bookingRepo.ListAll(c.Request.Context(), status, page, perPage, startDate)
 	if err != nil {
 		response.InternalError(c, "Không thể tải danh sách bookings")
 		return

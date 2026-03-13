@@ -59,3 +59,11 @@ coverage.html
 android/app/build/
 ios/Pods/
 .expo/
+node_modules.bak*/
+*.bak.*
+
+# Backups
+backups/
+
+# Binaries
+apps/api/server

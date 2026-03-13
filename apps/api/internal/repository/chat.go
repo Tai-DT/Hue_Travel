@@ -82,26 +82,42 @@ func (r *ChatRepository) CreateRoom(ctx context.Context, roomType string, partic
 
 func (r *ChatRepository) GetOrCreateDirectRoom(ctx context.Context, userA, userB uuid.UUID) (*ChatRoom, error) {
 	// Check if room already exists between these two users
-	var room ChatRoom
+	var room *ChatRoom
+	existing := &ChatRoom{}
 	err := r.pool.QueryRow(ctx, `
 		SELECT id, booking_id, participants, room_type, last_message, last_message_at, created_at, updated_at
 		FROM chat_rooms
 		WHERE room_type = 'direct'
-			AND $1 = ANY(participants)
-			AND $2 = ANY(participants)
+			AND $1::uuid = ANY(participants)
+			AND $2::uuid = ANY(participants)
 		LIMIT 1`, userA, userB,
 	).Scan(
-		&room.ID, &room.BookingID, &room.Participants, &room.RoomType,
-		&room.LastMessage, &room.LastMessageAt, &room.CreatedAt, &room.UpdatedAt,
+		&existing.ID, &existing.BookingID, &existing.Participants, &existing.RoomType,
+		&existing.LastMessage, &existing.LastMessageAt, &existing.CreatedAt, &existing.UpdatedAt,
 	)
 
 	if err == pgx.ErrNoRows {
-		return r.CreateRoom(ctx, "direct", []uuid.UUID{userA, userB}, nil)
+		room, err = r.CreateRoom(ctx, "direct", []uuid.UUID{userA, userB}, nil)
+	} else if err == nil {
+		room = existing
 	}
 	if err != nil {
 		return nil, err
 	}
-	return &room, nil
+
+	for _, pid := range room.Participants {
+		if pid != userA {
+			var p ChatParticipant
+			if err := r.pool.QueryRow(ctx,
+				`SELECT id, full_name, avatar_url, role FROM users WHERE id = $1`, pid,
+			).Scan(&p.ID, &p.FullName, &p.AvatarURL, &p.Role); err == nil {
+				room.OtherParticipant = &p
+			}
+			break
+		}
+	}
+
+	return room, nil
 }
 
 func (r *ChatRepository) ListRooms(ctx context.Context, userID uuid.UUID) ([]ChatRoom, error) {
@@ -109,7 +125,7 @@ func (r *ChatRepository) ListRooms(ctx context.Context, userID uuid.UUID) ([]Cha
 		SELECT cr.id, cr.booking_id, cr.participants, cr.room_type,
 			   cr.last_message, cr.last_message_at, cr.created_at, cr.updated_at
 		FROM chat_rooms cr
-		WHERE $1 = ANY(cr.participants)
+		WHERE $1::uuid = ANY(cr.participants)
 		ORDER BY COALESCE(cr.last_message_at, cr.created_at) DESC`, userID)
 	if err != nil {
 		return nil, err

@@ -143,11 +143,11 @@ func (r *UserRepository) AddXP(ctx context.Context, userID uuid.UUID, xp int) er
 }
 
 // UpdateProfile — cập nhật thông tin user
-func (r *UserRepository) UpdateProfile(ctx context.Context, userID uuid.UUID, fullName string, bio, avatarURL *string, languages []string) error {
+func (r *UserRepository) UpdateProfile(ctx context.Context, userID uuid.UUID, fullName string, email, bio, avatarURL *string, languages []string) error {
 	_, err := r.pool.Exec(ctx, `
-		UPDATE users SET full_name = $1, bio = $2, avatar_url = $3, languages = $4, updated_at = NOW()
-		WHERE id = $5 AND is_active = TRUE`,
-		fullName, bio, avatarURL, languages, userID)
+		UPDATE users SET full_name = $1, email = $2, bio = $3, avatar_url = $4, languages = $5, updated_at = NOW()
+		WHERE id = $6 AND is_active = TRUE`,
+		fullName, email, bio, avatarURL, languages, userID)
 	return err
 }
 
@@ -303,14 +303,15 @@ func NewExperienceRepository(pool *pgxpool.Pool) *ExperienceRepository {
 }
 
 type ExperienceFilter struct {
-	Category string
-	MinPrice int64
-	MaxPrice int64
-	GuideID  *uuid.UUID
-	Search   string
-	Page     int
-	PerPage  int
-	SortBy   string // "rating", "price_asc", "price_desc", "newest"
+	Category        string
+	MinPrice        int64
+	MaxPrice        int64
+	GuideID         *uuid.UUID
+	Search          string
+	Page            int
+	PerPage         int
+	SortBy          string // "rating", "price_asc", "price_desc", "newest"
+	IncludeInactive bool   // admin: include soft-deleted experiences
 }
 
 func (r *ExperienceRepository) List(ctx context.Context, filter ExperienceFilter) ([]model.Experience, int64, error) {
@@ -325,7 +326,11 @@ func (r *ExperienceRepository) List(ctx context.Context, filter ExperienceFilter
 	var args []interface{}
 	argIdx := 1
 
-	conditions = append(conditions, "e.is_active = TRUE")
+	conditions = append(conditions, "TRUE")
+
+	if !filter.IncludeInactive {
+		conditions = append(conditions, "e.is_active = TRUE")
+	}
 
 	if filter.Category != "" {
 		conditions = append(conditions, fmt.Sprintf("e.category = $%d", argIdx))
@@ -587,15 +592,17 @@ func (r *BookingRepository) ListByTraveler(ctx context.Context, travelerID uuid.
 	args = append(args, perPage, offset)
 
 	query := fmt.Sprintf(`
-		SELECT b.id, b.traveler_id, b.experience_id, b.guide_id, b.booking_date,
-			   b.start_time, b.guest_count, b.total_price, b.service_fee, b.status,
-			   b.created_at, b.updated_at,
-			   e.title, e.category, e.image_urls, e.duration_mins
-		FROM bookings b
-		JOIN experiences e ON b.experience_id = e.id
-		WHERE %s
-		ORDER BY b.booking_date DESC
-		LIMIT $%d OFFSET $%d`, where, argIdx, argIdx+1)
+			SELECT b.id, b.traveler_id, b.experience_id, b.guide_id, b.booking_date,
+				   b.start_time, b.guest_count, b.total_price, b.service_fee, b.status,
+				   b.created_at, b.updated_at,
+				   e.title, e.category, e.image_urls, e.duration_mins,
+				   g.id, g.full_name, g.avatar_url
+			FROM bookings b
+			JOIN experiences e ON b.experience_id = e.id
+			JOIN users g ON b.guide_id = g.id
+			WHERE %s
+			ORDER BY b.booking_date DESC
+			LIMIT $%d OFFSET $%d`, where, argIdx, argIdx+1)
 
 	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
@@ -607,16 +614,19 @@ func (r *BookingRepository) ListByTraveler(ctx context.Context, travelerID uuid.
 	for rows.Next() {
 		var b model.Booking
 		var exp model.Experience
+		var guide model.User
 		err := rows.Scan(
 			&b.ID, &b.TravelerID, &b.ExperienceID, &b.GuideID, &b.BookingDate,
 			&b.StartTime, &b.GuestCount, &b.TotalPrice, &b.ServiceFee, &b.Status,
 			&b.CreatedAt, &b.UpdatedAt,
 			&exp.Title, &exp.Category, &exp.ImageURLs, &exp.DurationMins,
+			&guide.ID, &guide.FullName, &guide.AvatarURL,
 		)
 		if err != nil {
 			return nil, 0, err
 		}
 		b.Experience = &exp
+		b.Guide = &guide
 		bookings = append(bookings, b)
 	}
 
@@ -699,7 +709,7 @@ func (r *BookingRepository) ListByGuide(ctx context.Context, guideID uuid.UUID, 
 }
 
 // ListAll — tất cả bookings (admin)
-func (r *BookingRepository) ListAll(ctx context.Context, status string, page, perPage int) ([]model.Booking, int64, error) {
+func (r *BookingRepository) ListAll(ctx context.Context, status string, page, perPage int, startDate *time.Time) ([]model.Booking, int64, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -715,6 +725,11 @@ func (r *BookingRepository) ListAll(ctx context.Context, status string, page, pe
 	if status != "" {
 		conditions = append(conditions, fmt.Sprintf("b.status = $%d", argIdx))
 		args = append(args, status)
+		argIdx++
+	}
+	if startDate != nil {
+		conditions = append(conditions, fmt.Sprintf("b.created_at >= $%d", argIdx))
+		args = append(args, *startDate)
 		argIdx++
 	}
 

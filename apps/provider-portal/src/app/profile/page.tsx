@@ -6,32 +6,74 @@ import { providerApi } from '@/lib/api';
 export default function ProfilePage() {
   const [profile, setProfile] = useState<any>(null);
   const [editing, setEditing] = useState(false);
-  const [form, setForm] = useState({ full_name: '', bio: '', languages: '' });
+  const [form, setForm] = useState({
+    full_name: '',
+    email: '',
+    bio: '',
+    languages: '',
+    specialties: '',
+    experience_years: '0',
+    response_time_mins: '30',
+  });
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [saved, setSaved] = useState(false);
 
   const loadProfile = useCallback(async () => {
+    setError('');
     const res = await providerApi.getMe();
     if (res.success && res.data) {
       const user = (res.data as any).user || res.data;
+      const guideRes = await providerApi.getGuideProfile(user.id);
+      const guide = guideRes.success && guideRes.data ? guideRes.data.guide : null;
+
       setProfile(user);
       setForm({
         full_name: user.full_name || '',
+        email: user.email || '',
         bio: user.bio || '',
         languages: (user.languages || []).join(', '),
+        specialties: (guide?.specialties || []).join(', '),
+        experience_years: String(guide?.experience_years || 0),
+        response_time_mins: String(guide?.response_time_mins || 30),
       });
+      return;
     }
+
+    setError(res.error?.message || 'Không thể tải hồ sơ');
   }, []);
 
   useEffect(() => { loadProfile(); }, [loadProfile]);
 
   const handleSave = async () => {
     setSaving(true);
-    await providerApi.updateProfile({
+    setError('');
+    setSaved(false);
+
+    const profileRes = await providerApi.updateProfile({
       full_name: form.full_name,
+      email: form.email || undefined,
       bio: form.bio,
       languages: form.languages.split(',').map((l: string) => l.trim()).filter(Boolean),
     });
+
+    const guideRes = await providerApi.updateGuideProfile({
+      specialties: form.specialties.split(',').map((item: string) => item.trim()).filter(Boolean),
+      experience_years: Number(form.experience_years) || 0,
+      response_time_mins: Math.max(1, Number(form.response_time_mins) || 30),
+    });
+
     setSaving(false);
+    if (!profileRes.success) {
+      setError(profileRes.error?.message || 'Không thể cập nhật hồ sơ');
+      return;
+    }
+    if (!guideRes.success) {
+      setError(guideRes.error?.message || 'Không thể cập nhật hồ sơ hướng dẫn viên');
+      return;
+    }
+
+    setSaved(true);
     setEditing(false);
     loadProfile();
   };
@@ -41,6 +83,18 @@ export default function ProfilePage() {
   return (
     <div>
       <h2 style={{ fontSize: 22, fontWeight: 700, marginBottom: 24 }}>👤 Hồ sơ của tôi</h2>
+
+      {error ? (
+        <div className="p-card" style={{ padding: 16, marginBottom: 16, color: '#F44336' }}>
+          {error}
+        </div>
+      ) : null}
+
+      {saved ? (
+        <div className="p-card" style={{ padding: 16, marginBottom: 16, color: '#4CAF50' }}>
+          Đã cập nhật thông tin guide và hồ sơ cá nhân.
+        </div>
+      ) : null}
 
       <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 24 }}>
         {/* Left — Avatar Card */}
@@ -103,6 +157,23 @@ export default function ProfilePage() {
             </div>
             <div>
               <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 6 }}>
+                Email
+              </label>
+              <input
+                value={form.email}
+                onChange={(e) => setForm({ ...form, email: e.target.value })}
+                disabled={!editing}
+                placeholder="email@example.com"
+                style={{
+                  width: '100%', padding: '10px 14px',
+                  background: editing ? 'var(--bg-secondary)' : 'transparent',
+                  border: editing ? '1px solid var(--border)' : '1px solid transparent',
+                  borderRadius: 8, fontSize: 14, color: 'var(--text-primary)',
+                }}
+              />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 6 }}>
                 Ngôn ngữ (phân cách bằng dấu phẩy)
               </label>
               <input
@@ -110,6 +181,60 @@ export default function ProfilePage() {
                 onChange={(e) => setForm({ ...form, languages: e.target.value })}
                 disabled={!editing}
                 placeholder="Tiếng Việt, English, 日本語"
+                style={{
+                  width: '100%', padding: '10px 14px',
+                  background: editing ? 'var(--bg-secondary)' : 'transparent',
+                  border: editing ? '1px solid var(--border)' : '1px solid transparent',
+                  borderRadius: 8, fontSize: 14, color: 'var(--text-primary)',
+                }}
+              />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 6 }}>
+                Chuyên môn
+              </label>
+              <input
+                value={form.specialties}
+                onChange={(e) => setForm({ ...form, specialties: e.target.value })}
+                disabled={!editing}
+                placeholder="Ẩm thực, di sản, trekking..."
+                style={{
+                  width: '100%', padding: '10px 14px',
+                  background: editing ? 'var(--bg-secondary)' : 'transparent',
+                  border: editing ? '1px solid var(--border)' : '1px solid transparent',
+                  borderRadius: 8, fontSize: 14, color: 'var(--text-primary)',
+                }}
+              />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 6 }}>
+                Số năm kinh nghiệm
+              </label>
+              <input
+                type="number"
+                min={0}
+                max={50}
+                value={form.experience_years}
+                onChange={(e) => setForm({ ...form, experience_years: e.target.value })}
+                disabled={!editing}
+                style={{
+                  width: '100%', padding: '10px 14px',
+                  background: editing ? 'var(--bg-secondary)' : 'transparent',
+                  border: editing ? '1px solid var(--border)' : '1px solid transparent',
+                  borderRadius: 8, fontSize: 14, color: 'var(--text-primary)',
+                }}
+              />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 6 }}>
+                Thời gian phản hồi (phút)
+              </label>
+              <input
+                type="number"
+                min={1}
+                value={form.response_time_mins}
+                onChange={(e) => setForm({ ...form, response_time_mins: e.target.value })}
+                disabled={!editing}
                 style={{
                   width: '100%', padding: '10px 14px',
                   background: editing ? 'var(--bg-secondary)' : 'transparent',

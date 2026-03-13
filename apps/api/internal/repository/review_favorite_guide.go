@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -24,6 +25,16 @@ func NewReviewRepository(pool *pgxpool.Pool) *ReviewRepository {
 }
 
 func (r *ReviewRepository) Create(ctx context.Context, review *model.Review) error {
+	// Check for duplicate review: one review per booking per traveler
+	var exists bool
+	r.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM reviews WHERE traveler_id = $1 AND booking_id = $2)`,
+		review.TravelerID, review.BookingID,
+	).Scan(&exists)
+	if exists {
+		return fmt.Errorf("bạn đã đánh giá booking này rồi")
+	}
+
 	review.ID = uuid.New()
 	review.CreatedAt = time.Now()
 	review.UpdatedAt = time.Now()
@@ -180,16 +191,30 @@ func (r *FavoriteRepository) Toggle(ctx context.Context, userID, experienceID uu
 	return true, err
 }
 
-func (r *FavoriteRepository) ListByUser(ctx context.Context, userID uuid.UUID) ([]model.Experience, error) {
+func (r *FavoriteRepository) ListByUser(ctx context.Context, userID uuid.UUID, page, perPage int) ([]model.Experience, int64, error) {
+	if page < 1 {
+		page = 1
+	}
+	if perPage < 1 || perPage > 50 {
+		perPage = 20
+	}
+
+	var total int64
+	r.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM favorites WHERE user_id = $1`, userID,
+	).Scan(&total)
+
+	offset := (page - 1) * perPage
 	rows, err := r.pool.Query(ctx, `
 		SELECT e.id, e.title, e.category, e.price, e.duration_mins,
 			   e.image_urls, e.rating, e.rating_count, e.is_instant
 		FROM favorites f
 		JOIN experiences e ON f.experience_id = e.id
 		WHERE f.user_id = $1
-		ORDER BY f.created_at DESC`, userID)
+		ORDER BY f.created_at DESC
+		LIMIT $2 OFFSET $3`, userID, perPage, offset)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
@@ -201,11 +226,11 @@ func (r *FavoriteRepository) ListByUser(ctx context.Context, userID uuid.UUID) (
 			&exp.ImageURLs, &exp.Rating, &exp.RatingCount, &exp.IsInstant,
 		)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		experiences = append(experiences, exp)
 	}
-	return experiences, nil
+	return experiences, total, nil
 }
 
 func (r *FavoriteRepository) IsFavorited(ctx context.Context, userID, experienceID uuid.UUID) (bool, error) {
@@ -289,4 +314,23 @@ func (r *GuideProfileRepository) GetTopGuides(ctx context.Context, limit int) ([
 		guides = append(guides, gp)
 	}
 	return guides, nil
+}
+
+// CreateOrUpdate — create guide profile if not exists, update if exists (upsert)
+func (r *GuideProfileRepository) CreateOrUpdate(ctx context.Context, gp *model.GuideProfile) error {
+	gp.CreatedAt = time.Now()
+
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO guide_profiles (
+			id, user_id, badge_level, specialties, experience_years,
+			response_time_mins, is_approved, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		ON CONFLICT (user_id) DO UPDATE SET
+			specialties = EXCLUDED.specialties,
+			experience_years = EXCLUDED.experience_years,
+			response_time_mins = EXCLUDED.response_time_mins`,
+		uuid.New(), gp.UserID, "bronze", gp.Specialties, gp.ExperienceYears,
+		gp.ResponseTimeMins, false, gp.CreatedAt,
+	)
+	return err
 }

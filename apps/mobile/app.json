@@ -8,30 +8,82 @@
     "scheme": "huetravel",
     "userInterfaceStyle": "dark",
     "splash": {
+      "image": "./src/assets/splash.png",
+      "resizeMode": "contain",
       "backgroundColor": "#0a0a0a"
     },
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "vn.huetravel.app",
+      "infoPlist": {
+        "CFBundleURLTypes": [
+          {
+            "CFBundleURLSchemes": ["huetravel"]
+          }
+        ],
+        "NSLocationWhenInUseUsageDescription": "Để hiển thị bản đồ và các địa điểm du lịch gần bạn",
+        "NSCameraUsageDescription": "Để chụp ảnh avatar và đánh giá tour",
+        "NSPhotoLibraryUsageDescription": "Để chọn ảnh avatar và đánh giá tour"
+      },
       "config": {
         "googleMapsApiKey": ""
-      }
+      },
+      "associatedDomains": [
+        "applinks:huetravel.vn"
+      ]
     },
     "android": {
       "adaptiveIcon": {
+        "foregroundImage": "./src/assets/adaptive-icon.png",
         "backgroundColor": "#0a0a0a"
       },
       "package": "vn.huetravel.app",
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "huetravel"
+            },
+            {
+              "scheme": "https",
+              "host": "huetravel.vn",
+              "pathPrefix": "/booking"
+            },
+            {
+              "scheme": "https",
+              "host": "huetravel.vn",
+              "pathPrefix": "/experience"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ],
       "config": {
         "googleMaps": {
           "apiKey": ""
         }
-      }
+      },
+      "permissions": [
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "ACCESS_FINE_LOCATION",
+        "VIBRATE",
+        "RECEIVE_BOOT_COMPLETED"
+      ]
     },
     "plugins": [
       "expo-router",
       "expo-font",
-      "expo-secure-store"
-    ]
+      "expo-secure-store",
+      "expo-asset",
+      "expo-linking"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": ""
+      }
+    }
   }
 }

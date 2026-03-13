@@ -15,13 +15,19 @@ import (
 // ============================================
 
 type GooglePlacesService struct {
-	apiKey     string
-	httpClient *http.Client
+	apiKey          string
+	httpClient      *http.Client
+	fallbackEnabled bool
 }
 
 func NewGooglePlacesService(apiKey string) *GooglePlacesService {
+	return NewGooglePlacesServiceWithFallback(apiKey, true)
+}
+
+func NewGooglePlacesServiceWithFallback(apiKey string, fallbackEnabled bool) *GooglePlacesService {
 	return &GooglePlacesService{
-		apiKey: apiKey,
+		apiKey:          apiKey,
+		fallbackEnabled: fallbackEnabled,
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 		},
@@ -35,29 +41,29 @@ func (s *GooglePlacesService) HasAPIKey() bool {
 
 // PlaceResult represents a Google Places API result
 type PlaceResult struct {
-	PlaceID          string   `json:"place_id"`
-	Name             string   `json:"name"`
-	Address          string   `json:"address"`
-	Lat              float64  `json:"lat"`
-	Lng              float64  `json:"lng"`
-	Rating           float64  `json:"rating"`
-	RatingCount      int      `json:"rating_count"`
-	PriceLevel       int      `json:"price_level"`
-	Types            []string `json:"types"`
-	OpenNow          *bool    `json:"open_now,omitempty"`
-	PhotoReference   string   `json:"photo_reference,omitempty"`
-	PhotoURL         string   `json:"photo_url,omitempty"`
+	PlaceID        string   `json:"place_id"`
+	Name           string   `json:"name"`
+	Address        string   `json:"address"`
+	Lat            float64  `json:"lat"`
+	Lng            float64  `json:"lng"`
+	Rating         float64  `json:"rating"`
+	RatingCount    int      `json:"rating_count"`
+	PriceLevel     int      `json:"price_level"`
+	Types          []string `json:"types"`
+	OpenNow        *bool    `json:"open_now,omitempty"`
+	PhotoReference string   `json:"photo_reference,omitempty"`
+	PhotoURL       string   `json:"photo_url,omitempty"`
 }
 
 // DirectionResult represents directions between two points
 type DirectionResult struct {
-	Distance     string    `json:"distance"`
-	Duration     string    `json:"duration"`
-	DurationSecs int       `json:"duration_secs"`
-	StartAddress string    `json:"start_address"`
-	EndAddress   string    `json:"end_address"`
-	Steps        []Step    `json:"steps"`
-	Polyline     string    `json:"polyline"`
+	Distance     string `json:"distance"`
+	Duration     string `json:"duration"`
+	DurationSecs int    `json:"duration_secs"`
+	StartAddress string `json:"start_address"`
+	EndAddress   string `json:"end_address"`
+	Steps        []Step `json:"steps"`
+	Polyline     string `json:"polyline"`
 }
 
 type Step struct {
@@ -76,6 +82,9 @@ type Step struct {
 
 func (s *GooglePlacesService) NearbySearch(ctx context.Context, lat, lng float64, radius int, placeType string) ([]PlaceResult, error) {
 	if !s.HasAPIKey() {
+		if !s.fallbackEnabled {
+			return nil, fmt.Errorf("%w: Google Maps API key is missing", ErrServiceNotConfigured)
+		}
 		return s.mockNearbyResults(), nil
 	}
 
@@ -90,6 +99,9 @@ func (s *GooglePlacesService) NearbySearch(ctx context.Context, lat, lng float64
 
 	resp, err := s.httpClient.Get(apiURL)
 	if err != nil {
+		if !s.fallbackEnabled {
+			return nil, fmt.Errorf("%w: Google Places nearby search failed: %v", ErrServiceUnavailable, err)
+		}
 		return nil, fmt.Errorf("google places API error: %w", err)
 	}
 	defer resp.Body.Close()
@@ -122,7 +134,16 @@ func (s *GooglePlacesService) NearbySearch(ctx context.Context, lat, lng float64
 	}
 
 	if err := json.Unmarshal(body, &result); err != nil {
+		if !s.fallbackEnabled {
+			return nil, fmt.Errorf("%w: Google Places nearby response parse failed", ErrServiceUnavailable)
+		}
 		return nil, fmt.Errorf("parse error: %w", err)
+	}
+	if result.Status != "" && result.Status != "OK" && result.Status != "ZERO_RESULTS" {
+		if !s.fallbackEnabled {
+			return nil, fmt.Errorf("%w: Google Places nearby returned status %s", ErrServiceUnavailable, result.Status)
+		}
+		return nil, fmt.Errorf("google places returned status %s", result.Status)
 	}
 
 	var places []PlaceResult
@@ -158,6 +179,9 @@ func (s *GooglePlacesService) NearbySearch(ctx context.Context, lat, lng float64
 
 func (s *GooglePlacesService) TextSearch(ctx context.Context, query string, lat, lng float64) ([]PlaceResult, error) {
 	if !s.HasAPIKey() {
+		if !s.fallbackEnabled {
+			return nil, fmt.Errorf("%w: Google Maps API key is missing", ErrServiceNotConfigured)
+		}
 		return s.mockSearchResults(query), nil
 	}
 
@@ -172,6 +196,9 @@ func (s *GooglePlacesService) TextSearch(ctx context.Context, query string, lat,
 
 	resp, err := s.httpClient.Get(apiURL)
 	if err != nil {
+		if !s.fallbackEnabled {
+			return nil, fmt.Errorf("%w: Google Places text search failed: %v", ErrServiceUnavailable, err)
+		}
 		return nil, fmt.Errorf("google places API error: %w", err)
 	}
 	defer resp.Body.Close()
@@ -197,10 +224,20 @@ func (s *GooglePlacesService) TextSearch(ctx context.Context, query string, lat,
 				PhotoReference string `json:"photo_reference"`
 			} `json:"photos"`
 		} `json:"results"`
+		Status string `json:"status"`
 	}
 
 	if err := json.Unmarshal(body, &result); err != nil {
+		if !s.fallbackEnabled {
+			return nil, fmt.Errorf("%w: Google Places text search parse failed", ErrServiceUnavailable)
+		}
 		return nil, fmt.Errorf("parse error: %w", err)
+	}
+	if result.Status != "" && result.Status != "OK" && result.Status != "ZERO_RESULTS" {
+		if !s.fallbackEnabled {
+			return nil, fmt.Errorf("%w: Google Places text search returned status %s", ErrServiceUnavailable, result.Status)
+		}
+		return nil, fmt.Errorf("google places returned status %s", result.Status)
 	}
 
 	var places []PlaceResult
@@ -232,6 +269,9 @@ func (s *GooglePlacesService) TextSearch(ctx context.Context, query string, lat,
 
 func (s *GooglePlacesService) GetDirections(ctx context.Context, originLat, originLng, destLat, destLng float64, mode string) (*DirectionResult, error) {
 	if !s.HasAPIKey() {
+		if !s.fallbackEnabled {
+			return nil, fmt.Errorf("%w: Google Maps API key is missing", ErrServiceNotConfigured)
+		}
 		return s.mockDirection(), nil
 	}
 
@@ -250,6 +290,9 @@ func (s *GooglePlacesService) GetDirections(ctx context.Context, originLat, orig
 
 	resp, err := s.httpClient.Get(apiURL)
 	if err != nil {
+		if !s.fallbackEnabled {
+			return nil, fmt.Errorf("%w: Google Directions request failed: %v", ErrServiceUnavailable, err)
+		}
 		return nil, fmt.Errorf("directions API error: %w", err)
 	}
 	defer resp.Body.Close()
@@ -269,7 +312,7 @@ func (s *GooglePlacesService) GetDirections(ctx context.Context, originLat, orig
 				StartAddress string `json:"start_address"`
 				EndAddress   string `json:"end_address"`
 				Steps        []struct {
-					HTMLInstructions string `json:"html_instructions"`
+					HTMLInstructions string                `json:"html_instructions"`
 					Distance         struct{ Text string } `json:"distance"`
 					Duration         struct{ Text string } `json:"duration"`
 					StartLocation    struct {
@@ -286,13 +329,26 @@ func (s *GooglePlacesService) GetDirections(ctx context.Context, originLat, orig
 				Points string `json:"points"`
 			} `json:"overview_polyline"`
 		} `json:"routes"`
+		Status string `json:"status"`
 	}
 
 	if err := json.Unmarshal(body, &result); err != nil {
+		if !s.fallbackEnabled {
+			return nil, fmt.Errorf("%w: Google Directions parse failed", ErrServiceUnavailable)
+		}
 		return nil, fmt.Errorf("parse error: %w", err)
+	}
+	if result.Status != "" && result.Status != "OK" {
+		if !s.fallbackEnabled {
+			return nil, fmt.Errorf("%w: Google Directions returned status %s", ErrServiceUnavailable, result.Status)
+		}
+		return nil, fmt.Errorf("google directions returned status %s", result.Status)
 	}
 
 	if len(result.Routes) == 0 || len(result.Routes[0].Legs) == 0 {
+		if !s.fallbackEnabled {
+			return nil, fmt.Errorf("%w: Google Directions returned no route", ErrServiceUnavailable)
+		}
 		return nil, fmt.Errorf("no route found")
 	}
 

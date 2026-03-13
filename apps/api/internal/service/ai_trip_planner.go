@@ -16,16 +16,22 @@ import (
 // ============================================
 
 type AITripPlannerService struct {
-	apiKey     string
-	modelName  string
-	httpClient *http.Client
+	apiKey          string
+	modelName       string
+	httpClient      *http.Client
+	fallbackEnabled bool
 }
 
 func NewAITripPlannerService(apiKey string) *AITripPlannerService {
+	return NewAITripPlannerServiceWithFallback(apiKey, true)
+}
+
+func NewAITripPlannerServiceWithFallback(apiKey string, fallbackEnabled bool) *AITripPlannerService {
 	return &AITripPlannerService{
-		apiKey:     apiKey,
-		modelName:  "gemini-2.0-flash",
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		apiKey:          apiKey,
+		modelName:       "gemini-2.0-flash",
+		httpClient:      &http.Client{Timeout: 30 * time.Second},
+		fallbackEnabled: fallbackEnabled,
 	}
 }
 
@@ -57,11 +63,11 @@ type TripPlan struct {
 }
 
 type DayPlan struct {
-	Day        int            `json:"day"`
-	Theme      string         `json:"theme"`
-	Activities []Activity     `json:"activities"`
-	Meals      []MealSuggest  `json:"meals"`
-	EstCost    string         `json:"estimated_cost"`
+	Day        int           `json:"day"`
+	Theme      string        `json:"theme"`
+	Activities []Activity    `json:"activities"`
+	Meals      []MealSuggest `json:"meals"`
+	EstCost    string        `json:"estimated_cost"`
 }
 
 type Activity struct {
@@ -94,12 +100,18 @@ type AIChatMessage struct {
 
 func (s *AITripPlannerService) GenerateTripPlan(ctx context.Context, req TripPlanRequest) (*TripPlan, error) {
 	if !s.HasAPIKey() {
+		if !s.fallbackEnabled {
+			return nil, fmt.Errorf("%w: Gemini API key is missing", ErrServiceNotConfigured)
+		}
 		return s.mockTripPlan(req), nil
 	}
 
 	prompt := s.buildTripPlanPrompt(req)
 	response, err := s.callGemini(ctx, prompt)
 	if err != nil {
+		if !s.fallbackEnabled {
+			return nil, fmt.Errorf("%w: Gemini trip planner request failed: %v", ErrServiceUnavailable, err)
+		}
 		return s.mockTripPlan(req), nil
 	}
 
@@ -107,6 +119,9 @@ func (s *AITripPlannerService) GenerateTripPlan(ctx context.Context, req TripPla
 	// Try to parse JSON from response
 	jsonStr := extractJSON(response)
 	if err := json.Unmarshal([]byte(jsonStr), &plan); err != nil {
+		if !s.fallbackEnabled {
+			return nil, fmt.Errorf("%w: Gemini returned invalid trip plan JSON", ErrServiceUnavailable)
+		}
 		return s.mockTripPlan(req), nil
 	}
 
@@ -119,6 +134,9 @@ func (s *AITripPlannerService) GenerateTripPlan(ctx context.Context, req TripPla
 
 func (s *AITripPlannerService) Chat(ctx context.Context, messages []AIChatMessage) (string, error) {
 	if !s.HasAPIKey() {
+		if !s.fallbackEnabled {
+			return "", fmt.Errorf("%w: Gemini API key is missing", ErrServiceNotConfigured)
+		}
 		return s.mockChatResponse(messages), nil
 	}
 
@@ -166,7 +184,7 @@ Kiến thức đặc biệt:
 	body := map[string]interface{}{
 		"contents": geminiMessages,
 		"generationConfig": map[string]interface{}{
-			"temperature":   0.8,
+			"temperature":     0.8,
 			"maxOutputTokens": 1024,
 		},
 	}
@@ -182,9 +200,18 @@ Kiến thức đặc biệt:
 
 	resp, err := s.httpClient.Do(httpReq)
 	if err != nil {
+		if !s.fallbackEnabled {
+			return "", fmt.Errorf("%w: Gemini chat request failed: %v", ErrServiceUnavailable, err)
+		}
 		return s.mockChatResponse(messages), nil
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode >= http.StatusBadRequest {
+		if !s.fallbackEnabled {
+			return "", fmt.Errorf("%w: Gemini chat returned status %d", ErrServiceUnavailable, resp.StatusCode)
+		}
+		return s.mockChatResponse(messages), nil
+	}
 
 	respBody, _ := io.ReadAll(resp.Body)
 
@@ -199,6 +226,9 @@ Kiến thức đặc biệt:
 	}
 
 	if err := json.Unmarshal(respBody, &result); err != nil || len(result.Candidates) == 0 {
+		if !s.fallbackEnabled {
+			return "", fmt.Errorf("%w: Gemini returned invalid chat response", ErrServiceUnavailable)
+		}
 		return s.mockChatResponse(messages), nil
 	}
 
@@ -217,8 +247,8 @@ func (s *AITripPlannerService) callGemini(ctx context.Context, prompt string) (s
 			},
 		},
 		"generationConfig": map[string]interface{}{
-			"temperature":     0.7,
-			"maxOutputTokens": 4096,
+			"temperature":      0.7,
+			"maxOutputTokens":  4096,
 			"responseMimeType": "application/json",
 		},
 	}
@@ -237,6 +267,9 @@ func (s *AITripPlannerService) callGemini(ctx context.Context, prompt string) (s
 		return "", err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode >= http.StatusBadRequest {
+		return "", fmt.Errorf("gemini returned status %d", resp.StatusCode)
+	}
 
 	respBody, _ := io.ReadAll(resp.Body)
 

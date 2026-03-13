@@ -1,4 +1,4 @@
-.PHONY: help dev infra-up infra-down api migrate
+.PHONY: help dev infra-up infra-down api migrate seed
 
 # ============================================
 # Huế Travel — Development Commands
@@ -39,6 +39,10 @@ migrate: ## Run database migrations
 	@echo "Running migrations..."
 	docker compose exec -T postgres psql -U huetravel -d hue_travel -f /docker-entrypoint-initdb.d/01-init.sql
 
+seed: ## Load demo seed data
+	@echo "Seeding demo data..."
+	docker compose exec -T postgres psql -U huetravel -d hue_travel < scripts/seed.sql
+
 db-shell: ## Open PostgreSQL shell
 	docker compose exec postgres psql -U huetravel -d hue_travel
 
@@ -56,3 +60,20 @@ setup: ## First-time project setup
 
 # ---- All ----
 dev: infra-up api ## Start everything (infra + API)
+
+# ---- Backup / Restore ----
+backup: ## Backup database
+	./scripts/backup-db.sh
+
+restore: ## Restore database (usage: make restore FILE=backups/xxx.sql.gz)
+	./scripts/restore-db.sh $(FILE)
+
+# ---- SSL ----
+ssl-setup: ## Setup SSL with Let's Encrypt
+	./scripts/setup-ssl.sh
+
+# ---- Deploy ----
+deploy: ## Deploy to production
+	cd deploy && docker compose -f docker-compose.prod.yml pull
+	cd deploy && docker compose -f docker-compose.prod.yml up -d
+	@echo "🚀 Deployed!"

@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"errors"
+
 	"github.com/gin-gonic/gin"
 
 	"github.com/huetravel/api/internal/service"
@@ -38,6 +40,10 @@ func (h *AIHandler) GenerateTripPlan(c *gin.Context) {
 
 	plan, err := h.aiService.GenerateTripPlan(c.Request.Context(), req)
 	if err != nil {
+		if errors.Is(err, service.ErrServiceNotConfigured) || errors.Is(err, service.ErrServiceUnavailable) {
+			response.ServiceUnavailable(c, "HT-AI-001", "AI planner hiện chưa sẵn sàng")
+			return
+		}
 		response.InternalError(c, "Không thể tạo lịch trình")
 		return
 	}
@@ -58,6 +64,10 @@ func (h *AIHandler) Chat(c *gin.Context) {
 
 	reply, err := h.aiService.Chat(c.Request.Context(), req.Messages)
 	if err != nil {
+		if errors.Is(err, service.ErrServiceNotConfigured) || errors.Is(err, service.ErrServiceUnavailable) {
+			response.ServiceUnavailable(c, "HT-AI-002", "AI chat hiện chưa sẵn sàng")
+			return
+		}
 		response.InternalError(c, "AI không khả dụng")
 		return
 	}

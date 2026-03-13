@@ -10,10 +10,10 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Colors, Fonts, Spacing, BorderRadius } from '@/constants/theme';
-import api from '@/services/api';
+import api, { User } from '@/services/api';
 
 type Props = {
-  onLoginSuccess: (token: string) => void;
+  onLoginSuccess: (token: string, user?: User, isNewUser?: boolean) => void;
 };
 
 export default function LoginScreen({ onLoginSuccess }: Props) {
@@ -24,6 +24,11 @@ export default function LoginScreen({ onLoginSuccess }: Props) {
   const [error, setError] = useState('');
 
   const otpRefs = useRef<(TextInput | null)[]>([]);
+  const googleConfigured = Boolean(
+    process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID ||
+      process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID ||
+      process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID
+  );
 
   const handleSendOTP = async () => {
     if (phone.length < 9) {
@@ -80,12 +85,19 @@ export default function LoginScreen({ onLoginSuccess }: Props) {
     setLoading(false);
     if (result.success && result.data) {
       api.setToken(result.data.token);
-      onLoginSuccess(result.data.token);
+      onLoginSuccess(result.data.token, result.data.user, result.data.is_new_user);
     } else {
       setError(result.error?.message || 'Mã OTP không đúng');
       setOtp(['', '', '', '', '', '']);
       otpRefs.current[0]?.focus();
     }
+  };
+
+  const handleResendOTP = async () => {
+    if (loading) return;
+    setOtp(['', '', '', '', '', '']);
+    await handleSendOTP();
+    otpRefs.current[0]?.focus();
   };
 
   return (
@@ -153,23 +165,13 @@ export default function LoginScreen({ onLoginSuccess }: Props) {
               )}
             </TouchableOpacity>
 
-            {/* Divider */}
-            <View style={styles.divider}>
-              <View style={styles.dividerLine} />
-              <Text style={styles.dividerText}>hoặc</Text>
-              <View style={styles.dividerLine} />
-            </View>
-
-            {/* Social Login */}
-            <View style={styles.socialButtons}>
-              <TouchableOpacity style={styles.socialButton}>
-                <Text style={styles.socialIcon}>G</Text>
-                <Text style={styles.socialText}>Google</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.socialButton}>
-                <Text style={styles.socialIcon}>🍎</Text>
-                <Text style={styles.socialText}>Apple</Text>
-              </TouchableOpacity>
+            <View style={styles.socialNotice}>
+              <Text style={styles.socialNoticeTitle}>Đăng nhập xã hội</Text>
+              <Text style={styles.socialNoticeText}>
+                {googleConfigured
+                  ? 'Backend đã sẵn sàng cho Google token. Hãy thêm OAuth client IDs của app để bật nút đăng nhập.'
+                  : 'Google/Apple login sẽ được bật khi môi trường production được cấu hình OAuth client IDs.'}
+              </Text>
             </View>
           </>
         ) : (
@@ -179,7 +181,7 @@ export default function LoginScreen({ onLoginSuccess }: Props) {
               {otp.map((digit, index) => (
                 <TextInput
                   key={index}
-                  ref={(ref) => (otpRefs.current[index] = ref)}
+                  ref={(ref: TextInput | null) => { otpRefs.current[index] = ref; }}
                   style={[
                     styles.otpInput,
                     digit ? styles.otpInputFilled : null,
@@ -200,7 +202,7 @@ export default function LoginScreen({ onLoginSuccess }: Props) {
             {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
             {/* Resend */}
-            <TouchableOpacity style={styles.resendButton}>
+            <TouchableOpacity style={styles.resendButton} onPress={handleResendOTP} disabled={loading}>
               <Text style={styles.resendText}>
                 Không nhận được mã? <Text style={styles.resendLink}>Gửi lại</Text>
               </Text>
@@ -316,46 +318,23 @@ const styles = StyleSheet.create({
     fontWeight: Fonts.weights.bold,
     color: Colors.textOnPrimary,
   },
-  divider: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: Spacing.sm,
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: Colors.border,
-  },
-  dividerText: {
-    color: Colors.textMuted,
-    paddingHorizontal: Spacing.base,
-    fontSize: Fonts.sizes.sm,
-  },
-  socialButtons: {
-    flexDirection: 'row',
-    gap: Spacing.md,
-  },
-  socialButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
+  socialNotice: {
     backgroundColor: Colors.surface,
-    paddingVertical: Spacing.md,
     borderRadius: BorderRadius.lg,
     borderWidth: 1,
     borderColor: Colors.border,
-    gap: Spacing.sm,
+    padding: Spacing.base,
+    gap: Spacing.xs,
   },
-  socialIcon: {
-    fontSize: 18,
-    fontWeight: Fonts.weights.bold,
+  socialNoticeTitle: {
     color: Colors.text,
+    fontSize: Fonts.sizes.base,
+    fontWeight: Fonts.weights.semibold,
   },
-  socialText: {
-    color: Colors.text,
-    fontSize: Fonts.sizes.md,
-    fontWeight: Fonts.weights.medium,
+  socialNoticeText: {
+    color: Colors.textSecondary,
+    fontSize: Fonts.sizes.sm,
+    lineHeight: 20,
   },
   otpContainer: {
     flexDirection: 'row',

@@ -1,0 +1,1426 @@
+openapi: 3.0.3
+info:
+  title: Huế Travel API
+  description: |
+    API cho ứng dụng du lịch Huế — booking trải nghiệm, AI trip planner, thanh toán VNPay, 
+    real-time chat, và quản lý admin.
+    
+    ## Authentication
+    Sử dụng JWT Bearer token:
+    ```
+    Authorization: Bearer <access_token>
+    ```
+    
+    ## Error Format
+    ```json
+    {
+      "success": false,
+      "error": { "code": "HT-AUTH-001", "message": "Chưa xác thực" }
+    }
+    ```
+  version: 1.0.0
+  contact:
+    name: Huế Travel Team
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+  - url: https://api.huetravel.vn
+    description: Production
+
+tags:
+  - name: Auth
+    description: Đăng nhập / Đăng ký / Token
+  - name: Experiences
+    description: Quản lý trải nghiệm du lịch
+  - name: Bookings
+    description: Đặt chỗ trải nghiệm
+  - name: Places
+    description: Tìm kiếm địa điểm (Google Maps)
+  - name: AI
+    description: AI Trip Planner (Gemini)
+  - name: Payment
+    description: Thanh toán VNPay
+  - name: Reviews
+    description: Đánh giá trải nghiệm
+  - name: Favorites
+    description: Yêu thích
+  - name: Guides
+    description: Hướng dẫn viên
+  - name: Chat
+    description: Real-time chat
+  - name: Notifications
+    description: Thông báo
+  - name: Search
+    description: Tìm kiếm full-text
+  - name: Upload
+    description: Upload file
+  - name: Admin
+    description: Quản trị hệ thống
+  - name: System
+    description: Health check & docs
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  
+  schemas:
+    APIResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+        error:
+          $ref: '#/components/schemas/APIError'
+        meta:
+          $ref: '#/components/schemas/Meta'
+    
+    APIError:
+      type: object
+      properties:
+        code:
+          type: string
+          example: "HT-VAL-001"
+        message:
+          type: string
+          example: "Dữ liệu không hợp lệ"
+    
+    Meta:
+      type: object
+      properties:
+        page:
+          type: integer
+        per_page:
+          type: integer
+        total:
+          type: integer
+        total_pages:
+          type: integer
+    
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        phone:
+          type: string
+          example: "0901234567"
+        email:
+          type: string
+        full_name:
+          type: string
+        avatar_url:
+          type: string
+        role:
+          type: string
+          enum: [traveler, guide, blogger, merchant, expert, admin]
+        xp_points:
+          type: integer
+        level:
+          type: string
+          enum: [bronze, silver, gold, platinum, diamond]
+        is_active:
+          type: boolean
+    
+    Experience:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+        category:
+          type: string
+        price:
+          type: integer
+        duration_hours:
+          type: number
+        max_guests:
+          type: integer
+        location:
+          type: string
+        latitude:
+          type: number
+        longitude:
+          type: number
+        image_urls:
+          type: array
+          items:
+            type: string
+        rating:
+          type: number
+        review_count:
+          type: integer
+        guide_id:
+          type: string
+          format: uuid
+        is_active:
+          type: boolean
+    
+    Booking:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        experience_id:
+          type: string
+          format: uuid
+        traveler_id:
+          type: string
+          format: uuid
+        guide_id:
+          type: string
+          format: uuid
+        booking_date:
+          type: string
+          format: date
+        guests:
+          type: integer
+        total_price:
+          type: integer
+        status:
+          type: string
+          enum: [pending, confirmed, completed, cancelled, refunded]
+        special_requests:
+          type: string
+    
+    Review:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        experience_id:
+          type: string
+          format: uuid
+        traveler_id:
+          type: string
+          format: uuid
+        overall_rating:
+          type: number
+        guide_rating:
+          type: number
+        value_rating:
+          type: number
+        comment:
+          type: string
+        photo_urls:
+          type: array
+          items:
+            type: string
+    
+    Notification:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        type:
+          type: string
+        title:
+          type: string
+        body:
+          type: string
+        is_read:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+    
+    SearchResult:
+      type: object
+      properties:
+        documents:
+          type: array
+          items:
+            type: object
+        total_count:
+          type: integer
+        query:
+          type: string
+        time_ms:
+          type: integer
+        facets:
+          type: object
+
+paths:
+  # ============================================
+  # System
+  # ============================================
+  /health:
+    get:
+      tags: [System]
+      summary: Health check
+      description: Kiểm tra trạng thái server, DB, Redis
+      responses:
+        '200':
+          description: Server status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [healthy, degraded]
+                  service:
+                    type: string
+                  version:
+                    type: string
+                  dependencies:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        status:
+                          type: string
+                        latency_ms:
+                          type: integer
+  
+  /api/v1/docs:
+    get:
+      tags: [System]
+      summary: API documentation
+      description: Liệt kê tất cả endpoints
+      responses:
+        '200':
+          description: API endpoint listing
+
+  # ============================================
+  # Auth
+  # ============================================
+  /api/v1/auth/otp/send:
+    post:
+      tags: [Auth]
+      summary: Gửi OTP
+      description: Gửi OTP đến số điện thoại Việt Nam
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone]
+              properties:
+                phone:
+                  type: string
+                  example: "0901234567"
+      responses:
+        '200':
+          description: OTP sent
+        '400':
+          description: Invalid phone
+        '429':
+          description: Rate limited
+
+  /api/v1/auth/otp/verify:
+    post:
+      tags: [Auth]
+      summary: Xác thực OTP
+      description: Verify OTP và nhận JWT tokens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone, code]
+              properties:
+                phone:
+                  type: string
+                code:
+                  type: string
+                  example: "123456"
+      responses:
+        '200':
+          description: JWT tokens returned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                  refresh_token:
+                    type: string
+                  user:
+                    $ref: '#/components/schemas/User'
+        '400':
+          description: Invalid OTP
+
+  /api/v1/auth/google:
+    post:
+      tags: [Auth]
+      summary: Google OAuth login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id_token]
+              properties:
+                id_token:
+                  type: string
+      responses:
+        '200':
+          description: JWT tokens returned
+
+  /api/v1/auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Refresh access token
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        '200':
+          description: New access token
+
+  /api/v1/auth/logout:
+    post:
+      tags: [Auth]
+      summary: Logout
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Logged out
+
+  # ============================================
+  # Experiences
+  # ============================================
+  /api/v1/experiences:
+    get:
+      tags: [Experiences]
+      summary: Danh sách trải nghiệm
+      parameters:
+        - name: category
+          in: query
+          schema:
+            type: string
+        - name: q
+          in: query
+          schema:
+            type: string
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [created_at, price, rating]
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Paginated list
+    post:
+      tags: [Experiences]
+      summary: Tạo trải nghiệm
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Experience'
+      responses:
+        '201':
+          description: Created
+
+  /api/v1/experiences/{id}:
+    get:
+      tags: [Experiences]
+      summary: Chi tiết trải nghiệm
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Experience detail
+        '404':
+          description: Not found
+    put:
+      tags: [Experiences]
+      summary: Cập nhật trải nghiệm
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Updated
+    delete:
+      tags: [Experiences]
+      summary: Xoá trải nghiệm
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Deleted
+
+  # ============================================
+  # Bookings
+  # ============================================
+  /api/v1/bookings:
+    post:
+      tags: [Bookings]
+      summary: Tạo booking
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [experience_id, booking_date, guests]
+              properties:
+                experience_id:
+                  type: string
+                  format: uuid
+                booking_date:
+                  type: string
+                  format: date
+                guests:
+                  type: integer
+                  minimum: 1
+                special_requests:
+                  type: string
+      responses:
+        '201':
+          description: Booking created
+    get:
+      tags: [Bookings]
+      summary: Danh sách booking
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Booking list
+
+  /api/v1/bookings/{id}:
+    get:
+      tags: [Bookings]
+      summary: Chi tiết booking
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Booking detail
+
+  /api/v1/bookings/{id}/cancel:
+    post:
+      tags: [Bookings]
+      summary: Huỷ booking
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Cancelled
+
+  /api/v1/bookings/{id}/confirm:
+    post:
+      tags: [Bookings]
+      summary: Xác nhận booking (guide)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Confirmed
+
+  /api/v1/bookings/{id}/complete:
+    post:
+      tags: [Bookings]
+      summary: Hoàn thành booking (guide)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Completed
+
+  # ============================================
+  # Places (Google Maps)
+  # ============================================
+  /api/v1/places/search:
+    get:
+      tags: [Places]
+      summary: Tìm kiếm địa điểm
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Search results
+
+  /api/v1/places/nearby:
+    get:
+      tags: [Places]
+      summary: Địa điểm lân cận
+      parameters:
+        - name: lat
+          in: query
+          required: true
+          schema:
+            type: number
+        - name: lng
+          in: query
+          required: true
+          schema:
+            type: number
+        - name: radius
+          in: query
+          schema:
+            type: integer
+            default: 1000
+      responses:
+        '200':
+          description: Nearby places
+
+  /api/v1/places/directions:
+    get:
+      tags: [Places]
+      summary: Lấy chỉ đường
+      parameters:
+        - name: origin
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: destination
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Directions
+
+  # ============================================
+  # AI Trip Planner
+  # ============================================
+  /api/v1/ai/trip-plan:
+    post:
+      tags: [AI]
+      summary: AI tạo lịch trình
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [duration]
+              properties:
+                duration:
+                  type: integer
+                  minimum: 1
+                  maximum: 14
+                budget:
+                  type: string
+                  enum: [budget, medium, luxury]
+                interests:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '200':
+          description: Trip plan
+
+  /api/v1/ai/chat:
+    post:
+      tags: [AI]
+      summary: Chat với AI Guide
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [messages]
+              properties:
+                messages:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      role:
+                        type: string
+                      content:
+                        type: string
+      responses:
+        '200':
+          description: AI reply
+
+  /api/v1/ai/suggest:
+    get:
+      tags: [AI]
+      summary: Gợi ý nhanh
+      parameters:
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [food, sightseeing, general]
+      responses:
+        '200':
+          description: Suggestions
+
+  # ============================================
+  # Payment (VNPay)
+  # ============================================
+  /api/v1/payment/methods:
+    get:
+      tags: [Payment]
+      summary: Phương thức thanh toán
+      responses:
+        '200':
+          description: Payment methods list
+
+  /api/v1/payment/create:
+    post:
+      tags: [Payment]
+      summary: Tạo thanh toán VNPay
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [booking_id]
+              properties:
+                booking_id:
+                  type: string
+                  format: uuid
+                bank_code:
+                  type: string
+                  enum: [VNPAYQR, VNBANK, INTCARD]
+      responses:
+        '200':
+          description: Payment URL returned
+
+  /api/v1/payment/callback:
+    get:
+      tags: [Payment]
+      summary: VNPay callback
+      description: VNPay redirect sau thanh toán
+      responses:
+        '200':
+          description: Payment result
+
+  # ============================================
+  # Reviews
+  # ============================================
+  /api/v1/experiences/{id}/reviews:
+    get:
+      tags: [Reviews]
+      summary: Đánh giá của trải nghiệm
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: page
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Reviews list with summary
+
+  /api/v1/reviews:
+    post:
+      tags: [Reviews]
+      summary: Viết đánh giá
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [experience_id, booking_id, overall_rating, guide_rating, value_rating, comment]
+              properties:
+                experience_id:
+                  type: string
+                  format: uuid
+                booking_id:
+                  type: string
+                  format: uuid
+                overall_rating:
+                  type: number
+                  minimum: 1
+                  maximum: 5
+                guide_rating:
+                  type: number
+                value_rating:
+                  type: number
+                comment:
+                  type: string
+                  minLength: 10
+                photo_urls:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '201':
+          description: Review created
+
+  # ============================================
+  # Favorites
+  # ============================================
+  /api/v1/favorites/toggle/{id}:
+    post:
+      tags: [Favorites]
+      summary: Toggle yêu thích
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Toggled
+
+  /api/v1/favorites:
+    get:
+      tags: [Favorites]
+      summary: Danh sách yêu thích
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Favorites list
+
+  # ============================================
+  # Guides
+  # ============================================
+  /api/v1/guides/top:
+    get:
+      tags: [Guides]
+      summary: Top hướng dẫn viên
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 10
+      responses:
+        '200':
+          description: Top guides
+
+  /api/v1/guides/{id}:
+    get:
+      tags: [Guides]
+      summary: Chi tiết hướng dẫn viên
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Guide profile + experiences
+
+  # ============================================
+  # Chat
+  # ============================================
+  /api/v1/chat/rooms:
+    get:
+      tags: [Chat]
+      summary: Danh sách phòng chat
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Chat rooms
+    post:
+      tags: [Chat]
+      summary: Tạo / lấy phòng chat
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                recipient_id:
+                  type: string
+                  format: uuid
+      responses:
+        '200':
+          description: Chat room
+
+  /api/v1/chat/rooms/{room_id}/messages:
+    get:
+      tags: [Chat]
+      summary: Tin nhắn trong phòng
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: room_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 30
+        - name: offset
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Messages
+    post:
+      tags: [Chat]
+      summary: Gửi tin nhắn
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: room_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content:
+                  type: string
+                message_type:
+                  type: string
+                  enum: [text, image, location]
+                  default: text
+      responses:
+        '201':
+          description: Message sent
+
+  /api/v1/chat/rooms/{room_id}/read:
+    post:
+      tags: [Chat]
+      summary: Đánh dấu đã đọc
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: room_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Marked as read
+
+  # ============================================
+  # Notifications
+  # ============================================
+  /api/v1/notifications:
+    get:
+      tags: [Notifications]
+      summary: Danh sách thông báo
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Notifications list
+
+  /api/v1/notifications/unread:
+    get:
+      tags: [Notifications]
+      summary: Số thông báo chưa đọc
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Unread count
+
+  /api/v1/notifications/{id}/read:
+    post:
+      tags: [Notifications]
+      summary: Đánh dấu đã đọc
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Marked as read
+
+  /api/v1/notifications/device:
+    post:
+      tags: [Notifications]
+      summary: Đăng ký FCM token
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fcm_token, platform]
+              properties:
+                fcm_token:
+                  type: string
+                platform:
+                  type: string
+                  enum: [ios, android]
+      responses:
+        '200':
+          description: Device registered
+
+  # ============================================
+  # Search
+  # ============================================
+  /api/v1/search:
+    get:
+      tags: [Search]
+      summary: Full-text search
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: type
+          in: query
+          schema:
+            type: string
+        - name: category
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Search results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResult'
+
+  /api/v1/search/suggest:
+    get:
+      tags: [Search]
+      summary: Gợi ý tìm kiếm
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Suggestions
+
+  /api/v1/search/trending:
+    get:
+      tags: [Search]
+      summary: Tìm kiếm phổ biến
+      responses:
+        '200':
+          description: Trending searches
+
+  /api/v1/search/stats:
+    get:
+      tags: [Search]
+      summary: Search index stats
+      responses:
+        '200':
+          description: Index statistics
+
+  # ============================================
+  # Upload
+  # ============================================
+  /api/v1/upload:
+    post:
+      tags: [Upload]
+      summary: Upload file
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                folder:
+                  type: string
+                  default: uploads
+      responses:
+        '200':
+          description: Upload result
+
+  /api/v1/upload/avatar:
+    post:
+      tags: [Upload]
+      summary: Upload avatar
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Avatar URL
+
+  # ============================================
+  # Profile
+  # ============================================
+  /api/v1/me:
+    get:
+      tags: [Auth]
+      summary: Thông tin user hiện tại
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: User profile
+    put:
+      tags: [Auth]
+      summary: Cập nhật profile
+      security:
+        - BearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                full_name:
+                  type: string
+                email:
+                  type: string
+                avatar_url:
+                  type: string
+      responses:
+        '200':
+          description: Updated
+
+  # ============================================
+  # Admin
+  # ============================================
+  /api/v1/admin/dashboard:
+    get:
+      tags: [Admin]
+      summary: Dashboard stats
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Dashboard data
+
+  /api/v1/admin/health:
+    get:
+      tags: [Admin]
+      summary: System health (admin)
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: System health
+
+  /api/v1/admin/quick-stats:
+    get:
+      tags: [Admin]
+      summary: Quick stats
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Quick stats
+
+  /api/v1/admin/users:
+    get:
+      tags: [Admin]
+      summary: Danh sách users
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: q
+          in: query
+          schema:
+            type: string
+        - name: role
+          in: query
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Users list
+
+  /api/v1/admin/users/{id}:
+    get:
+      tags: [Admin]
+      summary: Chi tiết user
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: User detail
+
+  /api/v1/admin/users/{id}/status:
+    put:
+      tags: [Admin]
+      summary: Ban/unban user
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                active:
+                  type: boolean
+      responses:
+        '200':
+          description: Status updated
+
+  /api/v1/admin/users/{id}/role:
+    put:
+      tags: [Admin]
+      summary: Đổi role user
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role:
+                  type: string
+                  enum: [traveler, guide, blogger, merchant, expert, admin]
+      responses:
+        '200':
+          description: Role updated
+
+  /api/v1/admin/experiences:
+    get:
+      tags: [Admin]
+      summary: Quản lý trải nghiệm
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Experiences list
+
+  /api/v1/admin/experiences/{id}:
+    delete:
+      tags: [Admin]
+      summary: Xoá trải nghiệm (soft)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Deleted
+
+  /api/v1/admin/bookings:
+    get:
+      tags: [Admin]
+      summary: Quản lý bookings
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Bookings list
+
+  /api/v1/admin/bookings/{id}/status:
+    put:
+      tags: [Admin]
+      summary: Cập nhật trạng thái booking
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [pending, confirmed, completed, cancelled, refunded]
+      responses:
+        '200':
+          description: Status updated

@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"errors"
+
 	"github.com/gin-gonic/gin"
 
 	"github.com/huetravel/api/internal/service"
@@ -41,7 +43,15 @@ func (h *SearchHandler) Search(c *gin.Context) {
 		}
 	}
 
-	result := h.searchService.Search(c.Request.Context(), query, filters)
+	result, err := h.searchService.Search(c.Request.Context(), query, filters)
+	if err != nil {
+		if errors.Is(err, service.ErrServiceNotConfigured) || errors.Is(err, service.ErrServiceUnavailable) {
+			response.ServiceUnavailable(c, "HT-SEARCH-001", "Search hiện chưa sẵn sàng")
+			return
+		}
+		response.InternalError(c, "Không thể tìm kiếm")
+		return
+	}
 	response.OK(c, result)
 }
 
@@ -50,6 +60,10 @@ func (h *SearchHandler) Suggest(c *gin.Context) {
 	query := c.Query("q")
 	if query == "" {
 		response.OK(c, []string{})
+		return
+	}
+	if !h.searchService.IsReady() {
+		response.ServiceUnavailable(c, "HT-SEARCH-002", "Search suggest hiện chưa sẵn sàng")
 		return
 	}
 
@@ -62,6 +76,10 @@ func (h *SearchHandler) Suggest(c *gin.Context) {
 
 // Trending — tìm kiếm phổ biến
 func (h *SearchHandler) Trending(c *gin.Context) {
+	if !h.searchService.IsReady() {
+		response.ServiceUnavailable(c, "HT-SEARCH-003", "Search trending hiện chưa sẵn sàng")
+		return
+	}
 	trending := h.searchService.Trending()
 	response.OK(c, gin.H{
 		"trending": trending,
@@ -70,6 +88,10 @@ func (h *SearchHandler) Trending(c *gin.Context) {
 
 // Stats — search index stats
 func (h *SearchHandler) IndexStats(c *gin.Context) {
+	if !h.searchService.IsReady() {
+		response.ServiceUnavailable(c, "HT-SEARCH-004", "Search index hiện chưa sẵn sàng")
+		return
+	}
 	stats := h.searchService.GetStats()
 	response.OK(c, gin.H{
 		"index_stats": stats,

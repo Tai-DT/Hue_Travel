@@ -156,6 +156,7 @@ type Booking struct {
 	// Joined
 	Experience *Experience `json:"experience,omitempty" db:"-"`
 	Traveler   *User       `json:"traveler,omitempty" db:"-"`
+	Guide      *User       `json:"guide,omitempty" db:"-"`
 }
 
 // ============================================

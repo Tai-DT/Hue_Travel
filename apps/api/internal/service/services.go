@@ -9,6 +9,7 @@ import (
 	"log"
 	"math/big"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/google/uuid"
@@ -72,17 +73,22 @@ type AuthResponse struct {
 // SendOTP — Tạo và gửi mã OTP
 func (s *AuthService) SendOTP(ctx context.Context, req SendOTPRequest) error {
 	// Rate limit: max 3 OTP per 10 minutes
-	rateLimitKey := fmt.Sprintf("otp:ratelimit:%s", req.Phone)
-	count, _ := s.redis.Incr(ctx, rateLimitKey).Result()
-	if count == 1 {
-		s.redis.Expire(ctx, rateLimitKey, 10*time.Minute)
-	}
-	if count > 3 {
-		return fmt.Errorf("quá nhiều yêu cầu OTP, vui lòng thử lại sau 10 phút")
+	if s.redis != nil {
+		rateLimitKey := fmt.Sprintf("otp:ratelimit:%s", req.Phone)
+		count, _ := s.redis.Incr(ctx, rateLimitKey).Result()
+		if count == 1 {
+			s.redis.Expire(ctx, rateLimitKey, 10*time.Minute)
+		}
+		if count > 3 {
+			return fmt.Errorf("quá nhiều yêu cầu OTP, vui lòng thử lại sau 10 phút")
+		}
 	}
 
 	// Generate 6-digit OTP
 	code := generateOTPCode()
+	if s.smsSvc != nil && !s.smsSvc.IsConfigured() {
+		code = devOTPCode()
+	}
 	expiresAt := time.Now().Add(5 * time.Minute)
 
 	// Save to database
@@ -92,11 +98,16 @@ func (s *AuthService) SendOTP(ctx context.Context, req SendOTPRequest) error {
 	}
 
 	// Cache for quick lookup
-	s.redis.Set(ctx, fmt.Sprintf("otp:%s", req.Phone), code, 5*time.Minute)
+	if s.redis != nil {
+		s.redis.Set(ctx, fmt.Sprintf("otp:%s", req.Phone), code, 5*time.Minute)
+	}
 
 	// Send OTP via SMS
 	if s.smsSvc != nil {
 		if err := s.smsSvc.SendOTP(req.Phone, code); err != nil {
+			if !s.smsSvc.FallbackEnabled() {
+				return fmt.Errorf("không thể gửi OTP: %w", err)
+			}
 			log.Printf("⚠️ SMS send failed: %v — OTP logged to console", err)
 			fmt.Printf("📱 OTP for %s: %s (expires: %s)\n", req.Phone, code, expiresAt.Format("15:04:05"))
 		}
@@ -111,12 +122,22 @@ func (s *AuthService) SendOTP(ctx context.Context, req SendOTPRequest) error {
 // VerifyOTP — Xác thực OTP và trả về JWT
 func (s *AuthService) VerifyOTP(ctx context.Context, req VerifyOTPRequest) (*AuthResponse, error) {
 	// Quick check from Redis first
-	cachedCode, err := s.redis.Get(ctx, fmt.Sprintf("otp:%s", req.Phone)).Result()
-	if err == nil && cachedCode == req.Code {
-		// Valid! Delete from cache
-		s.redis.Del(ctx, fmt.Sprintf("otp:%s", req.Phone))
+	if s.redis != nil {
+		cachedCode, err := s.redis.Get(ctx, fmt.Sprintf("otp:%s", req.Phone)).Result()
+		if err == nil && cachedCode == req.Code {
+			// Valid! Delete from cache
+			s.redis.Del(ctx, fmt.Sprintf("otp:%s", req.Phone))
+		} else {
+			// Fallback to database verification
+			valid, err := s.otpRepo.Verify(ctx, req.Phone, req.Code)
+			if err != nil {
+				return nil, fmt.Errorf("lỗi xác thực: %w", err)
+			}
+			if !valid {
+				return nil, fmt.Errorf("mã OTP không đúng hoặc đã hết hạn")
+			}
+		}
 	} else {
-		// Fallback to database verification
 		valid, err := s.otpRepo.Verify(ctx, req.Phone, req.Code)
 		if err != nil {
 			return nil, fmt.Errorf("lỗi xác thực: %w", err)
@@ -162,7 +183,9 @@ func (s *AuthService) VerifyOTP(ctx context.Context, req VerifyOTPRequest) (*Aut
 	}
 
 	// Store refresh token in Redis
-	s.redis.Set(ctx, fmt.Sprintf("refresh:%s", user.ID.String()), refreshToken, s.jwtRefreshExpiry)
+	if s.redis != nil {
+		s.redis.Set(ctx, fmt.Sprintf("refresh:%s", user.ID.String()), refreshToken, s.jwtRefreshExpiry)
+	}
 
 	return &AuthResponse{
 		Token:        token,
@@ -200,7 +223,9 @@ func (s *AuthService) GoogleLogin(ctx context.Context, idToken string) (*AuthRes
 
 	token, _ := middleware.GenerateToken(user.ID, string(user.Role), s.jwtSecret, s.jwtExpiry)
 	refreshToken, _ := middleware.GenerateToken(user.ID, string(user.Role), s.jwtSecret, s.jwtRefreshExpiry)
-	s.redis.Set(ctx, fmt.Sprintf("refresh:%s", user.ID.String()), refreshToken, s.jwtRefreshExpiry)
+	if s.redis != nil {
+		s.redis.Set(ctx, fmt.Sprintf("refresh:%s", user.ID.String()), refreshToken, s.jwtRefreshExpiry)
+	}
 
 	return &AuthResponse{
 		Token:        token,
@@ -368,11 +393,20 @@ func generateOTPCode() string {
 	return code
 }
 
+func devOTPCode() string {
+	if code := os.Getenv("DEV_FIXED_OTP"); code != "" {
+		return code
+	}
+	return "123456"
+}
+
 type GoogleUser struct {
-	ID      string `json:"sub"`
-	Email   string `json:"email"`
-	Name    string `json:"name"`
-	Picture string `json:"picture"`
+	ID            string `json:"sub"`
+	Email         string `json:"email"`
+	Name          string `json:"name"`
+	Picture       string `json:"picture"`
+	Audience      string `json:"aud"`
+	EmailVerified string `json:"email_verified"`
 }
 
 func verifyGoogleToken(idToken string) (*GoogleUser, error) {
@@ -390,6 +424,12 @@ func verifyGoogleToken(idToken string) (*GoogleUser, error) {
 	var user GoogleUser
 	if err := json.Unmarshal(body, &user); err != nil {
 		return nil, err
+	}
+	if user.Email == "" || user.EmailVerified != "true" {
+		return nil, fmt.Errorf("google account is not verified")
+	}
+	if clientID := os.Getenv("GOOGLE_CLIENT_ID"); clientID != "" && user.Audience != clientID {
+		return nil, fmt.Errorf("google token audience mismatch")
 	}
 	return &user, nil
 }

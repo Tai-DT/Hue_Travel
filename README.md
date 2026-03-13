@@ -49,6 +49,11 @@ cp ../../.env.example .env  # Edit config
 go run ./cmd/server
 ```
 
+Seed demo data:
+```bash
+make seed
+```
+
 ### 3. Mobile App
 ```bash
 cd apps/mobile
@@ -105,13 +110,27 @@ npm run dev  # http://localhost:3001
 | VNPay | Payment gateway | HTTP API |
 | Google Maps | Maps & geocoding | JS SDK |
 
+## 📖 Documentation
+
+| Document | Description |
+|----------|-------------|
+| [API Reference](docs/API.md) | 39+ endpoints, request/response examples |
+| [Setup Guide](docs/SETUP.md) | Hướng dẫn cài đặt development |
+| [Deploy Guide](docs/DEPLOY.md) | Production deployment, SSL, backup |
+
 ## 🧪 Testing
 
 ```bash
 cd apps/api
-go test ./... -v          # 41 unit tests
+go test ./... -v          # 48+ unit/handler tests
 go test ./... -race       # Race condition detection
 ```
+
+## ⚙️ Runtime Modes
+
+- `ALLOW_MOCK_SERVICES=true`: local development có thể fallback sang mock cho AI, Maps, SMS, Payment.
+- `APP_STRICT_MODE=true` hoặc `APP_ENV=production`: API fail-fast nếu thiếu config quan trọng và không trả dữ liệu mock.
+- `EXPO_PUBLIC_API_URL`: cho phép mobile web/export trỏ đúng API local thay vì domain production.
 
 ## 🐳 Production Deploy
 

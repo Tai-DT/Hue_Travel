@@ -2,9 +2,55 @@
 // API Service — Backend communication
 // ============================================
 
-const API_BASE = __DEV__
-  ? 'http://localhost:8080/api/v1'
-  : 'https://api.huetravel.vn/api/v1';
+import Constants from 'expo-constants';
+
+const LOCAL_API_BASE = 'http://localhost:8080/api/v1';
+const DEV_API_PORT = '8080';
+
+function resolveExpoDevAPIBase() {
+  const hostUri =
+    Constants.expoConfig?.hostUri ||
+    Constants.linkingUri ||
+    '';
+
+  const normalizedHost = hostUri
+    .replace(/^[a-zA-Z0-9+.-]+:\/\//, '')
+    .replace(/\/--($|\/.*$)/, '')
+    .replace(/\/.*$/, '')
+    .trim();
+
+  if (!normalizedHost) {
+    return null;
+  }
+
+  const hostname = normalizedHost.split(':')[0];
+  if (!hostname || hostname === 'localhost' || hostname === '127.0.0.1') {
+    return null;
+  }
+
+  return `http://${hostname}:${DEV_API_PORT}/api/v1`;
+}
+
+function resolveAPIBase() {
+  if (process.env.EXPO_PUBLIC_API_URL) {
+    return process.env.EXPO_PUBLIC_API_URL;
+  }
+
+  if (__DEV__) {
+    return resolveExpoDevAPIBase() || LOCAL_API_BASE;
+  }
+
+  if (typeof window !== 'undefined') {
+    const hostname = window.location.hostname;
+    if (hostname === 'localhost' || hostname === '127.0.0.1') {
+      return LOCAL_API_BASE;
+    }
+  }
+
+  return 'https://api.huetravel.vn/api/v1';
+}
+
+const API_BASE = resolveAPIBase();
 
 type RequestOptions = {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -154,19 +200,24 @@ class ApiService {
     guest_count: number;
     special_notes?: string;
   }) {
-    return this.request('/bookings', {
+    return this.request<{ booking: Booking; payment_url?: string }>('/bookings', {
       method: 'POST',
       body: data,
     });
   }
 
-  async getBookings(status?: string) {
-    const query = status ? `?status=${status}` : '';
-    return this.request(`/bookings${query}`);
+  async getBookings(status?: string, page?: number, perPage?: number) {
+    const params = new URLSearchParams();
+    if (status) params.set('status', status);
+    if (page) params.set('page', String(page));
+    if (perPage) params.set('per_page', String(perPage));
+
+    const query = params.toString();
+    return this.request<Booking[]>(`/bookings${query ? `?${query}` : ''}`);
   }
 
   async getBooking(id: string) {
-    return this.request(`/bookings/${id}`);
+    return this.request<Booking>(`/bookings/${id}`);
   }
 
   async cancelBooking(id: string, reason?: string) {
@@ -199,6 +250,7 @@ class ApiService {
 
   async updateProfile(data: {
     full_name: string;
+    email?: string;
     bio?: string;
     avatar_url?: string;
     languages?: string[];
@@ -295,6 +347,8 @@ class ApiService {
       txn_ref: string;
       amount: number;
       expires_in: number;
+      status?: string;
+      message?: string;
     }>('/payment/create', {
       method: 'POST',
       body: { booking_id: bookingId, bank_code: bankCode },
@@ -309,7 +363,7 @@ class ApiService {
   async getOrCreateRoom(otherUserId: string) {
     return this.request<{ room: ChatRoom }>('/chat/rooms', {
       method: 'POST',
-      body: { other_user_id: otherUserId },
+      body: { recipient_id: otherUserId },
     });
   }
 
@@ -321,9 +375,9 @@ class ApiService {
   }
 
   async sendChatMessage(roomId: string, content: string, msgType: string = 'text') {
-    return this.request('/chat/rooms/' + roomId + '/messages', {
+    return this.request<{ message: ChatMessage }>('/chat/rooms/' + roomId + '/messages', {
       method: 'POST',
-      body: { content, type: msgType },
+      body: { content, message_type: msgType },
     });
   }
 
@@ -341,16 +395,29 @@ class ApiService {
   }
 
   // ---- Reviews ----
-  async getReviews(experienceId: string) {
-    return this.request(`/experiences/${experienceId}/reviews`);
+  async getReviews(experienceId: string, page?: number, perPage?: number) {
+    const params = new URLSearchParams();
+    if (page) params.set('page', String(page));
+    if (perPage) params.set('per_page', String(perPage));
+
+    const query = params.toString();
+    return this.request<{
+      reviews: Review[];
+      summary: ReviewSummary;
+      meta: { page: number; per_page: number; total: number; total_pages: number };
+    }>(`/experiences/${experienceId}/reviews${query ? `?${query}` : ''}`);
   }
 
   async createReview(data: {
+    experience_id: string;
     booking_id: string;
-    rating: number;
+    overall_rating: number;
+    guide_rating: number;
+    value_rating: number;
     comment: string;
+    photo_urls?: string[];
   }) {
-    return this.request('/reviews', {
+    return this.request<Review>('/reviews', {
       method: 'POST',
       body: data,
     });
@@ -358,11 +425,19 @@ class ApiService {
 
   // ---- Favorites ----
   async toggleFavorite(experienceId: string) {
-    return this.request(`/favorites/toggle/${experienceId}`, { method: 'POST' });
+    return this.request<{ is_favorited: boolean; message: string }>(
+      `/favorites/toggle/${experienceId}`,
+      { method: 'POST' }
+    );
   }
 
-  async getFavorites() {
-    return this.request('/favorites');
+  async getFavorites(page?: number, perPage?: number) {
+    const params = new URLSearchParams();
+    if (page) params.set('page', String(page));
+    if (perPage) params.set('per_page', String(perPage));
+
+    const query = params.toString();
+    return this.request<Experience[]>(`/favorites${query ? `?${query}` : ''}`);
   }
 
   // ---- Notifications ----
@@ -430,6 +505,65 @@ export type User = {
   xp: number;
   level: string;
   is_verified: boolean;
+};
+
+export type Booking = {
+  id: string;
+  traveler_id: string;
+  experience_id: string;
+  guide_id: string;
+  booking_date: string;
+  start_time: string;
+  guest_count: number;
+  total_price: number;
+  service_fee: number;
+  status: 'pending' | 'confirmed' | 'active' | 'completed' | 'cancelled' | 'refunded';
+  special_notes?: string;
+  cancel_reason?: string;
+  payment_method?: string;
+  payment_ref?: string;
+  paid_at?: string;
+  confirmed_at?: string;
+  completed_at?: string;
+  created_at: string;
+  updated_at: string;
+  experience?: Experience;
+  traveler?: User;
+  guide?: User;
+};
+
+export type ReviewTraveler = {
+  full_name: string;
+  avatar_url?: string;
+  level?: string;
+};
+
+export type Review = {
+  id: string;
+  booking_id: string;
+  traveler_id: string;
+  experience_id: string;
+  overall_rating: number;
+  guide_rating: number;
+  value_rating: number;
+  comment?: string | null;
+  photo_urls?: string[];
+  is_featured: boolean;
+  created_at: string;
+  updated_at: string;
+  traveler?: ReviewTraveler;
+};
+
+export type ReviewSummary = {
+  total_reviews: number;
+  average_overall: number;
+  average_guide: number;
+  average_value: number;
+  star_5: number;
+  star_4: number;
+  star_3: number;
+  star_2: number;
+  star_1: number;
 };
 
 export type Experience = {
@@ -547,22 +681,30 @@ export type PaymentMethod = {
 
 export type ChatRoom = {
   id: string;
-  type: string;
-  other_user: {
+  booking_id?: string;
+  participants: string[];
+  room_type: string;
+  last_message?: string;
+  last_message_at?: string;
+  unread_count: number;
+  created_at: string;
+  updated_at: string;
+  other_participant?: {
     id: string;
     full_name: string;
     avatar_url?: string;
+    role: string;
   };
-  last_message?: string;
-  last_message_at: string;
-  unread_count: number;
 };
 
 export type ChatMessage = {
   id: string;
+  room_id: string;
   sender_id: string;
+  sender_name: string;
+  sender_avatar?: string;
   content: string;
-  type: string;
+  message_type: string;
   created_at: string;
   is_read: boolean;
 };
@@ -570,15 +712,18 @@ export type ChatMessage = {
 export type Guide = {
   id: string;
   user_id: string;
-  full_name: string;
-  avatar_url?: string;
-  bio?: string;
-  languages: string[];
+  badge_level: string;
   specialties: string[];
-  rating: number;
-  review_count: number;
   total_tours: number;
-  is_verified: boolean;
+  total_reviews: number;
+  avg_rating: number;
+  response_time_mins: number;
+  user?: {
+    full_name: string;
+    avatar_url?: string;
+    bio?: string;
+    languages?: string[];
+  };
 };
 
 // ============================================

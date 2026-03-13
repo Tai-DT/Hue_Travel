@@ -68,15 +68,17 @@ CREATE INDEX idx_otp_phone ON otp_verifications(phone, verified);
 -- Guide Profiles (extends users)
 -- ============================================
 CREATE TABLE guide_profiles (
-    user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
     badge_level VARCHAR(20) NOT NULL DEFAULT 'bronze', -- bronze, silver, gold, platinum
     specialties TEXT[] DEFAULT '{}',
-    years_experience INTEGER DEFAULT 0,
-    response_rate DECIMAL(5,2) DEFAULT 0,
-    response_time_mins INTEGER DEFAULT 0,
-    total_tours INTEGER DEFAULT 0,
-    total_reviews INTEGER DEFAULT 0,
-    average_rating DECIMAL(3,2) DEFAULT 0,
+    experience_years INTEGER NOT NULL DEFAULT 0,
+    total_tours INTEGER NOT NULL DEFAULT 0,
+    total_reviews INTEGER NOT NULL DEFAULT 0,
+    avg_rating DECIMAL(3,2) NOT NULL DEFAULT 0,
+    response_time_mins INTEGER NOT NULL DEFAULT 0,
+    acceptance_rate DECIMAL(5,2) NOT NULL DEFAULT 100,
+    is_approved BOOLEAN NOT NULL DEFAULT FALSE,
     is_available BOOLEAN NOT NULL DEFAULT TRUE,
     payout_bank_name VARCHAR(100),
     payout_bank_account VARCHAR(50),
@@ -85,6 +87,9 @@ CREATE TABLE guide_profiles (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE INDEX idx_guide_user ON guide_profiles(user_id);
+CREATE INDEX idx_guide_rating ON guide_profiles(avg_rating DESC);
 
 -- ============================================
 -- Places (quán ăn, địa điểm, khách sạn, ...)
@@ -116,9 +121,7 @@ CREATE TABLE places (
 );
 
 CREATE INDEX idx_places_category ON places(category);
-CREATE INDEX idx_places_location ON places USING GIST (
-    ST_SetSRID(ST_Point(lng::double precision, lat::double precision), 4326)
-);
+CREATE INDEX idx_places_location ON places(lat, lng);
 CREATE INDEX idx_places_slug ON places(slug);
 CREATE INDEX idx_places_google ON places(google_place_id) WHERE google_place_id IS NOT NULL;
 CREATE INDEX idx_places_tags ON places USING GIN(tags);
@@ -205,22 +208,19 @@ CREATE TABLE reviews (
     booking_id UUID UNIQUE NOT NULL REFERENCES bookings(id),
     traveler_id UUID NOT NULL REFERENCES users(id),
     experience_id UUID NOT NULL REFERENCES experiences(id),
-    guide_id UUID NOT NULL REFERENCES users(id),
-    rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
-    guide_rating INTEGER NOT NULL CHECK (guide_rating BETWEEN 1 AND 5),
-    value_rating INTEGER NOT NULL CHECK (value_rating BETWEEN 1 AND 5),
-    title VARCHAR(255),
-    content TEXT,
+    overall_rating DECIMAL(3,2) NOT NULL CHECK (overall_rating BETWEEN 1 AND 5),
+    guide_rating DECIMAL(3,2) NOT NULL CHECK (guide_rating BETWEEN 1 AND 5),
+    value_rating DECIMAL(3,2) NOT NULL CHECK (value_rating BETWEEN 1 AND 5),
+    comment TEXT,
     photo_urls TEXT[] DEFAULT '{}',
     is_featured BOOLEAN NOT NULL DEFAULT FALSE,
-    reply TEXT,
-    replied_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX idx_review_exp ON reviews(experience_id);
-CREATE INDEX idx_review_guide ON reviews(guide_id);
-CREATE INDEX idx_review_rating ON reviews(rating DESC);
+CREATE INDEX idx_review_traveler ON reviews(traveler_id);
+CREATE INDEX idx_review_rating ON reviews(overall_rating DESC);
 
 -- ============================================
 -- Chat Messages
@@ -228,26 +228,32 @@ CREATE INDEX idx_review_rating ON reviews(rating DESC);
 CREATE TABLE chat_rooms (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     booking_id UUID REFERENCES bookings(id),
-    traveler_id UUID NOT NULL REFERENCES users(id),
-    guide_id UUID NOT NULL REFERENCES users(id),
+    participants UUID[] NOT NULL,
+    room_type VARCHAR(20) NOT NULL DEFAULT 'direct'
+        CHECK (room_type IN ('direct', 'booking', 'group', 'support')),
+    last_message TEXT,
     last_message_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(traveler_id, guide_id)
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE INDEX idx_chat_room_participants ON chat_rooms USING GIN(participants);
 
 CREATE TABLE chat_messages (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     room_id UUID NOT NULL REFERENCES chat_rooms(id) ON DELETE CASCADE,
     sender_id UUID NOT NULL REFERENCES users(id),
     content TEXT NOT NULL,
-    message_type VARCHAR(20) NOT NULL DEFAULT 'text', -- text, image, booking_card, system
+    message_type VARCHAR(20) NOT NULL DEFAULT 'text'
+        CHECK (message_type IN ('text', 'image', 'location', 'booking', 'system')),
     metadata JSONB,
-    read_at TIMESTAMPTZ,
+    is_read BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX idx_chat_room ON chat_messages(room_id, created_at DESC);
 CREATE INDEX idx_chat_sender ON chat_messages(sender_id);
+CREATE INDEX idx_chat_unread ON chat_messages(room_id, is_read) WHERE is_read = FALSE;
 
 -- ============================================
 -- Favorites (wishlist)
@@ -312,6 +318,9 @@ CREATE TRIGGER set_bookings_updated_at BEFORE UPDATE ON bookings
     FOR EACH ROW EXECUTE FUNCTION trigger_set_updated_at();
 
 CREATE TRIGGER set_guide_profiles_updated_at BEFORE UPDATE ON guide_profiles
+    FOR EACH ROW EXECUTE FUNCTION trigger_set_updated_at();
+
+CREATE TRIGGER set_reviews_updated_at BEFORE UPDATE ON reviews
     FOR EACH ROW EXECUTE FUNCTION trigger_set_updated_at();
 
 -- ============================================

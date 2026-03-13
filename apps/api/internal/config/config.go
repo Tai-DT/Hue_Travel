@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -23,10 +24,12 @@ type Config struct {
 }
 
 type AppConfig struct {
-	Env  string
-	Port string
-	Name string
-	URL  string
+	Env               string
+	Port              string
+	Name              string
+	URL               string
+	StrictMode        bool
+	AllowMockServices bool
 }
 
 type DatabaseConfig struct {
@@ -49,11 +52,11 @@ type JWTConfig struct {
 }
 
 type MinIOConfig struct {
-	Endpoint  string
-	User      string
-	Password  string
-	Bucket    string
-	UseSSL    bool
+	Endpoint string
+	User     string
+	Password string
+	Bucket   string
+	UseSSL   bool
 }
 
 type GoogleConfig struct {
@@ -148,10 +151,13 @@ func Load() (*Config, error) {
 			ServerKey: getEnv("FCM_SERVER_KEY", ""),
 		},
 		Meilisearch: MeilisearchConfig{
-			URL:       getEnv("MEILISEARCH_URL", ""),
-			MasterKey: getEnv("MEILISEARCH_MASTER_KEY", ""),
+			URL:       getEnvAny([]string{"MEILISEARCH_URL", "MEILI_HOST"}, ""),
+			MasterKey: getEnvAny([]string{"MEILISEARCH_MASTER_KEY", "MEILI_MASTER_KEY"}, ""),
 		},
 	}
+
+	cfg.App.StrictMode = getEnv("APP_STRICT_MODE", "false") == "true" || cfg.App.Env == "production"
+	cfg.App.AllowMockServices = getAllowMockServices(cfg.App.Env, cfg.App.StrictMode)
 
 	if cfg.Database.URL == "" {
 		cfg.Database.URL = fmt.Sprintf(
@@ -164,9 +170,75 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
+func (c *Config) Validate() error {
+	var missing []string
+
+	if isDefaultSecret(c.JWT.Secret) {
+		missing = append(missing, "JWT_SECRET")
+	}
+
+	if c.App.StrictMode {
+		required := map[string]string{
+			"GOOGLE_MAPS_API_KEY":    c.Google.MapsAPIKey,
+			"GEMINI_API_KEY":         c.AI.GeminiAPIKey,
+			"VNPAY_TMN_CODE":         c.VNPay.TmnCode,
+			"VNPAY_HASH_SECRET":      c.VNPay.HashSecret,
+			"ESMS_API_KEY":           c.ESMS.APIKey,
+			"ESMS_SECRET_KEY":        c.ESMS.SecretKey,
+			"MEILISEARCH_URL":        c.Meilisearch.URL,
+			"MEILISEARCH_MASTER_KEY": c.Meilisearch.MasterKey,
+			"MINIO_ENDPOINT":         c.MinIO.Endpoint,
+			"MINIO_ROOT_USER":        c.MinIO.User,
+			"MINIO_ROOT_PASSWORD":    c.MinIO.Password,
+			"MINIO_BUCKET":           c.MinIO.Bucket,
+		}
+		for key, value := range required {
+			if strings.TrimSpace(value) == "" {
+				missing = append(missing, key)
+			}
+		}
+	}
+
+	if len(missing) == 0 {
+		return nil
+	}
+
+	return fmt.Errorf("missing required configuration: %s", strings.Join(missing, ", "))
+}
+
 func getEnv(key, fallback string) string {
 	if val := os.Getenv(key); val != "" {
 		return val
 	}
 	return fallback
+}
+
+func getEnvAny(keys []string, fallback string) string {
+	for _, key := range keys {
+		if val := os.Getenv(key); val != "" {
+			return val
+		}
+	}
+	return fallback
+}
+
+func getAllowMockServices(env string, strictMode bool) bool {
+	if val := os.Getenv("ALLOW_MOCK_SERVICES"); val != "" {
+		return val == "true"
+	}
+	return env != "production" && !strictMode
+}
+
+func isDefaultSecret(secret string) bool {
+	trimmed := strings.TrimSpace(secret)
+	if trimmed == "" {
+		return true
+	}
+
+	defaults := map[string]bool{
+		"change-me-in-production":                        true,
+		"your-super-secret-jwt-key-change-in-production": true,
+	}
+
+	return defaults[trimmed]
 }

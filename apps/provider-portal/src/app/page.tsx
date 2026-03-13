@@ -1,93 +1,237 @@
 'use client';
 
-import { useState, lazy, Suspense } from 'react';
+import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
+import { providerApi } from '@/lib/api';
+import GuideLoginPage from '@/components/GuideLoginPage';
 
 const GuideBookingsPage = lazy(() => import('./bookings/page'));
 const ProfilePage = lazy(() => import('./profile/page'));
 const MyToursPage = lazy(() => import('./my-tours/page'));
+const RevenuePage = lazy(() => import('./revenue/page'));
+const CalendarPage = lazy(() => import('./calendar/page'));
 
 const Loader = () => (
   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 300 }}>⏳ Đang tải...</div>
 );
 
-type NavItem = {
-  icon: string;
-  label: string;
-  key: string;
-  active?: boolean;
-  badge?: number;
-};
-
 type NavSection = {
   section: string;
-  items: NavItem[];
+  items: { icon: string; label: string; key: string; badge?: number }[];
 };
-
-// ============================================
-// Provider Portal — Guide Dashboard
-// ============================================
-
-const STATS = [
-  { icon: '📋', label: 'Tours tháng này', value: '24', change: '+6', up: true, bg: 'rgba(46,125,50,0.1)' },
-  { icon: '⭐', label: 'Đánh giá TB', value: '4.87', change: '+0.05', up: true, bg: 'rgba(249,168,37,0.1)' },
-  { icon: '💰', label: 'Thu nhập (VNĐ)', value: '18.5M', change: '+32%', up: true, bg: 'rgba(66,165,245,0.1)' },
-  { icon: '👥', label: 'Khách phục vụ', value: '67', change: '+12', up: true, bg: 'rgba(156,39,176,0.1)' },
-];
-
-const UPCOMING_TOURS = [
-  { time: '09:00', period: 'AM', title: 'Khám phá Đại Nội Huế', guests: 4, status: 'confirmed', meetPoint: 'Cổng Ngọ Môn' },
-  { time: '14:00', period: 'PM', title: 'Tour Ẩm thực đường phố', guests: 6, status: 'confirmed', meetPoint: 'Chợ Đông Ba' },
-  { time: '16:30', period: 'PM', title: 'Chèo thuyền sông Hương', guests: 2, status: 'pending', meetPoint: 'Bến thuyền Tòa Khâm' },
-];
-
-const RECENT_REVIEWS = [
-  { name: 'Nguyễn Văn An', avatar: '#4CAF50', stars: 5, date: '2 giờ trước', text: 'Tour tuyệt vời! Anh Minh rất am hiểu lịch sử và kể chuyện rất hấp dẫn. Sẽ quay lại!' },
-  { name: 'Trần Thị Bình', avatar: '#42A5F5', stars: 5, date: '1 ngày trước', text: 'Ẩm thực Huế đa dạng quá. Cảm ơn anh guide đã giới thiệu những quán ngon nhất 🙌' },
-  { name: 'Lê Minh Cường', avatar: '#E040FB', stars: 4, date: '3 ngày trước', text: 'Tour rất ok, chỉ hơi ngắn thôi. Nhưng guide nhiệt tình, kiến thức vững.' },
-];
-
-const EARNINGS_BREAKDOWN = [
-  { label: 'Tour di sản', amount: '8,200,000₫', pct: 44, color: '#2E7D32' },
-  { label: 'Tour ẩm thực', amount: '5,400,000₫', pct: 29, color: '#F9A825' },
-  { label: 'Tour thiên nhiên', amount: '3,100,000₫', pct: 17, color: '#42A5F5' },
-  { label: 'Workshop', amount: '1,800,000₫', pct: 10, color: '#E040FB' },
-];
-
-const RECENT_BOOKINGS = [
-  { id: 'HT-A1B2', guest: 'Nguyễn Văn An', tour: 'Đại Nội Huế', date: '12/03', guests: 4, amount: '1,000,000₫', status: 'confirmed' },
-  { id: 'HT-C3D4', guest: 'Trần Thị Bình', tour: 'Ẩm thực đường phố', date: '12/03', guests: 6, amount: '2,700,000₫', status: 'confirmed' },
-  { id: 'HT-E5F6', guest: 'Lê Minh Cường', tour: 'Sông Hương', date: '12/03', guests: 2, amount: '700,000₫', status: 'pending' },
-  { id: 'HT-G7H8', guest: 'Phạm Đức', tour: 'Workshop nón', date: '13/03', guests: 3, amount: '600,000₫', status: 'pending' },
-  { id: 'HT-I9J0', guest: 'Võ Thị Em', tour: 'Lăng Tự Đức', date: '14/03', guests: 5, amount: '2,500,000₫', status: 'confirmed' },
-];
 
 const NAV: NavSection[] = [
   { section: 'Tổng quan', items: [
-    { icon: '📊', label: 'Dashboard', key: 'dashboard', active: true },
-    { icon: '📅', label: 'Lịch trình', key: 'schedule' },
+    { icon: '📊', label: 'Dashboard', key: 'dashboard' },
   ]},
   { section: 'Quản lý', items: [
     { icon: '🏛️', label: 'Tours của tôi', key: 'my-tours' },
-    { icon: '📋', label: 'Bookings', key: 'bookings', badge: 3 },
-    { icon: '💬', label: 'Tin nhắn', key: 'messages', badge: 2 },
-    { icon: '⭐', label: 'Đánh giá', key: 'reviews' },
-  ]},
-  { section: 'Tài chính', items: [
-    { icon: '💰', label: 'Thu nhập', key: 'earnings' },
-    { icon: '🧾', label: 'Hoá đơn', key: 'invoices' },
+    { icon: '📋', label: 'Bookings', key: 'bookings' },
+    { icon: '📅', label: 'Lịch', key: 'calendar' },
+    { icon: '💰', label: 'Doanh thu', key: 'revenue' },
   ]},
   { section: 'Tài khoản', items: [
     { icon: '👤', label: 'Hồ sơ', key: 'profile' },
-    { icon: '⚙️', label: 'Cài đặt', key: 'settings' },
   ]},
 ];
 
+// ============================================
+// Dashboard Content — Connected to API
+// ============================================
+function DashboardContent() {
+  const [bookings, setBookings] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    const res = await providerApi.getMyBookings();
+    if (res.success && res.data) setBookings(res.data);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  const formatVND = (n: number) => new Intl.NumberFormat('vi-VN').format(n) + '₫';
+
+  const confirmedCount = bookings.filter(b => b.status === 'confirmed').length;
+  const pendingCount = bookings.filter(b => b.status === 'pending').length;
+  const completedCount = bookings.filter(b => b.status === 'completed').length;
+  const totalRevenue = bookings.filter(b => ['confirmed', 'completed'].includes(b.status))
+    .reduce((sum, b) => sum + (b.total_price || 0), 0);
+  const totalGuests = bookings.reduce((sum, b) => sum + (b.guest_count || 0), 0);
+
+  const STATS = [
+    { icon: '📋', label: 'Tổng Bookings', value: bookings.length.toString(), bg: 'rgba(46,125,50,0.1)' },
+    { icon: '⏳', label: 'Chờ xác nhận', value: pendingCount.toString(), bg: 'rgba(255,152,0,0.1)' },
+    { icon: '💰', label: 'Doanh thu', value: formatVND(totalRevenue), bg: 'rgba(66,165,245,0.1)' },
+    { icon: '👥', label: 'Tổng khách', value: totalGuests.toString(), bg: 'rgba(156,39,176,0.1)' },
+  ];
+
+  if (loading) {
+    return (
+      <div className="p-stats">
+        {[1,2,3,4].map(i => (
+          <div key={i} className="p-stat" style={{ background: '#f8f8f8', borderRadius: 16, padding: 24 }}>
+            <div style={{ width: 40, height: 40, background: '#eee', borderRadius: 10, marginBottom: 12 }} />
+            <div style={{ width: '50%', height: 24, background: '#eee', borderRadius: 6, marginBottom: 8 }} />
+            <div style={{ width: '70%', height: 14, background: '#eee', borderRadius: 4 }} />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {/* Stats */}
+      <div className="p-stats">
+        {STATS.map((s, i) => (
+          <div key={i} className="p-stat">
+            <div className="p-stat-top">
+              <div className="p-stat-icon" style={{ background: s.bg }}>{s.icon}</div>
+            </div>
+            <div className="p-stat-value">{s.value}</div>
+            <div className="p-stat-label">{s.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Pending Bookings */}
+      {pendingCount > 0 && (
+        <div className="p-card" style={{ marginBottom: 20 }}>
+          <div className="p-card-header">
+            <span className="p-card-title">⏳ Chờ xác nhận ({pendingCount})</span>
+            <button className="p-btn" onClick={fetchData}>🔄 Refresh</button>
+          </div>
+          {bookings.filter(b => b.status === 'pending').map((b) => (
+            <div key={b.id} className="p-schedule">
+              <div style={{ flex: 1 }}>
+                <div className="p-schedule-title">{b.experience_title || 'Tour'}</div>
+                <div className="p-schedule-meta">
+                  👤 {b.user_name || 'Khách'} • 👥 {b.guest_count || 1} khách •
+                  📅 {b.booking_date ? new Date(b.booking_date).toLocaleDateString('vi-VN') : '—'}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="p-btn p-btn-primary" onClick={async () => {
+                  await providerApi.confirmBooking(b.id);
+                  fetchData();
+                }}>✅ Xác nhận</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Recent Bookings */}
+      <div className="p-card">
+        <div className="p-card-header">
+          <span className="p-card-title">📋 Bookings gần đây</span>
+        </div>
+        <table className="p-table">
+          <thead>
+            <tr>
+              <th>Mã</th>
+              <th>Khách</th>
+              <th>Tour</th>
+              <th>Ngày</th>
+              <th>SL</th>
+              <th>Số tiền</th>
+              <th>Trạng thái</th>
+            </tr>
+          </thead>
+          <tbody>
+            {bookings.length === 0 ? (
+              <tr><td colSpan={7} style={{ textAlign: 'center', padding: 40, color: '#999' }}>
+                Chưa có booking nào
+              </td></tr>
+            ) : bookings.slice(0, 10).map((b) => (
+              <tr key={b.id}>
+                <td style={{ fontWeight: 600, color: 'var(--primary)' }}>{b.booking_code || b.id?.slice(0, 8)}</td>
+                <td>{b.user_name || '—'}</td>
+                <td>{b.experience_title || '—'}</td>
+                <td style={{ color: '#666', fontSize: 13 }}>
+                  {b.booking_date ? new Date(b.booking_date).toLocaleDateString('vi-VN') : '—'}
+                </td>
+                <td>{b.guest_count || 1}</td>
+                <td style={{ fontWeight: 600 }}>{b.total_price ? formatVND(b.total_price) : '—'}</td>
+                <td>
+                  <span className={`p-badge ${b.status === 'confirmed' ? 'green' : b.status === 'completed' ? 'blue' : 'yellow'}`}>
+                    {b.status === 'confirmed' ? '✅ Xác nhận' : b.status === 'completed' ? '🎉 Hoàn thành' : '⏳ Chờ'}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+
+// ============================================
+// Main Layout with Auth Guard
+// ============================================
 export default function ProviderDashboard() {
   const [activePage, setActivePage] = useState('dashboard');
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [checkingAuth, setCheckingAuth] = useState(true);
+  const [currentUser, setCurrentUser] = useState<any>(null);
+
+  useEffect(() => {
+    const checkAuth = async () => {
+      if (providerApi.isAuthenticated()) {
+        const res = await providerApi.getMe();
+        if (res.success && res.data) {
+          if (res.data.role === 'guide') {
+            setCurrentUser(res.data);
+            setIsLoggedIn(true);
+          } else {
+            providerApi.clearToken();
+          }
+        } else {
+          providerApi.clearToken();
+        }
+      }
+      setCheckingAuth(false);
+    };
+    checkAuth();
+
+    const handleLogout = () => {
+      setIsLoggedIn(false);
+      setCurrentUser(null);
+    };
+    window.addEventListener('auth:logout', handleLogout);
+    return () => window.removeEventListener('auth:logout', handleLogout);
+  }, []);
+
+  const handleLogout = async () => {
+    await providerApi.logout();
+    setIsLoggedIn(false);
+    setCurrentUser(null);
+  };
+
+  if (checkingAuth) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#fafafa' }}>
+        <div style={{ textAlign: 'center', color: '#888' }}>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>🧭</div>
+          <div>Đang kiểm tra đăng nhập...</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isLoggedIn) {
+    return <GuideLoginPage onLoginSuccess={async () => {
+      const res = await providerApi.getMe();
+      if (res.success && res.data) setCurrentUser(res.data);
+      setIsLoggedIn(true);
+    }} />;
+  }
 
   return (
     <div className="portal-layout">
-      {/* ---- Sidebar ---- */}
+      {/* Sidebar */}
       <aside className="p-sidebar">
         <div className="p-sidebar-header">
           <div className="p-sidebar-brand">
@@ -116,24 +260,31 @@ export default function ProviderDashboard() {
               ))}
             </div>
           ))}
+
+          {/* Logout */}
+          <div style={{ marginTop: 'auto', paddingTop: 16, borderTop: '1px solid #e0e0e0' }}>
+            <div className="p-nav-item" onClick={handleLogout} style={{ color: '#E53935' }}>
+              <span className="p-nav-icon">🚪</span>
+              <span>Đăng xuất</span>
+            </div>
+          </div>
         </nav>
 
         <div className="p-profile-card">
-          <div className="p-profile-avatar">NM</div>
+          <div className="p-profile-avatar">{currentUser?.full_name?.[0] || 'G'}</div>
           <div>
-            <div className="p-profile-name">Nguyễn Minh</div>
+            <div className="p-profile-name">{currentUser?.full_name || 'Guide'}</div>
             <div className="p-profile-status">● Online</div>
           </div>
         </div>
       </aside>
 
-      {/* ---- Main ---- */}
+      {/* Main */}
       <main className="p-main">
         <header className="p-topbar">
-          <h1 className="p-topbar-title">👋 Xin chào, Minh!</h1>
+          <h1 className="p-topbar-title">👋 Xin chào, {currentUser?.full_name?.split(' ').pop() || 'Guide'}!</h1>
           <div className="p-topbar-actions">
-            <div className="p-topbar-btn">🔔<span className="dot"></span></div>
-            <div className="p-topbar-btn">💬<span className="dot"></span></div>
+            <div className="p-topbar-btn">🔔</div>
           </div>
         </header>
 
@@ -144,156 +295,12 @@ export default function ProviderDashboard() {
             <Suspense fallback={<Loader />}><ProfilePage /></Suspense>
           ) : activePage === 'my-tours' ? (
             <Suspense fallback={<Loader />}><MyToursPage /></Suspense>
+          ) : activePage === 'revenue' ? (
+            <Suspense fallback={<Loader />}><RevenuePage /></Suspense>
+          ) : activePage === 'calendar' ? (
+            <Suspense fallback={<Loader />}><CalendarPage /></Suspense>
           ) : (
-          <>
-          {/* Stats */}
-          <div className="p-stats">
-            {STATS.map((s, i) => (
-              <div key={i} className="p-stat">
-                <div className="p-stat-top">
-                  <div className="p-stat-icon" style={{ background: s.bg }}>{s.icon}</div>
-                  <span className={`p-stat-change ${s.up ? 'up' : 'down'}`}>
-                    {s.up ? '↑' : '↓'} {s.change}
-                  </span>
-                </div>
-                <div className="p-stat-value">{s.value}</div>
-                <div className="p-stat-label">{s.label}</div>
-              </div>
-            ))}
-          </div>
-
-          {/* Two-col: Schedule + Reviews */}
-          <div className="p-grid-2">
-            {/* Today's Schedule */}
-            <div className="p-card">
-              <div className="p-card-header">
-                <span className="p-card-title">📅 Lịch trình hôm nay</span>
-                <button className="p-btn">Xem tất cả</button>
-              </div>
-              {UPCOMING_TOURS.map((tour, i) => (
-                <div key={i} className="p-schedule">
-                  <div className="p-schedule-time">
-                    <div className="p-schedule-hour">{tour.time}</div>
-                    <div className="p-schedule-period">{tour.period}</div>
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <div className="p-schedule-title">{tour.title}</div>
-                    <div className="p-schedule-meta">
-                      👥 {tour.guests} khách • 📍 {tour.meetPoint}
-                    </div>
-                  </div>
-                  <span className={`p-badge ${tour.status === 'confirmed' ? 'green' : 'yellow'}`}>
-                    {tour.status === 'confirmed' ? '✅ Xác nhận' : '⏳ Chờ'}
-                  </span>
-                </div>
-              ))}
-            </div>
-
-            {/* Recent Reviews */}
-            <div className="p-card">
-              <div className="p-card-header">
-                <span className="p-card-title">⭐ Đánh giá mới nhất</span>
-                <button className="p-btn">Xem tất cả</button>
-              </div>
-              {RECENT_REVIEWS.map((rv, i) => (
-                <div key={i} className="p-review">
-                  <div className="p-review-avatar" style={{ background: rv.avatar, color: 'white' }}>
-                    {rv.name[0]}
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <span className="p-review-name">{rv.name}</span>
-                      <span className="p-review-date">{rv.date}</span>
-                    </div>
-                    <div className="p-review-stars">{'⭐'.repeat(rv.stars)}</div>
-                    <div className="p-review-text">{rv.text}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Earnings Breakdown */}
-          <div className="p-grid-2" style={{ marginBottom: 28 }}>
-            <div className="p-card">
-              <div className="p-card-header">
-                <span className="p-card-title">💰 Thu nhập tháng 3/2026</span>
-                <span style={{ fontSize: 24, fontWeight: 800 }}>18,500,000₫</span>
-              </div>
-              <div style={{ padding: 20 }}>
-                <div className="p-earning-bar">
-                  {EARNINGS_BREAKDOWN.map((e, i) => (
-                    <div key={i} className="p-earning-segment" style={{ width: `${e.pct}%`, background: e.color }} />
-                  ))}
-                </div>
-                <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  {EARNINGS_BREAKDOWN.map((e, i) => (
-                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <div style={{ width: 10, height: 10, borderRadius: 3, background: e.color }} />
-                      <span style={{ flex: 1, fontSize: 14, color: '#666' }}>{e.label}</span>
-                      <span style={{ fontSize: 14, fontWeight: 700 }}>{e.amount}</span>
-                      <span style={{ fontSize: 12, color: '#999', minWidth: 36, textAlign: 'right' }}>{e.pct}%</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* Quick stats */}
-            <div className="p-card">
-              <div className="p-card-header">
-                <span className="p-card-title">📊 Hiệu suất</span>
-              </div>
-              <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
-                <PerfMetric label="Tỉ lệ hoàn thành" value="98%" color="#4CAF50" pct={98} />
-                <PerfMetric label="Đánh giá 5 sao" value="82%" color="#F9A825" pct={82} />
-                <PerfMetric label="Tỉ lệ đặt lại" value="45%" color="#42A5F5" pct={45} />
-                <PerfMetric label="Phản hồi chat" value="95%" color="#9C27B0" pct={95} />
-              </div>
-            </div>
-          </div>
-
-          {/* Recent Bookings Table */}
-          <div className="p-card">
-            <div className="p-card-header">
-              <span className="p-card-title">📋 Bookings gần đây</span>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button className="p-btn">🔽 Export</button>
-                <button className="p-btn p-btn-primary">+ Tạo tour</button>
-              </div>
-            </div>
-            <table className="p-table">
-              <thead>
-                <tr>
-                  <th>Mã</th>
-                  <th>Khách</th>
-                  <th>Tour</th>
-                  <th>Ngày</th>
-                  <th>SL</th>
-                  <th>Số tiền</th>
-                  <th>Trạng thái</th>
-                </tr>
-              </thead>
-              <tbody>
-                {RECENT_BOOKINGS.map((b) => (
-                  <tr key={b.id}>
-                    <td style={{ fontWeight: 600, color: 'var(--primary)' }}>{b.id}</td>
-                    <td>{b.guest}</td>
-                    <td>{b.tour}</td>
-                    <td style={{ color: 'var(--text-secondary)' }}>{b.date}</td>
-                    <td>{b.guests}</td>
-                    <td style={{ fontWeight: 600 }}>{b.amount}</td>
-                    <td>
-                      <span className={`p-badge ${b.status === 'confirmed' ? 'green' : 'yellow'}`}>
-                        {b.status === 'confirmed' ? '✅ Xác nhận' : '⏳ Chờ'}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          </>
+            <DashboardContent />
           )}
         </div>
       </main>

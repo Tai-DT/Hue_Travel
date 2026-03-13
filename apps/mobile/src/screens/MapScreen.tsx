@@ -58,39 +58,6 @@ const CATEGORY_CONFIG: Record<PlaceCategory, { query: string; emoji: string }> =
   shopping: { query: 'mua sắm Huế', emoji: '🛍️' },
 };
 
-const FALLBACK_PLACES: PlaceCard[] = [
-  {
-    id: 'fallback-1',
-    name: 'Đại Nội Huế',
-    category: 'heritage',
-    emoji: '🏛️',
-    address: 'Đường 23/8, Thuận Hoà',
-    rating: 4.8,
-    price: '200,000₫',
-    distance: '1.2km',
-    description: 'Kinh thành triều Nguyễn — Di sản UNESCO',
-    openHours: '7:00 - 17:30',
-    lat: 16.4698,
-    lng: 107.5786,
-    types: ['tourist_attraction'],
-  },
-  {
-    id: 'fallback-2',
-    name: 'Chùa Thiên Mụ',
-    category: 'temple',
-    emoji: '⛩️',
-    address: 'Kim Long, Huế',
-    rating: 4.9,
-    price: 'Miễn phí',
-    distance: '4.3km',
-    description: 'Ngôi chùa cổ nổi tiếng bên sông Hương.',
-    openHours: 'Cả ngày',
-    lat: 16.4539,
-    lng: 107.5534,
-    types: ['place_of_worship'],
-  },
-];
-
 function inferCategory(types: string[]): PlaceCategory {
   if (types.includes('restaurant') || types.includes('food') || types.includes('cafe')) return 'food';
   if (types.includes('place_of_worship')) return 'temple';
@@ -169,8 +136,9 @@ export default function MapScreen() {
       if (result.success && result.data) {
         const mapped = result.data.places.map((place) => toPlaceCard(place, selectedCategory));
         setPlaces(mapped);
+        setError(mapped.length === 0 ? 'Chưa có địa điểm phù hợp cho danh mục này.' : '');
       } else {
-        setPlaces(FALLBACK_PLACES.filter((place) => selectedCategory === 'all' || place.category === selectedCategory));
+        setPlaces([]);
         setError(result.error?.message || 'Không thể tải địa điểm');
       }
 
@@ -207,7 +175,7 @@ export default function MapScreen() {
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>🗺️ Bản đồ Huế</Text>
-        <Text style={styles.headerSubtitle}>{places.length} địa điểm từ dữ liệu API</Text>
+        <Text style={styles.headerSubtitle}>{places.length} địa điểm khả dụng</Text>
       </View>
 
       {/* Map Placeholder */}
@@ -220,9 +188,13 @@ export default function MapScreen() {
             </>
           ) : (
             <>
-              <Text style={styles.mapEmoji}>🗺️</Text>
-              <Text style={styles.mapText}>Bản đồ mô phỏng từ dữ liệu API</Text>
-              <Text style={styles.mapSubtext}>Chạm vào pin để xem chi tiết</Text>
+              <Text style={styles.mapEmoji}>{places.length > 0 ? '🗺️' : '📭'}</Text>
+              <Text style={styles.mapText}>
+                {places.length > 0 ? 'Bản đồ mô phỏng từ dữ liệu API' : 'Chưa có địa điểm để hiển thị'}
+              </Text>
+              <Text style={styles.mapSubtext}>
+                {places.length > 0 ? 'Chạm vào pin để xem chi tiết' : 'Hãy đổi danh mục hoặc kiểm tra lại cấu hình dịch vụ bản đồ.'}
+              </Text>
 
               {places.map((place, i) => (
                 <TouchableOpacity

@@ -15,20 +15,26 @@ import (
 // ============================================
 
 type SMSService struct {
-	apiKey    string
-	secretKey string
-	brandName string
-	baseURL   string
-	client    *http.Client
+	apiKey          string
+	secretKey       string
+	brandName       string
+	baseURL         string
+	client          *http.Client
+	fallbackEnabled bool
 }
 
 func NewSMSService(apiKey, secretKey, brandName string) *SMSService {
+	return NewSMSServiceWithFallback(apiKey, secretKey, brandName, true)
+}
+
+func NewSMSServiceWithFallback(apiKey, secretKey, brandName string, fallbackEnabled bool) *SMSService {
 	svc := &SMSService{
-		apiKey:    apiKey,
-		secretKey: secretKey,
-		brandName: brandName,
-		baseURL:   "http://rest.esms.vn/MainService.svc/json",
-		client:    &http.Client{Timeout: 10 * time.Second},
+		apiKey:          apiKey,
+		secretKey:       secretKey,
+		brandName:       brandName,
+		baseURL:         "http://rest.esms.vn/MainService.svc/json",
+		client:          &http.Client{Timeout: 10 * time.Second},
+		fallbackEnabled: fallbackEnabled,
 	}
 
 	if svc.IsConfigured() {
@@ -44,9 +50,16 @@ func (s *SMSService) IsConfigured() bool {
 	return s.apiKey != "" && s.secretKey != ""
 }
 
+func (s *SMSService) FallbackEnabled() bool {
+	return s.fallbackEnabled
+}
+
 // SendOTP sends an OTP code via SMS through ESMS.vn
 func (s *SMSService) SendOTP(phone, code string) error {
 	if !s.IsConfigured() {
+		if !s.fallbackEnabled {
+			return fmt.Errorf("%w: ESMS credentials are missing", ErrServiceNotConfigured)
+		}
 		log.Printf("📱 [MOCK SMS] OTP for %s: %s", phone, code)
 		return nil
 	}
@@ -59,6 +72,9 @@ func (s *SMSService) SendOTP(phone, code string) error {
 // SendNotification sends a notification SMS
 func (s *SMSService) SendNotification(phone, content string) error {
 	if !s.IsConfigured() {
+		if !s.fallbackEnabled {
+			return fmt.Errorf("%w: ESMS credentials are missing", ErrServiceNotConfigured)
+		}
 		log.Printf("📱 [MOCK SMS] Notify %s: %s", phone, content)
 		return nil
 	}
