@@ -19,7 +19,17 @@ type Experience = {
   created_at: string;
 };
 
-const CATEGORIES = ['Di sản', 'Ẩm thực', 'Thiên nhiên', 'Thủ công', 'Tâm linh', 'Nghệ thuật'];
+const CATEGORIES = [
+  { value: 'tour', label: '🏛️ Tour di sản', emoji: '🏛️' },
+  { value: 'food', label: '🍜 Ẩm thực', emoji: '🍜' },
+  { value: 'experience', label: '🎭 Trải nghiệm', emoji: '🎭' },
+  { value: 'sightseeing', label: '📸 Tham quan', emoji: '📸' },
+  { value: 'stay', label: '🏨 Lưu trú', emoji: '🏨' },
+  { value: 'transport', label: '🚐 Di chuyển', emoji: '🚐' },
+] as const;
+
+const getCategoryMeta = (category: string) =>
+  CATEGORIES.find((item) => item.value === category) || { value: category, label: category || 'Khác', emoji: '📦' };
 
 export default function ExperiencesPage() {
   const [experiences, setExperiences] = useState<Experience[]>([]);
@@ -60,12 +70,12 @@ export default function ExperiencesPage() {
           </button>
           {CATEGORIES.map((cat) => (
             <button
-              key={cat}
+              key={cat.value}
               className="btn"
-              onClick={() => { setCategory(cat); setPage(1); }}
-              style={{ background: category === cat ? 'var(--primary)' : 'var(--card-bg)', color: category === cat ? '#000' : 'var(--text-primary)' }}
+              onClick={() => { setCategory(cat.value); setPage(1); }}
+              style={{ background: category === cat.value ? 'var(--primary)' : 'var(--card-bg)', color: category === cat.value ? '#000' : 'var(--text-primary)' }}
             >
-              {cat}
+              {cat.label}
             </button>
           ))}
         </div>
@@ -81,63 +91,63 @@ export default function ExperiencesPage() {
           <div style={{ gridColumn: '1/-1', textAlign: 'center', padding: 60, color: 'var(--text-muted)' }}>
             Không có trải nghiệm nào
           </div>
-        ) : experiences.map((exp) => (
-          <div key={exp.id} className="chart-card" style={{ padding: 0, overflow: 'hidden' }}>
-            <div style={{
-              height: 140,
-              background: `linear-gradient(135deg, #1a1a2e, #16213e)`,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: 48,
-            }}>
-              {exp.category === 'Di sản' ? '🏛️' :
-               exp.category === 'Ẩm thực' ? '🍜' :
-               exp.category === 'Thiên nhiên' ? '🌊' :
-               exp.category === 'Thủ công' ? '👒' :
-               exp.category === 'Tâm linh' ? '🛕' : '🎨'}
-            </div>
-            <div style={{ padding: 16 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: 8 }}>
-                <div>
-                  <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 4 }}>{exp.title}</h3>
-                  <span style={{
-                    background: 'var(--primary)', color: '#000',
-                    padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600,
-                  }}>{exp.category}</span>
-                </div>
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontWeight: 700, color: 'var(--primary)' }}>{formatVND(exp.price)}</div>
-                  <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{exp.duration_mins} phút</div>
-                </div>
+        ) : experiences.map((exp) => {
+          const categoryMeta = getCategoryMeta(exp.category);
+
+          return (
+            <div key={exp.id} className="chart-card" style={{ padding: 0, overflow: 'hidden' }}>
+              <div style={{
+                height: 140,
+                background: `linear-gradient(135deg, #1a1a2e, #16213e)`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 48,
+              }}>
+                {categoryMeta.emoji}
               </div>
-
-              <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12, lineHeight: 1.5 }}>
-                {exp.description?.slice(0, 100)}...
-              </p>
-
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div style={{ display: 'flex', gap: 12, fontSize: 13 }}>
-                  <span>⭐ {exp.rating?.toFixed(1) || '—'} ({exp.rating_count || 0})</span>
-                  <span>👥 max {exp.max_guests || '—'}</span>
+              <div style={{ padding: 16 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: 8 }}>
+                  <div>
+                    <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 4 }}>{exp.title}</h3>
+                    <span style={{
+                      background: 'var(--primary)', color: '#000',
+                      padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600,
+                    }}>{categoryMeta.label}</span>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontWeight: 700, color: 'var(--primary)' }}>{formatVND(exp.price)}</div>
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{exp.duration_mins} phút</div>
+                  </div>
                 </div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <span className={`badge-status ${exp.is_active ? 'confirmed' : 'cancelled'}`} style={{ fontSize: 11 }}>
-                    {exp.is_active ? '✅ Active' : '🚫 Inactive'}
-                  </span>
-                  <button className="btn" onClick={() => handleDelete(exp)}
-                    style={{ background: '#F4433622', color: '#F44336', fontSize: 12 }}>
-                    🗑️
-                  </button>
+
+                <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12, lineHeight: 1.5 }}>
+                  {exp.description?.slice(0, 100)}...
+                </p>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', gap: 12, fontSize: 13 }}>
+                    <span>⭐ {exp.rating?.toFixed(1) || '—'} ({exp.rating_count || 0})</span>
+                    <span>👥 max {exp.max_guests || '—'}</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <span className={`badge-status ${exp.is_active ? 'confirmed' : 'cancelled'}`} style={{ fontSize: 11 }}>
+                      {exp.is_active ? '✅ Active' : '🚫 Inactive'}
+                    </span>
+                    <button className="btn" onClick={() => handleDelete(exp)}
+                      style={{ background: '#F4433622', color: '#F44336', fontSize: 12 }}>
+                      🗑️
+                    </button>
+                  </div>
                 </div>
+
+                {exp.guide_name && (
+                  <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-muted)' }}>
+                    🧭 {exp.guide_name}
+                  </div>
+                )}
               </div>
-
-              {exp.guide_name && (
-                <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-muted)' }}>
-                  🧭 {exp.guide_name}
-                </div>
-              )}
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <div style={{ display: 'flex', justifyContent: 'center', gap: 8, padding: 24 }}>

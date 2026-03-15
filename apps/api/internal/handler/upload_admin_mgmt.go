@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/huetravel/api/internal/model"
 	"github.com/huetravel/api/internal/repository"
@@ -95,17 +96,20 @@ type AdminManagementHandler struct {
 	userRepo    *repository.UserRepository
 	expRepo     *repository.ExperienceRepository
 	bookingRepo *repository.BookingRepository
+	reviewRepo  *repository.ReviewRepository
 }
 
 func NewAdminManagementHandler(
 	userRepo *repository.UserRepository,
 	expRepo *repository.ExperienceRepository,
 	bookingRepo *repository.BookingRepository,
+	reviewRepo *repository.ReviewRepository,
 ) *AdminManagementHandler {
 	return &AdminManagementHandler{
 		userRepo:    userRepo,
 		expRepo:     expRepo,
 		bookingRepo: bookingRepo,
+		reviewRepo:  reviewRepo,
 	}
 }
 
@@ -266,6 +270,100 @@ func (h *AdminManagementHandler) DeleteExperience(c *gin.Context) {
 	}
 
 	response.OK(c, gin.H{"message": "Đã xoá trải nghiệm", "id": id})
+}
+
+// ---- Reviews ----
+
+func (h *AdminManagementHandler) ListReviews(c *gin.Context) {
+	if h.reviewRepo == nil {
+		response.ServiceUnavailable(c, "HT-REV-001", "Dịch vụ đánh giá hiện chưa sẵn sàng")
+		return
+	}
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	perPage, _ := strconv.Atoi(c.DefaultQuery("per_page", "20"))
+	maxRating, _ := strconv.ParseFloat(c.DefaultQuery("max_rating", "0"), 64)
+
+	filter := repository.AdminReviewFilter{
+		FeaturedOnly: c.DefaultQuery("featured", "0") == "1" || c.DefaultQuery("featured", "false") == "true",
+		MaxRating:    maxRating,
+		Page:         page,
+		PerPage:      perPage,
+	}
+
+	reviews, total, err := h.reviewRepo.ListAdmin(c.Request.Context(), filter)
+	if err != nil {
+		response.InternalError(c, "Không thể tải danh sách đánh giá")
+		return
+	}
+
+	totalPages := int(total) / perPage
+	if int(total)%perPage > 0 {
+		totalPages++
+	}
+
+	response.Paginated(c, reviews, response.Meta{
+		Page:       page,
+		PerPage:    perPage,
+		Total:      total,
+		TotalPages: totalPages,
+	})
+}
+
+func (h *AdminManagementHandler) ToggleFeaturedReview(c *gin.Context) {
+	if h.reviewRepo == nil {
+		response.ServiceUnavailable(c, "HT-REV-001", "Dịch vụ đánh giá hiện chưa sẵn sàng")
+		return
+	}
+
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		response.BadRequest(c, "HT-VAL-001", "ID không hợp lệ")
+		return
+	}
+
+	var req struct {
+		IsFeatured bool `json:"is_featured"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "HT-VAL-001", "Dữ liệu không hợp lệ")
+		return
+	}
+
+	if err := h.reviewRepo.SetFeatured(c.Request.Context(), id, req.IsFeatured); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			response.NotFound(c, "Đánh giá không tồn tại")
+			return
+		}
+		response.InternalError(c, "Không thể cập nhật đánh giá")
+		return
+	}
+
+	response.OK(c, gin.H{"message": "Đã cập nhật trạng thái nổi bật", "id": id, "is_featured": req.IsFeatured})
+}
+
+func (h *AdminManagementHandler) DeleteReview(c *gin.Context) {
+	if h.reviewRepo == nil {
+		response.ServiceUnavailable(c, "HT-REV-001", "Dịch vụ đánh giá hiện chưa sẵn sàng")
+		return
+	}
+
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		response.BadRequest(c, "HT-VAL-001", "ID không hợp lệ")
+		return
+	}
+
+	if err := h.reviewRepo.DeleteAdmin(c.Request.Context(), id); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			response.NotFound(c, "Đánh giá không tồn tại")
+			return
+		}
+		response.InternalError(c, "Không thể xoá đánh giá")
+		return
+	}
+
+	response.OK(c, gin.H{"message": "Đã xoá đánh giá", "id": id})
 }
 
 // ---- Bookings ----

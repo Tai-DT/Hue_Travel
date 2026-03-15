@@ -1,12 +1,13 @@
 package middleware
 
 import (
-	"testing"
-
 	"net/http"
 	"net/http/httptest"
+	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 func init() {
@@ -160,5 +161,72 @@ func TestRequireRole_BlocksWrongRole(t *testing.T) {
 
 	if w.Code != http.StatusForbidden {
 		t.Errorf("expected 403, got %d", w.Code)
+	}
+}
+
+func TestGenerateTokenWithType_ParsesClaims(t *testing.T) {
+	userID := uuid.New()
+	token, err := GenerateTokenWithType(userID, "traveler", TokenTypeRefresh, "secret", time.Hour)
+	if err != nil {
+		t.Fatalf("GenerateTokenWithType() error = %v", err)
+	}
+
+	claims, err := ParseToken(token, "secret")
+	if err != nil {
+		t.Fatalf("ParseToken() error = %v", err)
+	}
+
+	if claims.UserID != userID {
+		t.Errorf("expected userID %s, got %s", userID, claims.UserID)
+	}
+	if claims.Role != "traveler" {
+		t.Errorf("expected role traveler, got %s", claims.Role)
+	}
+	if claims.Type != TokenTypeRefresh {
+		t.Errorf("expected token type %s, got %s", TokenTypeRefresh, claims.Type)
+	}
+}
+
+func TestAuth_RejectsRefreshToken(t *testing.T) {
+	router := gin.New()
+	router.Use(Auth("secret"))
+	router.GET("/protected", func(c *gin.Context) {
+		c.String(http.StatusOK, "ok")
+	})
+
+	token, err := GenerateTokenWithType(uuid.New(), "traveler", TokenTypeRefresh, "secret", time.Hour)
+	if err != nil {
+		t.Fatalf("GenerateTokenWithType() error = %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/protected", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", w.Code)
+	}
+}
+
+func TestAuth_AllowsAccessToken(t *testing.T) {
+	router := gin.New()
+	router.Use(Auth("secret"))
+	router.GET("/protected", func(c *gin.Context) {
+		c.String(http.StatusOK, "ok")
+	})
+
+	token, err := GenerateTokenWithType(uuid.New(), "traveler", TokenTypeAccess, "secret", time.Hour)
+	if err != nil {
+		t.Fatalf("GenerateTokenWithType() error = %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/protected", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
 	}
 }

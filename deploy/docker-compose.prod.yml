@@ -88,13 +88,15 @@ services:
     environment:
       APP_ENV: production
       APP_PORT: "8080"
+      APP_STRICT_MODE: "true"
+      ALLOW_MOCK_SERVICES: "false"
       DATABASE_URL: postgres://${POSTGRES_USER:-huetravel}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-hue_travel}?sslmode=disable
       REDIS_URL: redis://redis:6379/0
       MINIO_ENDPOINT: minio:9000
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-huetravel}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       MINIO_BUCKET: hue-travel
-      MINO_USE_SSL: "false"
+      MINIO_USE_SSL: "false"
       MEILISEARCH_URL: http://meilisearch:7700
       MEILISEARCH_MASTER_KEY: ${MEILISEARCH_MASTER_KEY}
       JWT_SECRET: ${JWT_SECRET}

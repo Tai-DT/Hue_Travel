@@ -1,0 +1,7 @@
+{
+  "common": { "appName": "Huế Travel Admin", "loading": "Loading...", "search": "Search...", "save": "Save", "cancel": "Cancel", "delete": "Delete", "edit": "Edit", "confirm": "Confirm", "back": "Back", "actions": "Actions", "status": "Status", "created": "Created", "updated": "Updated", "noData": "No data" },
+  "nav": { "dashboard": "Dashboard", "users": "Users", "experiences": "Experiences", "bookings": "Bookings", "reviews": "Reviews", "reports": "Reports", "settings": "Settings", "chat": "Chat Support" },
+  "dashboard": { "title": "Overview", "totalUsers": "Total Users", "totalBookings": "Total Bookings", "revenue": "Revenue", "activeGuides": "Active Guides" },
+  "users": { "title": "User Management", "name": "Name", "email": "Email", "role": "Role", "traveler": "Traveler", "guide": "Guide", "admin": "Admin" },
+  "bookings": { "title": "Booking Management", "pending": "Pending", "confirmed": "Confirmed", "completed": "Completed", "cancelled": "Cancelled" }
+}

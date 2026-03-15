@@ -4,6 +4,9 @@ import './globals.css';
 export const metadata: Metadata = {
   title: 'Huế Travel — Admin Dashboard',
   description: 'Quản trị hệ thống Huế Travel',
+  icons: {
+    icon: '/icon.svg',
+  },
 };
 
 export default function RootLayout({

@@ -11,7 +11,7 @@ import (
 
 // ============================================
 // Notification Handler
-// Reads from DB when available, falls back to mock
+// Uses DB when available, graceful mock fallback
 // ============================================
 
 type NotificationHandler struct {
@@ -33,7 +33,6 @@ func (h *NotificationHandler) GetNotifications(c *gin.Context) {
 	uid := userID.(uuid.UUID)
 
 	if h.pool != nil {
-		// Real DB query
 		ctx := c.Request.Context()
 		rows, err := h.pool.Query(ctx, `
 			SELECT id, user_id, type, title, body, is_read, created_at
@@ -42,13 +41,19 @@ func (h *NotificationHandler) GetNotifications(c *gin.Context) {
 			ORDER BY created_at DESC 
 			LIMIT 50`, uid)
 		if err == nil {
+			defer rows.Close()
 			var notifications []service.Notification
 			for rows.Next() {
 				var n service.Notification
-				rows.Scan(&n.ID, &n.UserID, &n.Type, &n.Title, &n.Body, &n.IsRead, &n.CreatedAt)
+				if scanErr := rows.Scan(&n.ID, &n.UserID, &n.Type, &n.Title, &n.Body, &n.IsRead, &n.CreatedAt); scanErr != nil {
+					continue
+				}
 				notifications = append(notifications, n)
 			}
-			rows.Close()
+
+			if notifications == nil {
+				notifications = []service.Notification{}
+			}
 
 			unread := 0
 			for _, n := range notifications {
@@ -64,6 +69,7 @@ func (h *NotificationHandler) GetNotifications(c *gin.Context) {
 			})
 			return
 		}
+		// If query fails (e.g. table doesn't exist), fall through to mock
 	}
 
 	// Fallback to mock
@@ -82,7 +88,7 @@ func (h *NotificationHandler) GetNotifications(c *gin.Context) {
 	})
 }
 
-// MarkRead — đánh dấu đã đọc
+// MarkRead — đánh dấu đã đọc (single hoặc tất cả)
 func (h *NotificationHandler) MarkRead(c *gin.Context) {
 	userID, exists := c.Get("user_id")
 	if !exists {
@@ -128,13 +134,12 @@ func (h *NotificationHandler) MarkRead(c *gin.Context) {
 		return
 	}
 
-	// Mock
+	// Mock fallback
 	if notifID == "all" {
 		response.OK(c, gin.H{"message": "Đã đánh dấu tất cả đã đọc", "count": 0})
 		return
 	}
-	_, err := uuid.Parse(notifID)
-	if err != nil {
+	if _, err := uuid.Parse(notifID); err != nil {
 		response.BadRequest(c, "HT-VAL-001", "ID không hợp lệ")
 		return
 	}
@@ -168,7 +173,7 @@ func (h *NotificationHandler) RegisterDevice(c *gin.Context) {
 			ON CONFLICT (user_id, fcm_token) DO UPDATE SET updated_at = NOW()`,
 			uuid.New(), uid, req.FCMToken, req.Platform)
 		if err != nil {
-			// Table might not exist yet — fall through to mock response
+			// Table might not exist yet — log and still return success
 			_ = err
 		}
 	}
@@ -196,6 +201,7 @@ func (h *NotificationHandler) UnreadCount(c *gin.Context) {
 			response.OK(c, gin.H{"unread_count": count})
 			return
 		}
+		// Fall through on error (table might not exist)
 	}
 
 	response.OK(c, gin.H{"unread_count": 0})

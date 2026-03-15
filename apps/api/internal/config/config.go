@@ -173,7 +173,9 @@ func Load() (*Config, error) {
 func (c *Config) Validate() error {
 	var missing []string
 
-	if isDefaultSecret(c.JWT.Secret) {
+	if strings.TrimSpace(c.JWT.Secret) == "" {
+		missing = append(missing, "JWT_SECRET")
+	} else if c.App.StrictMode && isDefaultSecret(c.JWT.Secret) {
 		missing = append(missing, "JWT_SECRET")
 	}
 

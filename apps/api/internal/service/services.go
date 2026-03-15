@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -25,8 +26,8 @@ import (
 // ============================================
 
 type AuthService struct {
-	userRepo         *repository.UserRepository
-	otpRepo          *repository.OTPRepository
+	userRepo         repository.UserRepo
+	otpRepo          repository.OTPRepo
 	redis            *redis.Client
 	smsSvc           *SMSService
 	jwtSecret        string
@@ -35,8 +36,8 @@ type AuthService struct {
 }
 
 func NewAuthService(
-	userRepo *repository.UserRepository,
-	otpRepo *repository.OTPRepository,
+	userRepo repository.UserRepo,
+	otpRepo repository.OTPRepo,
 	rdb *redis.Client,
 	smsSvc *SMSService,
 	jwtSecret string,
@@ -171,29 +172,7 @@ func (s *AuthService) VerifyOTP(ctx context.Context, req VerifyOTPRequest) (*Aut
 	// Update last login
 	s.userRepo.UpdateLastLogin(ctx, user.ID)
 
-	// Generate JWT tokens
-	token, err := middleware.GenerateToken(user.ID, string(user.Role), s.jwtSecret, s.jwtExpiry)
-	if err != nil {
-		return nil, fmt.Errorf("không thể tạo token: %w", err)
-	}
-
-	refreshToken, err := middleware.GenerateToken(user.ID, string(user.Role), s.jwtSecret, s.jwtRefreshExpiry)
-	if err != nil {
-		return nil, fmt.Errorf("không thể tạo refresh token: %w", err)
-	}
-
-	// Store refresh token in Redis
-	if s.redis != nil {
-		s.redis.Set(ctx, fmt.Sprintf("refresh:%s", user.ID.String()), refreshToken, s.jwtRefreshExpiry)
-	}
-
-	return &AuthResponse{
-		Token:        token,
-		RefreshToken: refreshToken,
-		ExpiresIn:    int(s.jwtExpiry.Seconds()),
-		User:         user,
-		IsNewUser:    isNewUser,
-	}, nil
+	return s.issueTokens(ctx, user, isNewUser)
 }
 
 // GoogleLogin — Xử lý Google OAuth
@@ -221,8 +200,64 @@ func (s *AuthService) GoogleLogin(ctx context.Context, idToken string) (*AuthRes
 
 	s.userRepo.UpdateLastLogin(ctx, user.ID)
 
-	token, _ := middleware.GenerateToken(user.ID, string(user.Role), s.jwtSecret, s.jwtExpiry)
-	refreshToken, _ := middleware.GenerateToken(user.ID, string(user.Role), s.jwtSecret, s.jwtRefreshExpiry)
+	return s.issueTokens(ctx, user, isNewUser)
+}
+
+// RefreshToken — Renew JWT token
+func (s *AuthService) RefreshToken(ctx context.Context, refreshToken string) (*AuthResponse, error) {
+	refreshToken = strings.TrimSpace(refreshToken)
+	if refreshToken == "" {
+		return nil, fmt.Errorf("thiếu refresh token")
+	}
+
+	claims, err := middleware.ParseToken(refreshToken, s.jwtSecret)
+	if err != nil {
+		return nil, fmt.Errorf("refresh token không hợp lệ hoặc đã hết hạn")
+	}
+	if !middleware.IsRefreshTokenType(claims.Type) {
+		if claims.Type != "" || s.redis == nil {
+			return nil, fmt.Errorf("refresh token không hợp lệ")
+		}
+	}
+
+	if s.redis != nil {
+		storedToken, redisErr := s.redis.Get(ctx, fmt.Sprintf("refresh:%s", claims.UserID.String())).Result()
+		if redisErr != nil || storedToken != refreshToken {
+			return nil, fmt.Errorf("refresh token đã hết hiệu lực")
+		}
+	}
+
+	user, err := s.userRepo.GetByID(ctx, claims.UserID)
+	if err != nil || user == nil {
+		return nil, fmt.Errorf("không tìm thấy người dùng")
+	}
+
+	return s.issueTokens(ctx, user, false)
+}
+
+func (s *AuthService) issueTokens(ctx context.Context, user *model.User, isNewUser bool) (*AuthResponse, error) {
+	token, err := middleware.GenerateTokenWithType(
+		user.ID,
+		string(user.Role),
+		middleware.TokenTypeAccess,
+		s.jwtSecret,
+		s.jwtExpiry,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("không thể tạo token: %w", err)
+	}
+
+	refreshToken, err := middleware.GenerateTokenWithType(
+		user.ID,
+		string(user.Role),
+		middleware.TokenTypeRefresh,
+		s.jwtSecret,
+		s.jwtRefreshExpiry,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("không thể tạo refresh token: %w", err)
+	}
+
 	if s.redis != nil {
 		s.redis.Set(ctx, fmt.Sprintf("refresh:%s", user.ID.String()), refreshToken, s.jwtRefreshExpiry)
 	}
@@ -236,22 +271,43 @@ func (s *AuthService) GoogleLogin(ctx context.Context, idToken string) (*AuthRes
 	}, nil
 }
 
-// RefreshToken — Renew JWT token
-func (s *AuthService) RefreshToken(ctx context.Context, userID uuid.UUID, role string) (*AuthResponse, error) {
+// GetUser returns user profile by ID.
+func (s *AuthService) GetUser(ctx context.Context, userID uuid.UUID) (*model.User, error) {
 	user, err := s.userRepo.GetByID(ctx, userID)
-	if err != nil || user == nil {
-		return nil, fmt.Errorf("user not found")
+	if err != nil {
+		return nil, fmt.Errorf("lỗi truy vấn: %w", err)
 	}
+	if user == nil {
+		return nil, fmt.Errorf("không tìm thấy người dùng")
+	}
+	return user, nil
+}
 
-	token, _ := middleware.GenerateToken(user.ID, string(user.Role), s.jwtSecret, s.jwtExpiry)
-	refreshToken, _ := middleware.GenerateToken(user.ID, string(user.Role), s.jwtSecret, s.jwtRefreshExpiry)
+// UpdateUserProfile updates user profile and returns the updated user.
+func (s *AuthService) UpdateUserProfile(ctx context.Context, userID uuid.UUID, fullName string, email, bio, avatarURL *string, languages []string) (*model.User, error) {
+	if err := s.userRepo.UpdateProfile(ctx, userID, fullName, email, bio, avatarURL, languages); err != nil {
+		return nil, err
+	}
+	return s.userRepo.GetByID(ctx, userID)
+}
 
-	return &AuthResponse{
-		Token:        token,
-		RefreshToken: refreshToken,
-		ExpiresIn:    int(s.jwtExpiry.Seconds()),
-		User:         user,
-	}, nil
+// DeactivateAccount soft-deletes user and invalidates tokens.
+func (s *AuthService) DeactivateAccount(ctx context.Context, userID uuid.UUID) error {
+	if err := s.userRepo.SetActive(ctx, userID, false); err != nil {
+		return fmt.Errorf("không thể xóa tài khoản: %w", err)
+	}
+	// Invalidate refresh tokens
+	if s.redis != nil {
+		s.redis.Del(ctx, fmt.Sprintf("refresh:%s", userID.String()))
+	}
+	return nil
+}
+
+// Logout invalidates the user's refresh token.
+func (s *AuthService) Logout(ctx context.Context, userID uuid.UUID) {
+	if s.redis != nil {
+		s.redis.Del(ctx, fmt.Sprintf("refresh:%s", userID.String()))
+	}
 }
 
 // ============================================
@@ -259,16 +315,16 @@ func (s *AuthService) RefreshToken(ctx context.Context, userID uuid.UUID, role s
 // ============================================
 
 type BookingService struct {
-	bookingRepo *repository.BookingRepository
-	expRepo     *repository.ExperienceRepository
-	userRepo    *repository.UserRepository
+	bookingRepo repository.BookingRepo
+	expRepo     repository.ExperienceRepo
+	userRepo    repository.UserRepo
 	redis       *redis.Client
 }
 
 func NewBookingService(
-	bookingRepo *repository.BookingRepository,
-	expRepo *repository.ExperienceRepository,
-	userRepo *repository.UserRepository,
+	bookingRepo repository.BookingRepo,
+	expRepo repository.ExperienceRepo,
+	userRepo repository.UserRepo,
 	rdb *redis.Client,
 ) *BookingService {
 	return &BookingService{
@@ -324,8 +380,10 @@ func (s *BookingService) CreateBooking(ctx context.Context, travelerID uuid.UUID
 
 	// 5. Check for duplicate booking
 	dupKey := fmt.Sprintf("booking:dup:%s:%s:%s", travelerID, req.ExperienceID, req.BookingDate)
-	if exists, _ := s.redis.Exists(ctx, dupKey).Result(); exists > 0 {
-		return nil, fmt.Errorf("bạn đã đặt trải nghiệm này cho ngày này rồi")
+	if s.redis != nil {
+		if exists, _ := s.redis.Exists(ctx, dupKey).Result(); exists > 0 {
+			return nil, fmt.Errorf("bạn đã đặt trải nghiệm này cho ngày này rồi")
+		}
 	}
 
 	// 6. Create booking
@@ -348,10 +406,14 @@ func (s *BookingService) CreateBooking(ctx context.Context, travelerID uuid.UUID
 	}
 
 	// 7. Set duplicate prevention (24h)
-	s.redis.Set(ctx, dupKey, "1", 24*time.Hour)
+	if s.redis != nil {
+		s.redis.Set(ctx, dupKey, "1", 24*time.Hour)
+	}
 
 	// 8. Set booking timeout (30 min to pay)
-	s.redis.Set(ctx, fmt.Sprintf("booking:timeout:%s", booking.ID), "1", 30*time.Minute)
+	if s.redis != nil {
+		s.redis.Set(ctx, fmt.Sprintf("booking:timeout:%s", booking.ID), "1", 30*time.Minute)
+	}
 
 	booking.Experience = experience
 
@@ -378,6 +440,64 @@ func (s *BookingService) CancelBooking(ctx context.Context, bookingID, userID uu
 	}
 
 	return s.bookingRepo.UpdateStatus(ctx, bookingID, model.BookingCancelled)
+}
+
+// ConfirmBooking — guide confirms a pending booking.
+func (s *BookingService) ConfirmBooking(ctx context.Context, bookingID, guideID uuid.UUID) error {
+	booking, err := s.bookingRepo.GetByID(ctx, bookingID)
+	if err != nil || booking == nil {
+		return fmt.Errorf("booking không tồn tại")
+	}
+
+	if booking.GuideID != guideID {
+		return fmt.Errorf("chỉ hướng dẫn viên mới có thể xác nhận booking")
+	}
+
+	if booking.Status != model.BookingPending {
+		return fmt.Errorf("booking không ở trạng thái chờ xác nhận")
+	}
+
+	return s.bookingRepo.UpdateStatus(ctx, bookingID, model.BookingConfirmed)
+}
+
+// CompleteBooking — guide marks a confirmed/active booking as completed.
+func (s *BookingService) CompleteBooking(ctx context.Context, bookingID, guideID uuid.UUID) error {
+	booking, err := s.bookingRepo.GetByID(ctx, bookingID)
+	if err != nil || booking == nil {
+		return fmt.Errorf("booking không tồn tại")
+	}
+
+	if booking.GuideID != guideID {
+		return fmt.Errorf("chỉ hướng dẫn viên mới có thể hoàn thành booking")
+	}
+
+	if booking.Status != model.BookingConfirmed && booking.Status != model.BookingActive {
+		return fmt.Errorf("booking chưa được xác nhận")
+	}
+
+	return s.bookingRepo.UpdateStatus(ctx, bookingID, model.BookingCompleted)
+}
+
+// GetBooking retrieves a single booking by ID.
+func (s *BookingService) GetBooking(ctx context.Context, bookingID uuid.UUID) (*model.Booking, error) {
+	booking, err := s.bookingRepo.GetByID(ctx, bookingID)
+	if err != nil {
+		return nil, fmt.Errorf("lỗi truy vấn booking: %w", err)
+	}
+	if booking == nil {
+		return nil, fmt.Errorf("booking không tồn tại")
+	}
+	return booking, nil
+}
+
+// ListTravelerBookings lists bookings for a traveler with pagination.
+func (s *BookingService) ListTravelerBookings(ctx context.Context, travelerID uuid.UUID, status string, page, perPage int) ([]model.Booking, int64, error) {
+	return s.bookingRepo.ListByTraveler(ctx, travelerID, status, page, perPage)
+}
+
+// ListGuideBookings lists bookings for a guide with pagination.
+func (s *BookingService) ListGuideBookings(ctx context.Context, guideID uuid.UUID, status string, page, perPage int) ([]model.Booking, int64, error) {
+	return s.bookingRepo.ListByGuide(ctx, guideID, status, page, perPage)
 }
 
 // ============================================

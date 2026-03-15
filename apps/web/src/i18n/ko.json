@@ -1,0 +1,7 @@
+{
+  "common": { "appName": "Huế Travel Admin", "loading": "로딩 중...", "search": "검색...", "save": "저장", "cancel": "취소", "delete": "삭제", "edit": "편집", "confirm": "확인", "back": "뒤로", "actions": "작업", "status": "상태", "created": "생성일", "updated": "수정일", "noData": "데이터 없음" },
+  "nav": { "dashboard": "대시보드", "users": "사용자", "experiences": "체험", "bookings": "예약", "reviews": "리뷰", "reports": "보고서", "settings": "설정", "chat": "채팅 지원" },
+  "dashboard": { "title": "개요", "totalUsers": "전체 사용자", "totalBookings": "전체 예약", "revenue": "수익", "activeGuides": "활동 가이드" },
+  "users": { "title": "사용자 관리", "name": "이름", "email": "이메일", "role": "역할", "traveler": "여행자", "guide": "가이드", "admin": "관리자" },
+  "bookings": { "title": "예약 관리", "pending": "대기 중", "confirmed": "확인됨", "completed": "완료됨", "cancelled": "취소됨" }
+}

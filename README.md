@@ -124,13 +124,32 @@ npm run dev  # http://localhost:3001
 cd apps/api
 go test ./... -v          # 48+ unit/handler tests
 go test ./... -race       # Race condition detection
+
+# Validate local infra + schema after docker compose up
+make smoke
+
+# Validate API public endpoints
+make smoke-api
+
+# Validate OTP login -> refresh -> logout flow
+make smoke-auth
+
+# Validate OTP login -> booking -> payment create -> logout flow
+make smoke-booking
 ```
+
+`make smoke-booking` supports `PHONE`, `OTP_CODE`, `BOOKING_DATE`, `EXPERIENCE_ID`, `EXPERIENCE_QUERY`, and `BANK_CODE`. In local mock-payment mode, the script also verifies that the booking becomes `confirmed` immediately after payment creation.
 
 ## ⚙️ Runtime Modes
 
-- `ALLOW_MOCK_SERVICES=true`: local development có thể fallback sang mock cho AI, Maps, SMS, Payment.
+- `ALLOW_MOCK_SERVICES=true`: chỉ nên bật rõ ràng khi cần mock AI, Maps, SMS, Payment trong local development.
 - `APP_STRICT_MODE=true` hoặc `APP_ENV=production`: API fail-fast nếu thiếu config quan trọng và không trả dữ liệu mock.
 - `EXPO_PUBLIC_API_URL`: cho phép mobile web/export trỏ đúng API local thay vì domain production.
+
+## 🗃️ Schema Source
+
+- Canonical PostgreSQL schema nằm ở `apps/api/migrations/001_initial_schema.sql`.
+- `docker compose up` và `make migrate` đều dùng cùng file này để tránh drift giữa local init và manual migrate.
 
 ## 🐳 Production Deploy
 

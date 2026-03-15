@@ -3,6 +3,7 @@
 // ============================================
 
 import Constants from 'expo-constants';
+import * as SecureStore from 'expo-secure-store';
 
 const LOCAL_API_BASE = 'http://localhost:8080/api/v1';
 const DEV_API_PORT = '8080';
@@ -56,6 +57,7 @@ type RequestOptions = {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: object;
   token?: string | null;
+  retryOnAuthFailure?: boolean;
 };
 
 type APIResponse<T> = {
@@ -67,14 +69,101 @@ type APIResponse<T> = {
 
 class ApiService {
   private token: string | null = null;
+  private refreshTokenValue: string | null = null;
+  private refreshPromise: Promise<boolean> | null = null;
+  private authFailureListeners = new Set<() => void>();
+  private readonly accessTokenKey = 'ht_access_token';
+  private readonly refreshTokenKey = 'ht_refresh_token';
+
+  private useWebStorage() {
+    return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
+  }
+
+  private async setStoredItem(key: string, value: string) {
+    if (this.useWebStorage()) {
+      window.localStorage.setItem(key, value);
+      return;
+    }
+
+    await SecureStore.setItemAsync(key, value);
+  }
+
+  private async getStoredItem(key: string) {
+    if (this.useWebStorage()) {
+      return window.localStorage.getItem(key);
+    }
+
+    return SecureStore.getItemAsync(key);
+  }
+
+  private async deleteStoredItem(key: string) {
+    if (this.useWebStorage()) {
+      window.localStorage.removeItem(key);
+      return;
+    }
+
+    await SecureStore.deleteItemAsync(key);
+  }
 
   setToken(token: string | null) {
     this.token = token;
   }
 
+  async setSession(token: string, refreshToken: string) {
+    this.token = token;
+    this.refreshTokenValue = refreshToken;
+    await Promise.all([
+      this.setStoredItem(this.accessTokenKey, token),
+      this.setStoredItem(this.refreshTokenKey, refreshToken),
+    ]);
+  }
+
+  async restoreSession(): Promise<{ token: string; refreshToken: string } | null> {
+    try {
+      const [token, refreshToken] = await Promise.all([
+        this.getStoredItem(this.accessTokenKey),
+        this.getStoredItem(this.refreshTokenKey),
+      ]);
+
+      if (!token || !refreshToken) {
+        this.token = null;
+        this.refreshTokenValue = null;
+        if (token || refreshToken) {
+          await this.clearSession();
+        }
+        return null;
+      }
+
+      this.token = token;
+      this.refreshTokenValue = refreshToken;
+      return { token, refreshToken };
+    } catch {
+      return null;
+    }
+  }
+
+  async clearSession() {
+    this.token = null;
+    this.refreshTokenValue = null;
+
+    try {
+      await this.deleteStoredItem(this.accessTokenKey);
+      await this.deleteStoredItem(this.refreshTokenKey);
+    } catch {
+      // Ignore storage cleanup failures and continue with in-memory logout.
+    }
+  }
+
+  onAuthFailure(listener: () => void) {
+    this.authFailureListeners.add(listener);
+    return () => {
+      this.authFailureListeners.delete(listener);
+    };
+  }
+
   async request<T>(endpoint: string, options: RequestOptions = {}): Promise<APIResponse<T>> {
-    const { method = 'GET', body, token } = options;
-    const authToken = token || this.token;
+    const { method = 'GET', body, token, retryOnAuthFailure = true } = options;
+    const authToken = token === undefined ? this.token : token;
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -91,9 +180,17 @@ class ApiService {
         body: body ? JSON.stringify(body) : undefined,
       });
 
-      const data = await response.json();
-      return data as APIResponse<T>;
-    } catch (error) {
+      if (response.status === 401 && retryOnAuthFailure && authToken && await this.refreshSession()) {
+        return this.request<T>(endpoint, { method, body, retryOnAuthFailure: false });
+      }
+
+      if (response.status === 401 && authToken) {
+        await this.clearSession();
+        this.notifyAuthFailure();
+      }
+
+      return await this.parseResponse<T>(response);
+    } catch {
       return {
         success: false,
         error: { code: 'HT-NET-001', message: 'Không thể kết nối server' },
@@ -101,7 +198,7 @@ class ApiService {
     }
   }
 
-  async uploadFile(file: { uri: string; name: string; type: string }, folder: string = 'uploads') {
+  async uploadFile(file: { uri: string; name: string; type: string }, folder: string = 'uploads'): Promise<APIResponse<any>> {
     const formData = new FormData();
     formData.append('file', {
       uri: file.uri,
@@ -118,7 +215,17 @@ class ApiService {
         },
         body: formData,
       });
-      return await response.json();
+
+      if (response.status === 401 && await this.refreshSession()) {
+        return this.uploadFile(file, folder);
+      }
+
+      if (response.status === 401 && this.token) {
+        await this.clearSession();
+        this.notifyAuthFailure();
+      }
+
+      return await this.parseResponse(response);
     } catch {
       return { success: false, error: { code: 'HT-NET-001', message: 'Upload thất bại' } };
     }
@@ -146,7 +253,13 @@ class ApiService {
   }
 
   async googleLogin(idToken: string) {
-    return this.request('/auth/google', {
+    return this.request<{
+      token: string;
+      refresh_token: string;
+      expires_in: number;
+      user: User;
+      is_new_user: boolean;
+    }>('/auth/google', {
       method: 'POST',
       body: { id_token: idToken },
     });
@@ -158,11 +271,84 @@ class ApiService {
       refresh_token: string;
       expires_in: number;
       user: User;
-    }>('/auth/refresh', { method: 'POST' });
+    }>('/auth/refresh', {
+      method: 'POST',
+      body: { refresh_token: await this.getRefreshToken() },
+      retryOnAuthFailure: false,
+    });
   }
 
   async logout() {
-    return this.request('/auth/logout', { method: 'POST' });
+    return this.request('/auth/logout', { method: 'POST', retryOnAuthFailure: false });
+  }
+
+  private async getRefreshToken() {
+    if (this.refreshTokenValue) {
+      return this.refreshTokenValue;
+    }
+
+    try {
+      this.refreshTokenValue = await this.getStoredItem(this.refreshTokenKey);
+      return this.refreshTokenValue;
+    } catch {
+      return null;
+    }
+  }
+
+  private async refreshSession(): Promise<boolean> {
+    if (this.refreshPromise) {
+      return this.refreshPromise;
+    }
+
+    this.refreshPromise = this.performRefresh();
+    try {
+      return await this.refreshPromise;
+    } finally {
+      this.refreshPromise = null;
+    }
+  }
+
+  private async performRefresh(): Promise<boolean> {
+    const refreshToken = await this.getRefreshToken();
+    if (!refreshToken) {
+      return false;
+    }
+
+    const response = await this.request<{
+      token: string;
+      refresh_token: string;
+      expires_in: number;
+      user: User;
+    }>('/auth/refresh', {
+      method: 'POST',
+      body: { refresh_token: refreshToken },
+      token: null,
+      retryOnAuthFailure: false,
+    });
+
+    if (!response.success || !response.data?.token || !response.data?.refresh_token) {
+      return false;
+    }
+
+    await this.setSession(response.data.token, response.data.refresh_token);
+    return true;
+  }
+
+  private async parseResponse<T>(response: Response): Promise<APIResponse<T>> {
+    try {
+      return await response.json() as APIResponse<T>;
+    } catch {
+      return {
+        success: false,
+        error: { code: 'HT-NET-002', message: 'Phản hồi từ server không hợp lệ' },
+      };
+    }
+  }
+
+  private notifyAuthFailure() {
+    for (const listener of this.authFailureListeners) {
+      listener();
+    }
   }
 
   // ---- Experiences ----
@@ -726,97 +912,5 @@ export type Guide = {
   };
 };
 
-// ============================================
-// WebSocket Service
-// ============================================
-const WS_BASE = __DEV__
-  ? 'ws://localhost:8080/ws'
-  : 'wss://api.huetravel.vn/ws';
-
-export type WSMessage = {
-  type: 'message' | 'typing' | 'read' | 'status' | 'join' | 'leave';
-  room_id?: string;
-  sender_id?: string;
-  content?: string;
-  data?: any;
-};
-
-class WebSocketService {
-  private ws: WebSocket | null = null;
-  private handlers: Map<string, Set<(msg: WSMessage) => void>> = new Map();
-  private reconnectTimer: NodeJS.Timeout | null = null;
-  private userId: string | null = null;
-
-  connect(token: string) {
-    this.ws = new WebSocket(`${WS_BASE}?token=${encodeURIComponent(token)}`);
-
-    this.ws.onopen = () => {
-      console.log('🟢 WebSocket connected');
-      this.emit('status', { type: 'status', content: 'connected' });
-    };
-
-    this.ws.onmessage = (event) => {
-      try {
-        const msg: WSMessage = JSON.parse(event.data);
-        this.emit(msg.type, msg);
-        this.emit('*', msg); // wildcard
-      } catch {}
-    };
-
-    this.ws.onclose = () => {
-      console.log('🔴 WebSocket disconnected');
-      this.emit('status', { type: 'status', content: 'disconnected' });
-      // Auto reconnect after 3s
-      this.reconnectTimer = setTimeout(() => {
-        if (this.userId) this.connect(this.userId);
-      }, 3000);
-    };
-
-    this.ws.onerror = () => {
-      this.ws?.close();
-    };
-  }
-
-  disconnect() {
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-    this.ws?.close();
-    this.ws = null;
-    this.userId = null;
-  }
-
-  send(msg: WSMessage) {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(msg));
-    }
-  }
-
-  joinRoom(roomId: string) {
-    this.send({ type: 'join', room_id: roomId });
-  }
-
-  leaveRoom(roomId: string) {
-    this.send({ type: 'leave', room_id: roomId });
-  }
-
-  sendMessage(roomId: string, content: string) {
-    this.send({ type: 'message', room_id: roomId, content });
-  }
-
-  sendTyping(roomId: string) {
-    this.send({ type: 'typing', room_id: roomId });
-  }
-
-  on(type: string, handler: (msg: WSMessage) => void) {
-    if (!this.handlers.has(type)) this.handlers.set(type, new Set());
-    this.handlers.get(type)!.add(handler);
-    return () => this.handlers.get(type)?.delete(handler);
-  }
-
-  private emit(type: string, msg: WSMessage) {
-    this.handlers.get(type)?.forEach((h) => h(msg));
-  }
-}
-
 export const api = new ApiService();
-export const wsService = new WebSocketService();
 export default api;

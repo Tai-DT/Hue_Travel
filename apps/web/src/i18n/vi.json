@@ -1,0 +1,7 @@
+{
+  "common": { "appName": "Huế Travel Admin", "loading": "Đang tải...", "search": "Tìm kiếm...", "save": "Lưu", "cancel": "Huỷ", "delete": "Xoá", "edit": "Sửa", "confirm": "Xác nhận", "back": "Quay lại", "actions": "Hành động", "status": "Trạng thái", "created": "Ngày tạo", "updated": "Cập nhật", "noData": "Không có dữ liệu" },
+  "nav": { "dashboard": "Dashboard", "users": "Người dùng", "experiences": "Trải nghiệm", "bookings": "Đặt chỗ", "reviews": "Đánh giá", "reports": "Báo cáo", "settings": "Cài đặt", "chat": "Hỗ trợ Chat" },
+  "dashboard": { "title": "Tổng quan", "totalUsers": "Tổng người dùng", "totalBookings": "Tổng đặt chỗ", "revenue": "Doanh thu", "activeGuides": "HDV hoạt động" },
+  "users": { "title": "Quản lý người dùng", "name": "Họ tên", "email": "Email", "role": "Vai trò", "traveler": "Du khách", "guide": "Hướng dẫn viên", "admin": "Quản trị" },
+  "bookings": { "title": "Quản lý đặt chỗ", "pending": "Chờ xác nhận", "confirmed": "Đã xác nhận", "completed": "Hoàn thành", "cancelled": "Đã huỷ" }
+}

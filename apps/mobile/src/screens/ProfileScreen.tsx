@@ -23,12 +23,14 @@ type EditForm = {
 type Props = {
   highlightIncompleteProfile?: boolean;
   onProfileUpdated?: (user: User) => void;
+  onOpenSettings?: () => void;
   onLogout?: () => void;
 };
 
 export default function ProfileScreen({
   highlightIncompleteProfile = false,
   onProfileUpdated,
+  onOpenSettings,
   onLogout,
 }: Props) {
   const [user, setUser] = useState<User | null>(null);
@@ -81,7 +83,7 @@ export default function ProfileScreen({
         style: 'destructive',
         onPress: async () => {
           await api.logout();
-          api.setToken(null);
+          await api.clearSession();
           onLogout?.();
         },
       },
@@ -187,6 +189,7 @@ export default function ProfileScreen({
 
         <View style={styles.menuSection}>
           <Text style={styles.menuTitle}>Khác</Text>
+          <MenuItem icon="⚙️" label="Cài đặt" onPress={onOpenSettings} />
           <MenuItem icon="⭐" label="Đánh giá ứng dụng" />
           <MenuItem icon="📜" label="Điều khoản sử dụng" />
           <MenuItem icon="🛡️" label="Chính sách bảo mật" />

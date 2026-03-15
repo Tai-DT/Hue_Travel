@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -153,6 +154,147 @@ type ReviewSummary struct {
 	Star3          int64   `json:"star_3"`
 	Star2          int64   `json:"star_2"`
 	Star1          int64   `json:"star_1"`
+}
+
+type AdminReviewFilter struct {
+	FeaturedOnly bool
+	MaxRating    float64
+	Page         int
+	PerPage      int
+}
+
+type AdminReviewItem struct {
+	ID              uuid.UUID `json:"id"`
+	TravelerName    string    `json:"traveler_name"`
+	ExperienceTitle string    `json:"experience_title"`
+	OverallRating   float64   `json:"overall_rating"`
+	GuideRating     float64   `json:"guide_rating"`
+	ValueRating     float64   `json:"value_rating"`
+	Comment         *string   `json:"comment,omitempty"`
+	IsFeatured      bool      `json:"is_featured"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
+func (r *ReviewRepository) ListAdmin(ctx context.Context, filter AdminReviewFilter) ([]AdminReviewItem, int64, error) {
+	if filter.Page < 1 {
+		filter.Page = 1
+	}
+	if filter.PerPage < 1 || filter.PerPage > 50 {
+		filter.PerPage = 20
+	}
+
+	conditions := []string{"TRUE"}
+	args := []interface{}{}
+	argIdx := 1
+
+	if filter.FeaturedOnly {
+		conditions = append(conditions, "r.is_featured = TRUE")
+	}
+	if filter.MaxRating > 0 {
+		conditions = append(conditions, fmt.Sprintf("r.overall_rating <= $%d", argIdx))
+		args = append(args, filter.MaxRating)
+		argIdx++
+	}
+
+	where := strings.Join(conditions, " AND ")
+
+	var total int64
+	if err := r.pool.QueryRow(ctx,
+		fmt.Sprintf("SELECT COUNT(*) FROM reviews r WHERE %s", where),
+		args...,
+	).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	offset := (filter.Page - 1) * filter.PerPage
+	args = append(args, filter.PerPage, offset)
+
+	rows, err := r.pool.Query(ctx, fmt.Sprintf(`
+		SELECT r.id,
+			   COALESCE(u.full_name, 'Khách'),
+			   e.title,
+			   r.overall_rating,
+			   r.guide_rating,
+			   r.value_rating,
+			   r.comment,
+			   r.is_featured,
+			   r.created_at
+		FROM reviews r
+		JOIN users u ON r.traveler_id = u.id
+		JOIN experiences e ON r.experience_id = e.id
+		WHERE %s
+		ORDER BY r.is_featured DESC, r.created_at DESC
+		LIMIT $%d OFFSET $%d`, where, argIdx, argIdx+1), args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var reviews []AdminReviewItem
+	for rows.Next() {
+		var item AdminReviewItem
+		if err := rows.Scan(
+			&item.ID,
+			&item.TravelerName,
+			&item.ExperienceTitle,
+			&item.OverallRating,
+			&item.GuideRating,
+			&item.ValueRating,
+			&item.Comment,
+			&item.IsFeatured,
+			&item.CreatedAt,
+		); err != nil {
+			return nil, 0, err
+		}
+		reviews = append(reviews, item)
+	}
+
+	return reviews, total, rows.Err()
+}
+
+func (r *ReviewRepository) SetFeatured(ctx context.Context, reviewID uuid.UUID, featured bool) error {
+	cmd, err := r.pool.Exec(ctx, `
+		UPDATE reviews
+		SET is_featured = $1, updated_at = NOW()
+		WHERE id = $2`,
+		featured, reviewID,
+	)
+	if err != nil {
+		return err
+	}
+	if cmd.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
+func (r *ReviewRepository) DeleteAdmin(ctx context.Context, reviewID uuid.UUID) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var experienceID uuid.UUID
+	if err := tx.QueryRow(ctx,
+		`DELETE FROM reviews WHERE id = $1 RETURNING experience_id`,
+		reviewID,
+	).Scan(&experienceID); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE experiences SET
+			rating = COALESCE((SELECT ROUND(AVG(overall_rating)::numeric, 1) FROM reviews WHERE experience_id = $1), 0),
+			rating_count = (SELECT COUNT(*) FROM reviews WHERE experience_id = $1),
+			updated_at = NOW()
+		WHERE id = $1`,
+		experienceID,
+	); err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
 }
 
 // ============================================

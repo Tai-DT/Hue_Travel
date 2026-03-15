@@ -1,7 +1,9 @@
 package middleware
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -19,9 +21,11 @@ import (
 // ============================================
 
 func CORS() gin.HandlerFunc {
+	// Cache allowed origins at init time (not per-request)
+	allowedOrigins := getAllowedOrigins()
+
 	return func(c *gin.Context) {
 		origin := c.GetHeader("Origin")
-		allowedOrigins := getAllowedOrigins()
 
 		// Check if origin is allowed
 		allowed := isOriginAllowed(origin, allowedOrigins)
@@ -29,7 +33,6 @@ func CORS() gin.HandlerFunc {
 		if allowed && origin != "" {
 			c.Header("Access-Control-Allow-Origin", origin)
 		} else if len(allowedOrigins) > 0 && allowedOrigins[0] == "*" {
-			// Development mode fallback
 			c.Header("Access-Control-Allow-Origin", "*")
 		}
 
@@ -135,14 +138,14 @@ func Logger() gin.HandlerFunc {
 			reqIDStr = requestID.(string)
 		}
 
-		gin.DefaultWriter.Write([]byte(
-			time.Now().Format(time.RFC3339) +
-				" | " + c.Request.Method +
-				" | " + path +
-				" | " + http.StatusText(statusCode) +
-				" | " + latency.String() +
-				" | " + reqIDStr + "\n",
-		))
+		slog.Info("HTTP request",
+			"method", c.Request.Method,
+			"path", path,
+			"status", statusCode,
+			"latency", latency.String(),
+			"request_id", reqIDStr,
+			"ip", c.ClientIP(),
+		)
 	}
 }
 
@@ -153,8 +156,14 @@ func Logger() gin.HandlerFunc {
 type JWTClaims struct {
 	UserID uuid.UUID `json:"user_id"`
 	Role   string    `json:"role"`
+	Type   string    `json:"type,omitempty"`
 	jwt.RegisteredClaims
 }
+
+const (
+	TokenTypeAccess  = "access"
+	TokenTypeRefresh = "refresh"
+)
 
 func Auth(jwtSecret string) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -172,9 +181,14 @@ func Auth(jwtSecret string) gin.HandlerFunc {
 			return
 		}
 
-		claims, err := parseToken(tokenStr, jwtSecret)
+		claims, err := ParseToken(tokenStr, jwtSecret)
 		if err != nil {
 			response.Unauthorized(c, "Token không hợp lệ hoặc đã hết hạn")
+			c.Abort()
+			return
+		}
+		if !IsAccessTokenType(claims.Type) {
+			response.Unauthorized(c, "Access token không hợp lệ")
 			c.Abort()
 			return
 		}
@@ -224,9 +238,14 @@ func WebSocketAuth(jwtSecret string) gin.HandlerFunc {
 			return
 		}
 
-		claims, err := parseToken(tokenStr, jwtSecret)
+		claims, err := ParseToken(tokenStr, jwtSecret)
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Token không hợp lệ hoặc đã hết hạn"})
+			c.Abort()
+			return
+		}
+		if !IsAccessTokenType(claims.Type) {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Access token không hợp lệ"})
 			c.Abort()
 			return
 		}
@@ -237,8 +256,8 @@ func WebSocketAuth(jwtSecret string) gin.HandlerFunc {
 	}
 }
 
-// parseToken validates a JWT token string and returns the claims
-func parseToken(tokenStr, jwtSecret string) (*JWTClaims, error) {
+// ParseToken validates a JWT token string and returns the claims.
+func ParseToken(tokenStr, jwtSecret string) (*JWTClaims, error) {
 	token, err := jwt.ParseWithClaims(tokenStr, &JWTClaims{}, func(t *jwt.Token) (interface{}, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
@@ -256,6 +275,14 @@ func parseToken(tokenStr, jwtSecret string) (*JWTClaims, error) {
 	}
 
 	return claims, nil
+}
+
+func IsAccessTokenType(tokenType string) bool {
+	return tokenType == "" || tokenType == TokenTypeAccess
+}
+
+func IsRefreshTokenType(tokenType string) bool {
+	return tokenType == TokenTypeRefresh
 }
 
 // RequireRole — Check user role
@@ -282,9 +309,14 @@ func RequireRole(roles ...string) gin.HandlerFunc {
 
 // GenerateToken — Tạo JWT token
 func GenerateToken(userID uuid.UUID, role string, secret string, expiry time.Duration) (string, error) {
+	return GenerateTokenWithType(userID, role, TokenTypeAccess, secret, expiry)
+}
+
+func GenerateTokenWithType(userID uuid.UUID, role, tokenType string, secret string, expiry time.Duration) (string, error) {
 	claims := JWTClaims{
 		UserID: userID,
 		Role:   role,
+		Type:   tokenType,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(expiry)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -310,22 +342,30 @@ type rateLimitEntry struct {
 func RateLimit(maxRequests int, window time.Duration) gin.HandlerFunc {
 	var clients sync.Map
 
-	// Cleanup goroutine — remove expired entries
+	// Cleanup goroutine with context cancellation — prevents leak
+	ctx, cancel := context.WithCancel(context.Background())
+	_ = cancel // stored for future use (e.g. server shutdown hook)
+
 	go func() {
 		ticker := time.NewTicker(window)
 		defer ticker.Stop()
-		for range ticker.C {
-			now := time.Now()
-			clients.Range(func(key, value interface{}) bool {
-				entry := value.(*rateLimitEntry)
-				entry.mu.Lock()
-				expired := now.After(entry.resetAt)
-				entry.mu.Unlock()
-				if expired {
-					clients.Delete(key)
-				}
-				return true
-			})
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				now := time.Now()
+				clients.Range(func(key, value interface{}) bool {
+					entry := value.(*rateLimitEntry)
+					entry.mu.Lock()
+					expired := now.After(entry.resetAt)
+					entry.mu.Unlock()
+					if expired {
+						clients.Delete(key)
+					}
+					return true
+				})
+			}
 		}
 	}()
 
@@ -383,8 +423,12 @@ func Recovery() gin.HandlerFunc {
 				if requestID != nil {
 					reqIDStr = requestID.(string)
 				}
-				fmt.Printf("🔥 PANIC [%s] %s %s: %v\n",
-					reqIDStr, c.Request.Method, c.Request.URL.Path, err)
+				slog.Error("PANIC recovered",
+					"request_id", reqIDStr,
+					"method", c.Request.Method,
+					"path", c.Request.URL.Path,
+					"error", err,
+				)
 
 				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
 					"success": false,

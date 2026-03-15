@@ -97,6 +97,10 @@ const normalizeRecentBookings = (items?: any[]) =>
 
 class AdminApi {
   private token: string | null = null;
+  private refreshToken: string | null = null;
+  private refreshPromise: Promise<boolean> | null = null;
+  private readonly tokenKey = 'admin_token';
+  private readonly refreshTokenKey = 'admin_refresh_token';
 
   private withQuery(endpoint: string, params?: Record<string, string | number | undefined>) {
     const search = new URLSearchParams();
@@ -111,24 +115,44 @@ class AdminApi {
   }
 
   setToken(token: string) {
+    this.setSession(token);
+  }
+
+  setSession(token: string, refreshToken?: string) {
     this.token = token;
     if (typeof window !== 'undefined') {
-      localStorage.setItem('admin_token', token);
+      localStorage.setItem(this.tokenKey, token);
+      if (refreshToken) {
+        this.refreshToken = refreshToken;
+        localStorage.setItem(this.refreshTokenKey, refreshToken);
+      }
     }
   }
 
   getToken(): string | null {
     if (this.token) return this.token;
     if (typeof window !== 'undefined') {
-      return localStorage.getItem('admin_token');
+      this.token = localStorage.getItem(this.tokenKey);
+      return this.token;
+    }
+    return null;
+  }
+
+  getRefreshToken(): string | null {
+    if (this.refreshToken) return this.refreshToken;
+    if (typeof window !== 'undefined') {
+      this.refreshToken = localStorage.getItem(this.refreshTokenKey);
+      return this.refreshToken;
     }
     return null;
   }
 
   clearToken() {
     this.token = null;
+    this.refreshToken = null;
     if (typeof window !== 'undefined') {
-      localStorage.removeItem('admin_token');
+      localStorage.removeItem(this.tokenKey);
+      localStorage.removeItem(this.refreshTokenKey);
     }
   }
 
@@ -139,8 +163,9 @@ class AdminApi {
   async request<T>(endpoint: string, options: {
     method?: string;
     body?: object;
+    retryOnAuthFailure?: boolean;
   } = {}): Promise<ApiResponse<T>> {
-    const { method = 'GET', body } = options;
+    const { method = 'GET', body, retryOnAuthFailure = true } = options;
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     const token = this.getToken();
     if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -153,15 +178,59 @@ class AdminApi {
       });
 
       if (res.status === 401) {
-        this.clearToken();
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(new Event('auth:logout'));
+        if (retryOnAuthFailure && token && await this.refreshSession()) {
+          return this.request<T>(endpoint, { method, body, retryOnAuthFailure: false });
         }
+        this.handleUnauthorized();
       }
 
       return await res.json();
     } catch {
       return { success: false, error: { code: 'NET', message: 'Không thể kết nối server' } };
+    }
+  }
+
+  private handleUnauthorized() {
+    this.clearToken();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('auth:logout'));
+    }
+  }
+
+  private async refreshSession(): Promise<boolean> {
+    if (this.refreshPromise) {
+      return this.refreshPromise;
+    }
+
+    this.refreshPromise = this.performRefresh();
+    try {
+      return await this.refreshPromise;
+    } finally {
+      this.refreshPromise = null;
+    }
+  }
+
+  private async performRefresh(): Promise<boolean> {
+    const refreshToken = this.getRefreshToken();
+    if (!refreshToken) {
+      return false;
+    }
+
+    try {
+      const res = await fetch(`${API_BASE}/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      });
+      const payload = await res.json() as ApiResponse<{ token: string; refresh_token: string }>;
+      if (!res.ok || !payload.success || !payload.data?.token || !payload.data?.refresh_token) {
+        return false;
+      }
+
+      this.setSession(payload.data.token, payload.data.refresh_token);
+      return true;
+    } catch {
+      return false;
     }
   }
 
@@ -176,8 +245,8 @@ class AdminApi {
     const res = await this.request<{ token: string; refresh_token: string; user: any }>('/auth/otp/verify', {
       method: 'POST', body: { phone, code },
     });
-    if (res.success && res.data?.token) {
-      this.setToken(res.data.token);
+    if (res.success && res.data?.token && res.data?.refresh_token) {
+      this.setSession(res.data.token, res.data.refresh_token);
     }
     return res;
   }
@@ -191,7 +260,7 @@ class AdminApi {
   }
 
   async logout() {
-    const res = await this.request('/auth/logout', { method: 'POST' });
+    const res = await this.request('/auth/logout', { method: 'POST', retryOnAuthFailure: false });
     this.clearToken();
     return res;
   }

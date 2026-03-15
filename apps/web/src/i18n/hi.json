@@ -1,0 +1,7 @@
+{
+  "common": { "appName": "Huế Travel Admin", "loading": "लोड हो रहा है...", "search": "खोजें...", "save": "सहेजें", "cancel": "रद्द करें", "delete": "हटाएं", "edit": "संपादित करें", "confirm": "पुष्टि करें", "back": "वापस", "actions": "कार्य", "status": "स्थिति", "created": "बनाया गया", "updated": "अपडेट किया गया", "noData": "कोई डेटा नहीं" },
+  "nav": { "dashboard": "डैशबोर्ड", "users": "उपयोगकर्ता", "experiences": "अनुभव", "bookings": "बुकिंग", "reviews": "समीक्षाएं", "reports": "रिपोर्ट", "settings": "सेटिंग्स", "chat": "चैट सहायता" },
+  "dashboard": { "title": "अवलोकन", "totalUsers": "कुल उपयोगकर्ता", "totalBookings": "कुल बुकिंग", "revenue": "राजस्व", "activeGuides": "सक्रिय गाइड" },
+  "users": { "title": "उपयोगकर्ता प्रबंधन", "name": "नाम", "email": "ईमेल", "role": "भूमिका", "traveler": "यात्री", "guide": "गाइड", "admin": "व्यवस्थापक" },
+  "bookings": { "title": "बुकिंग प्रबंधन", "pending": "लंबित", "confirmed": "पुष्टि हो गई", "completed": "पूर्ण", "cancelled": "रद्द" }
+}

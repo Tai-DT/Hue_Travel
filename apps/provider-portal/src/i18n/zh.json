@@ -1,0 +1,6 @@
+{
+  "common": { "appName": "Huế Travel Provider", "loading": "加载中...", "search": "搜索...", "save": "保存", "cancel": "取消", "delete": "删除", "edit": "编辑", "confirm": "确认", "back": "返回", "actions": "操作", "noData": "暂无数据" },
+  "nav": { "dashboard": "仪表盘", "myExperiences": "体验", "bookings": "预订", "reviews": "评价", "earnings": "收入", "profile": "个人资料", "settings": "设置" },
+  "dashboard": { "title": "导游概览", "totalBookings": "本月预订", "earnings": "收入", "rating": "平均评分", "upcoming": "即将到来" },
+  "experiences": { "title": "我的体验", "create": "创建体验", "active": "活跃中", "draft": "草稿", "inactive": "已暂停" }
+}

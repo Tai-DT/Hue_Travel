@@ -1,0 +1,6 @@
+{
+  "common": { "appName": "Huế Travel Provider", "loading": "Loading...", "search": "Search...", "save": "Save", "cancel": "Cancel", "delete": "Delete", "edit": "Edit", "confirm": "Confirm", "back": "Back", "actions": "Actions", "noData": "No data" },
+  "nav": { "dashboard": "Dashboard", "myExperiences": "Experiences", "bookings": "Bookings", "reviews": "Reviews", "earnings": "Earnings", "profile": "Profile", "settings": "Settings" },
+  "dashboard": { "title": "Guide Overview", "totalBookings": "Bookings This Month", "earnings": "Earnings", "rating": "Avg Rating", "upcoming": "Upcoming" },
+  "experiences": { "title": "My Experiences", "create": "Create Experience", "active": "Active", "draft": "Draft", "inactive": "Inactive" }
+}

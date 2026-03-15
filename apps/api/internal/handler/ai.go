@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"encoding/json"
 	"errors"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -78,10 +80,28 @@ func (h *AIHandler) Chat(c *gin.Context) {
 	})
 }
 
-// QuickSuggest — gợi ý nhanh theo context
+// QuickSuggest — gợi ý nhanh theo context (Gemini khi có API key, static fallback)
 func (h *AIHandler) QuickSuggest(c *gin.Context) {
 	suggestType := c.DefaultQuery("type", "general")
 
+	// Try Gemini-powered dynamic suggestions
+	if h.aiService.HasAPIKey() {
+		prompt := buildSuggestPrompt(suggestType)
+		reply, err := h.aiService.Chat(c.Request.Context(), []service.AIChatMessage{
+			{Role: "user", Content: prompt},
+		})
+		if err == nil && reply != "" {
+			// Parse JSON array from reply
+			jsonStr := extractSuggestJSON(reply)
+			var dynamic []gin.H
+			if json.Unmarshal([]byte(jsonStr), &dynamic) == nil && len(dynamic) > 0 {
+				response.OK(c, gin.H{"suggestions": dynamic, "source": "ai"})
+				return
+			}
+		}
+	}
+
+	// Fallback: curated static suggestions
 	suggestions := map[string][]gin.H{
 		"food": {
 			{"title": "🍜 Bún bò Bà Tuyết", "subtitle": "35-50k • 47 Nguyễn Công Trứ", "action": "navigate"},
@@ -105,5 +125,43 @@ func (h *AIHandler) QuickSuggest(c *gin.Context) {
 		result = suggestions["general"]
 	}
 
-	response.OK(c, gin.H{"suggestions": result})
+	response.OK(c, gin.H{"suggestions": result, "source": "static"})
+}
+
+func buildSuggestPrompt(suggestType string) string {
+	switch suggestType {
+	case "food":
+		return `Gợi ý 5 món ăn/quán ăn đặc sắc tại Huế. Trả về dạng JSON array:
+[{"title":"emoji + tên quán","subtitle":"giá • địa chỉ","action":"navigate"}]
+Chỉ trả JSON, không markdown.`
+	case "sightseeing":
+		return `Gợi ý 5 địa điểm tham quan tại Huế. Trả về dạng JSON array:
+[{"title":"emoji + tên","subtitle":"giá vé • giờ mở cửa","action":"detail"}]
+Chỉ trả JSON, không markdown.`
+	default:
+		return `Gợi ý 5 hoạt động du lịch thú vị tại Huế hôm nay. Trả về dạng JSON array:
+[{"title":"emoji + tiêu đề","subtitle":"mô tả ngắn","action":"plan"}]
+Chỉ trả JSON, không markdown.`
+	}
+}
+
+func extractSuggestJSON(text string) string {
+	text = strings.TrimSpace(text)
+	// Find [ ... ] array in response
+	start := strings.Index(text, "[")
+	if start < 0 {
+		return "[]"
+	}
+	depth := 0
+	for i := start; i < len(text); i++ {
+		if text[i] == '[' {
+			depth++
+		} else if text[i] == ']' {
+			depth--
+			if depth == 0 {
+				return text[start : i+1]
+			}
+		}
+	}
+	return "[]"
 }

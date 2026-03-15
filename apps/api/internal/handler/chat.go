@@ -1,25 +1,33 @@
 package handler
 
 import (
+	"encoding/json"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
 	"github.com/huetravel/api/internal/repository"
+	ws "github.com/huetravel/api/internal/websocket"
 	"github.com/huetravel/api/pkg/response"
 )
 
 // ============================================
-// Chat Handler (REST — WebSocket sẽ thêm sau)
+// Chat Handler (REST + WebSocket broadcast)
 // ============================================
 
 type ChatHandler struct {
 	chatRepo *repository.ChatRepository
+	hub      *ws.Hub
 }
 
 func NewChatHandler(chatRepo *repository.ChatRepository) *ChatHandler {
 	return &ChatHandler{chatRepo: chatRepo}
+}
+
+// SetHub assigns the WebSocket hub for real-time message broadcasting.
+func (h *ChatHandler) SetHub(hub *ws.Hub) {
+	h.hub = hub
 }
 
 // ListRooms — danh sách phòng chat của user
@@ -146,6 +154,21 @@ func (h *ChatHandler) SendMessage(c *gin.Context) {
 	if err != nil {
 		response.InternalError(c, "Không thể gửi tin nhắn")
 		return
+	}
+
+	// Broadcast via WebSocket for real-time delivery
+	if h.hub != nil {
+		wsPayload := ws.WSMessage{
+			Type:     "message",
+			RoomID:   roomID.String(),
+			SenderID: userID.(uuid.UUID).String(),
+			Content:  req.Content,
+		}
+		if msgJSON, err := json.Marshal(msg); err == nil {
+			wsPayload.Data = msgJSON
+		}
+		data, _ := json.Marshal(wsPayload)
+		h.hub.BroadcastToRoom(roomID.String(), data)
 	}
 
 	response.Created(c, gin.H{"message": msg})

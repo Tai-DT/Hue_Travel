@@ -77,8 +77,7 @@
       "expo-router",
       "expo-font",
       "expo-secure-store",
-      "expo-asset",
-      "expo-linking"
+      "expo-asset"
     ],
     "extra": {
       "eas": {

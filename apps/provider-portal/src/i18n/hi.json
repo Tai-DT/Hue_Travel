@@ -1,0 +1,6 @@
+{
+  "common": { "appName": "Huế Travel Provider", "loading": "लोड हो रहा है...", "search": "खोजें...", "save": "सहेजें", "cancel": "रद्द करें", "delete": "हटाएं", "edit": "संपादित करें", "confirm": "पुष्टि करें", "back": "वापस", "actions": "कार्य", "noData": "कोई डेटा नहीं" },
+  "nav": { "dashboard": "डैशबोर्ड", "myExperiences": "अनुभव", "bookings": "बुकिंग", "reviews": "समीक्षाएं", "earnings": "आय", "profile": "प्रोफाइल", "settings": "सेटिंग्स" },
+  "dashboard": { "title": "गाइड अवलोकन", "totalBookings": "इस महीने की बुकिंग", "earnings": "आय", "rating": "औसत रेटिंग", "upcoming": "आगामी" },
+  "experiences": { "title": "मेरे अनुभव", "create": "अनुभव बनाएं", "active": "सक्रिय", "draft": "ड्राफ्ट", "inactive": "निष्क्रिय" }
+}

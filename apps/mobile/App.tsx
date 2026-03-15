@@ -5,12 +5,14 @@ import {
   StyleSheet,
   TouchableOpacity,
   StatusBar,
+  ActivityIndicator,
 } from 'react-native';
 import { Colors, Fonts, Spacing } from './src/constants/theme';
 import api, { Booking, Experience, User } from './src/services/api';
 import { getInitialDeepLink, onDeepLink, DeepLinkRoute } from './src/services/deeplink';
 import { offlineCache, CacheKeys } from './src/services/cache';
 import { pushService } from './src/services/push';
+import { I18nProvider, useTranslation } from './src/hooks/useTranslation';
 import WelcomeScreen from './src/screens/WelcomeScreen';
 import LoginScreen from './src/screens/LoginScreen';
 import HomeScreen from './src/screens/HomeScreen';
@@ -19,6 +21,7 @@ import BookingScreen from './src/screens/BookingScreen';
 import ChatScreen from './src/screens/ChatScreen';
 import AIGuideScreen from './src/screens/AIGuideScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
+import SettingsScreen from './src/screens/SettingsScreen';
 import NotificationScreen from './src/screens/NotificationScreen';
 import ExperienceDetailScreen from './src/screens/ExperienceDetailScreen';
 import PaymentScreen from './src/screens/PaymentScreen';
@@ -29,28 +32,39 @@ import PaymentScreen from './src/screens/PaymentScreen';
 type AppScreen = 'welcome' | 'login' | 'main';
 type MainTab = 'home' | 'explore' | 'ai' | 'bookings' | 'profile';
 
-const TAB_CONFIG: Array<{
+const TAB_KEYS: Array<{
   key: MainTab;
   icon: string;
   activeIcon: string;
-  label: string;
+  i18nKey: string;
   badge?: number;
 }> = [
-  { key: 'home', icon: '🏠', activeIcon: '🏡', label: 'Trang chủ' },
-  { key: 'explore', icon: '🔍', activeIcon: '🗺️', label: 'Khám phá' },
-  { key: 'ai', icon: '🤖', activeIcon: '✨', label: 'AI Guide' },
-  { key: 'bookings', icon: '📋', activeIcon: '📅', label: 'Đặt chỗ' },
-  { key: 'profile', icon: '👤', activeIcon: '😊', label: 'Tôi' },
+  { key: 'home', icon: '🏠', activeIcon: '🏡', i18nKey: 'nav.home' },
+  { key: 'explore', icon: '🔍', activeIcon: '🗺️', i18nKey: 'nav.explore' },
+  { key: 'ai', icon: '🤖', activeIcon: '✨', i18nKey: 'nav.aiGuide' },
+  { key: 'bookings', icon: '📋', activeIcon: '📅', i18nKey: 'nav.bookings' },
+  { key: 'profile', icon: '👤', activeIcon: '😊', i18nKey: 'nav.profile' },
 ];
 
 export default function App() {
+  return (
+    <I18nProvider>
+      <AppContent />
+    </I18nProvider>
+  );
+}
+
+function AppContent() {
+  const { t } = useTranslation();
   const [screen, setScreen] = useState<AppScreen>('welcome');
   const [activeTab, setActiveTab] = useState<MainTab>('home');
   const [token, setToken] = useState<string | null>(null);
+  const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [profileNeedsAttention, setProfileNeedsAttention] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [showNotifs, setShowNotifs] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [selectedExperience, setSelectedExperience] = useState<Experience | null>(null);
   const [paymentBooking, setPaymentBooking] = useState<Booking | null>(null);
   const [chatUnread, setChatUnread] = useState(0);
@@ -65,25 +79,85 @@ export default function App() {
     setScreen('login');
   }, []);
 
-  const handleLoginSuccess = useCallback((t: string, user?: User, isNewUser?: boolean) => {
-    setToken(t);
+  const applyAuthenticatedUser = useCallback((user?: User | null, isNewUser?: boolean) => {
     setCurrentUser(user || null);
     const needsAttention = Boolean(isNewUser) || requiresProfileCompletion(user);
     setProfileNeedsAttention(needsAttention);
     setActiveTab(needsAttention ? 'profile' : 'home');
-    setScreen('main');
   }, [requiresProfileCompletion]);
 
-  const handleLogout = useCallback(async () => {
-    await api.logout();
-    api.setToken(null);
+  const resetLoggedOutState = useCallback(async (nextScreen: AppScreen) => {
     setToken(null);
     setCurrentUser(null);
     setProfileNeedsAttention(false);
     setActiveTab('home');
-    setScreen('login');
-    offlineCache.clear();
+    setShowChat(false);
+    setShowNotifs(false);
+    setShowSettings(false);
+    setSelectedExperience(null);
+    setPaymentBooking(null);
+    setChatUnread(0);
+    setNotifUnread(0);
+    setScreen(nextScreen);
+    await offlineCache.clear();
   }, []);
+
+  const handleLoginSuccess = useCallback((t: string, user?: User, isNewUser?: boolean) => {
+    setToken(t);
+    applyAuthenticatedUser(user, isNewUser);
+    setScreen('main');
+  }, [applyAuthenticatedUser]);
+
+  const handleLogout = useCallback(async () => {
+    await api.logout();
+    await api.clearSession();
+    await resetLoggedOutState('login');
+  }, [resetLoggedOutState]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      const session = await api.restoreSession();
+      if (cancelled) return;
+
+      if (!session) {
+        setScreen('welcome');
+        setIsBootstrapping(false);
+        return;
+      }
+
+      setToken(session.token);
+      setScreen('main');
+
+      const cachedUser = await offlineCache.get<User>(CacheKeys.USER_PROFILE);
+      if (!cancelled && cachedUser) {
+        applyAuthenticatedUser(cachedUser);
+      }
+
+      const res = await api.getMe();
+      if (cancelled) return;
+
+      if (res.success && res.data) {
+        const nextUser = (res.data as any).user || res.data;
+        applyAuthenticatedUser(nextUser);
+        await offlineCache.set(CacheKeys.USER_PROFILE, nextUser, 30 * 60 * 1000);
+      } else if (!cachedUser) {
+        await api.clearSession();
+        await resetLoggedOutState('welcome');
+      }
+
+      setIsBootstrapping(false);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [applyAuthenticatedUser, resetLoggedOutState]);
+
+  useEffect(() => api.onAuthFailure(() => {
+    void resetLoggedOutState('login');
+  }), [resetLoggedOutState]);
 
   const handleOpenChat = useCallback(() => {
     setShowChat(true);
@@ -195,7 +269,7 @@ export default function App() {
         const nextUser = (res.data as any).user || res.data;
         setCurrentUser(nextUser);
         setProfileNeedsAttention(requiresProfileCompletion(nextUser));
-        offlineCache.set(CacheKeys.USER_PROFILE, nextUser, 30 * 60 * 1000);
+        void offlineCache.set(CacheKeys.USER_PROFILE, nextUser, 30 * 60 * 1000);
       }
     })();
 
@@ -203,6 +277,16 @@ export default function App() {
       cancelled = true;
     };
   }, [screen, token, currentUser, requiresProfileCompletion]);
+
+  if (isBootstrapping) {
+    return (
+      <View style={styles.bootContainer}>
+        <StatusBar barStyle="light-content" backgroundColor={Colors.background} />
+        <ActivityIndicator size="large" color={Colors.primary} />
+        <Text style={styles.bootText}>{t('common.loading')}</Text>
+      </View>
+    );
+  }
 
   // Auth screens
   if (screen === 'welcome') {
@@ -255,7 +339,7 @@ export default function App() {
           style={styles.chatBackBtn}
           onPress={() => setShowChat(false)}
         >
-          <Text style={styles.chatBackText}>← Quay lại</Text>
+          <Text style={styles.chatBackText}>← {t('common.back')}</Text>
         </TouchableOpacity>
       </>
     );
@@ -267,6 +351,19 @@ export default function App() {
       <>
         <StatusBar barStyle="light-content" backgroundColor={Colors.background} />
         <NotificationScreen onBack={() => setShowNotifs(false)} />
+      </>
+    );
+  }
+
+  // Settings overlay
+  if (showSettings) {
+    return (
+      <>
+        <StatusBar barStyle="light-content" backgroundColor={Colors.background} />
+        <SettingsScreen
+          onBack={() => setShowSettings(false)}
+          onLogout={handleLogout}
+        />
       </>
     );
   }
@@ -298,6 +395,7 @@ export default function App() {
               setCurrentUser(user);
               setProfileNeedsAttention(requiresProfileCompletion(user));
             }}
+            onOpenSettings={() => setShowSettings(true)}
             onLogout={handleLogout}
           />
         )}
@@ -324,11 +422,11 @@ export default function App() {
 
       {/* Bottom Tab Bar */}
       <View style={styles.tabBar}>
-        {TAB_CONFIG.map((tab) => (
+        {TAB_KEYS.map((tab) => (
           <TabItem
             key={tab.key}
             icon={activeTab === tab.key ? tab.activeIcon : tab.icon}
-            label={tab.label}
+            label={t(tab.i18nKey)}
             tab={tab.key}
             active={activeTab === tab.key}
             onPress={setActiveTab}
@@ -389,6 +487,18 @@ function TabItem({
 // Styles
 // ============================================
 const styles = StyleSheet.create({
+  bootContainer: {
+    flex: 1,
+    backgroundColor: Colors.background,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.md,
+  },
+  bootText: {
+    color: Colors.textSecondary,
+    fontSize: 15,
+    fontWeight: Fonts.weights.medium,
+  },
   container: {
     flex: 1,
     backgroundColor: Colors.background,

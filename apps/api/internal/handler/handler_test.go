@@ -103,6 +103,21 @@ func TestAuthHandler_GoogleLogin_MissingToken(t *testing.T) {
 	}
 }
 
+func TestAuthHandler_RefreshToken_MissingData(t *testing.T) {
+	router := gin.New()
+	h := &AuthHandler{}
+	router.POST("/auth/refresh", h.RefreshToken)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/auth/refresh", nil)
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status 400, got %d", w.Code)
+	}
+}
+
 func TestAuthHandler_Me_NoAuth(t *testing.T) {
 	router := gin.New()
 	h := &AuthHandler{}

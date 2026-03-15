@@ -1,0 +1,15 @@
+{
+  "common": { "appName": "Huế Travel", "loading": "読み込み中...", "error": "エラーが発生しました", "retry": "再試行", "cancel": "キャンセル", "confirm": "確認", "save": "保存", "delete": "削除", "edit": "編集", "close": "閉じる", "search": "検索", "seeAll": "すべて見る →", "back": "戻る", "next": "次へ", "done": "完了", "yes": "はい", "no": "いいえ", "perPerson": "/人" },
+  "nav": { "home": "ホーム", "explore": "探索", "aiGuide": "AIガイド", "bookings": "予約", "profile": "マイページ" },
+  "home": { "greeting": "こんにちは、{{name}}さん！ 👋", "greetingDefault": "ゲスト", "headerTitle": "フエを探索", "searchPlaceholder": "ツアー、レストラン、体験を検索...", "aiTitle": "AI旅行プランナー", "aiSubtitle": "30秒でスマートな旅程を作成", "categories": "カテゴリー", "featuredExperiences": "おすすめ体験", "topGuides": "トップガイド", "bookNow": "⚡ 今すぐ予約", "noExperiences": "該当する体験がありません", "noExperiencesDesc": "カテゴリーを変更するか、下にスワイプして更新してください。", "exploreNow": "今すぐ探索", "noGuides": "おすすめガイドはまだいません", "noGuidesDesc": "承認されたガイドのプロフィールが表示されます。", "defaultGuideName": "フエガイド", "defaultUser": "新規ユーザー" },
+  "categories": { "all": "すべて", "food": "グルメ", "tour": "ツアー", "experience": "体験", "sightseeing": "観光", "stay": "宿泊" },
+  "settings": { "title": "設定", "notifications": "通知", "pushNotifications": "プッシュ通知", "emailNotifications": "メール通知", "newMessages": "新着メッセージ", "promotions": "プロモーション", "customization": "カスタマイズ", "darkMode": "ダークモード", "language": "言語", "currency": "通貨", "region": "地域", "security": "セキュリティ", "changePassword": "パスワード変更", "twoFactor": "二段階認証", "sessions": "ログインセッション", "devices": "{{count}} 台のデバイス", "connectedGoogle": "Google接続", "connected": "接続済み", "app": "アプリ", "cacheSize": "キャッシュサイズ", "version": "バージョン", "terms": "利用規約", "privacy": "プライバシーポリシー", "rateApp": "アプリを評価", "danger": "危険ゾーン", "logout": "ログアウト", "deleteAccount": "アカウント削除", "footer": "Made with ❤️ in Huế", "languageName": "日本語", "currencyName": "JPY", "regionName": "フエ、ベトナム" },
+  "profile": { "title": "プロフィール", "editProfile": "プロフィール編集", "myBookings": "予約一覧", "favorites": "お気に入り", "reviews": "レビュー", "settings": "設定" },
+  "booking": { "title": "予約", "pending": "確認待ち", "confirmed": "確認済み", "completed": "完了", "cancelled": "キャンセル済み", "bookNow": "予約する", "selectDate": "日付選択", "selectGuests": "人数", "totalPrice": "合計", "confirmBooking": "予約確定" },
+  "explore": { "title": "探索", "searchPlaceholder": "体験を検索...", "filters": "フィルター", "sortBy": "並び替え", "priceRange": "価格帯", "rating": "評価" },
+  "chat": { "title": "メッセージ", "typeMessage": "メッセージを入力...", "send": "送信", "noMessages": "メッセージはまだありません" },
+  "auth": { "login": "ログイン", "register": "新規登録", "email": "メール", "password": "パスワード", "forgotPassword": "パスワードを忘れた？", "loginWithGoogle": "Googleでログイン", "noAccount": "アカウントをお持ちでないですか？", "hasAccount": "すでにアカウントをお持ちですか？", "welcomeTitle": "フエへようこそ", "welcomeSubtitle": "古都の美しさを発見しよう" },
+  "map": { "title": "マップ", "nearMe": "近くの場所", "restaurants": "レストラン", "attractions": "観光スポット", "hotels": "ホテル" },
+  "notifications": { "title": "通知", "empty": "通知はありません", "markAllRead": "すべて既読にする" },
+  "payment": { "title": "支払い", "method": "支払い方法", "vnpay": "VNPay", "bankTransfer": "銀行振込", "cash": "現金", "processing": "処理中...", "success": "支払い成功！", "failed": "支払い失敗" }
+}

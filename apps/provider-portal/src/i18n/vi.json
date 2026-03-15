@@ -1,0 +1,6 @@
+{
+  "common": { "appName": "Huế Travel Provider", "loading": "Đang tải...", "search": "Tìm kiếm...", "save": "Lưu", "cancel": "Huỷ", "delete": "Xoá", "edit": "Sửa", "confirm": "Xác nhận", "back": "Quay lại", "actions": "Hành động", "noData": "Không có dữ liệu" },
+  "nav": { "dashboard": "Dashboard", "myExperiences": "Trải nghiệm", "bookings": "Đặt chỗ", "reviews": "Đánh giá", "earnings": "Thu nhập", "profile": "Hồ sơ", "settings": "Cài đặt" },
+  "dashboard": { "title": "Tổng quan HDV", "totalBookings": "Đặt chỗ tháng này", "earnings": "Thu nhập", "rating": "Đánh giá TB", "upcoming": "Sắp tới" },
+  "experiences": { "title": "Trải nghiệm của tôi", "create": "Tạo trải nghiệm", "active": "Đang hoạt động", "draft": "Bản nháp", "inactive": "Tạm dừng" }
+}

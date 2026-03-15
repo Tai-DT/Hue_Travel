@@ -1,0 +1,6 @@
+{
+  "common": { "appName": "Huế Travel Provider", "loading": "読み込み中...", "search": "検索...", "save": "保存", "cancel": "キャンセル", "delete": "削除", "edit": "編集", "confirm": "確認", "back": "戻る", "actions": "操作", "noData": "データなし" },
+  "nav": { "dashboard": "ダッシュボード", "myExperiences": "体験", "bookings": "予約", "reviews": "レビュー", "earnings": "収益", "profile": "プロフィール", "settings": "設定" },
+  "dashboard": { "title": "ガイド概要", "totalBookings": "今月の予約", "earnings": "収益", "rating": "平均評価", "upcoming": "今後の予定" },
+  "experiences": { "title": "私の体験", "create": "体験を作成", "active": "公開中", "draft": "下書き", "inactive": "停止中" }
+}

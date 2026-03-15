@@ -1,4 +1,4 @@
-.PHONY: help dev infra-up infra-down api migrate seed
+.PHONY: help dev infra-up infra-down api migrate seed smoke smoke-api smoke-auth smoke-booking
 
 # ============================================
 # Huế Travel — Development Commands
@@ -37,7 +37,7 @@ api-test: ## Run Go API tests
 # ---- Database ----
 migrate: ## Run database migrations
 	@echo "Running migrations..."
-	docker compose exec -T postgres psql -U huetravel -d hue_travel -f /docker-entrypoint-initdb.d/01-init.sql
+	docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U huetravel -d hue_travel -f /docker-entrypoint-initdb.d/001_initial_schema.sql
 
 seed: ## Load demo seed data
 	@echo "Seeding demo data..."
@@ -49,6 +49,18 @@ db-shell: ## Open PostgreSQL shell
 db-reset: ## Reset database
 	docker compose exec -T postgres psql -U huetravel -d hue_travel -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
 	$(MAKE) migrate
+
+smoke: ## Validate local infra health and schema consistency
+	./scripts/smoke-stack.sh
+
+smoke-api: ## Validate local API public endpoints (set API_BASE if needed)
+	./scripts/smoke-api.sh
+
+smoke-auth: ## Validate OTP login, refresh, and logout flow (set API_BASE/PHONE/OTP_CODE if needed)
+	./scripts/smoke-auth.sh
+
+smoke-booking: ## Validate OTP login, booking create, payment create, and logout flow
+	./scripts/smoke-booking.sh
 
 # ---- Setup ----
 setup: ## First-time project setup

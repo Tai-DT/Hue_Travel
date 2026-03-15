@@ -197,6 +197,28 @@ func (h *Hub) GetOnlineUsers() []uuid.UUID {
 	return users
 }
 
+// BroadcastToRoom sends raw data to all online users in a specific room.
+// This is called by REST handlers (e.g. ChatHandler.SendMessage) to push
+// real-time updates without requiring a WS client to initiate the broadcast.
+func (h *Hub) BroadcastToRoom(roomID string, data []byte) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	roomUsers, ok := h.rooms[roomID]
+	if !ok {
+		return
+	}
+	for userID := range roomUsers {
+		if client, exists := h.clients[userID]; exists {
+			select {
+			case client.Send <- data:
+			default:
+				// Buffer full — skip this message
+			}
+		}
+	}
+}
+
 func (h *Hub) broadcastStatus(userID uuid.UUID, online bool) {
 	status := "offline"
 	if online {

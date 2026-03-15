@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -8,9 +8,12 @@ import {
   FlatList,
   Dimensions,
   RefreshControl,
+  Image,
+  ActivityIndicator,
 } from 'react-native';
 import { Colors, Fonts, Spacing, BorderRadius, Shadows } from '@/constants/theme';
 import api, { Experience, Guide } from '@/services/api';
+import { useTranslation } from '@/hooks/useTranslation';
 
 const { width } = Dimensions.get('window');
 const CARD_WIDTH = width * 0.7;
@@ -29,14 +32,14 @@ type GuideCardItem = {
   badge: string;
 };
 
-// Categories
-const CATEGORIES = [
-  { key: 'all', label: 'Tất cả', icon: '🌟' },
-  { key: 'food', label: 'Ẩm thực', icon: '🍜' },
-  { key: 'tour', label: 'Tour', icon: '🏛️' },
-  { key: 'experience', label: 'Trải nghiệm', icon: '🎭' },
-  { key: 'sightseeing', label: 'Tham quan', icon: '📸' },
-  { key: 'stay', label: 'Lưu trú', icon: '🏨' },
+// Category keys — labels from i18n
+const CATEGORY_KEYS = [
+  { key: 'all', i18nKey: 'categories.all', icon: '🌟' },
+  { key: 'food', i18nKey: 'categories.food', icon: '🍜' },
+  { key: 'tour', i18nKey: 'categories.tour', icon: '🏛️' },
+  { key: 'experience', i18nKey: 'categories.experience', icon: '🎭' },
+  { key: 'sightseeing', i18nKey: 'categories.sightseeing', icon: '📸' },
+  { key: 'stay', i18nKey: 'categories.stay', icon: '🏨' },
 ];
 
 function formatGuideBadge(level?: string) {
@@ -54,27 +57,30 @@ function formatGuideBadge(level?: string) {
   }
 }
 
-function toGuideCard(guide: Guide): GuideCardItem {
+function toGuideCard(guide: Guide, defaultName: string): GuideCardItem {
   return {
     id: guide.id,
-    name: guide.user?.full_name || 'Hướng dẫn viên Huế',
+    name: guide.user?.full_name || defaultName,
     rating: (guide.avg_rating || 0).toFixed(1),
     badge: formatGuideBadge(guide.badge_level),
   };
 }
 
-function getGreetingName(userName?: string) {
-  if (!userName || userName === 'Người dùng mới') return 'bạn';
+function getGreetingName(userName: string | undefined, defaultUser: string, defaultGreeting: string) {
+  if (!userName || userName === defaultUser) return defaultGreeting;
   return userName.trim().split(' ').slice(-1)[0];
 }
 
 export default function HomeScreen({ onSelectExperience, onOpenExplore, onOpenAI, userName }: Props) {
+  const { t } = useTranslation();
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [experiences, setExperiences] = useState<Experience[]>([]);
   const [guides, setGuides] = useState<GuideCardItem[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [experiencesError, setExperiencesError] = useState('');
   const [guidesError, setGuidesError] = useState('');
+
+  const categories = useMemo(() => CATEGORY_KEYS.map((c) => ({ ...c, label: t(c.i18nKey) })), [t]);
 
   useEffect(() => {
     loadExperiences();
@@ -93,7 +99,7 @@ export default function HomeScreen({ onSelectExperience, onOpenExplore, onOpenAI
       return;
     }
     setExperiences([]);
-    setExperiencesError(result.error?.message || 'Không thể tải trải nghiệm');
+    setExperiencesError(result.error?.message || t('home.noExperiences'));
   };
 
   const onRefresh = async () => {
@@ -105,12 +111,12 @@ export default function HomeScreen({ onSelectExperience, onOpenExplore, onOpenAI
   const loadTopGuides = async () => {
     const result = await api.getTopGuides();
     if (result.success && result.data?.guides?.length) {
-      setGuides(result.data.guides.map(toGuideCard));
+      setGuides(result.data.guides.map((g: Guide) => toGuideCard(g, t('home.defaultGuideName'))));
       setGuidesError('');
       return;
     }
     setGuides([]);
-    setGuidesError(result.error?.message || 'Chưa có hướng dẫn viên nổi bật');
+    setGuidesError(result.error?.message || t('home.noGuides'));
   };
 
   return (
@@ -124,8 +130,8 @@ export default function HomeScreen({ onSelectExperience, onOpenExplore, onOpenAI
         {/* Header */}
         <View style={styles.header}>
           <View>
-            <Text style={styles.greeting}>Xin chào, {getGreetingName(userName)}! 👋</Text>
-            <Text style={styles.headerTitle}>Khám phá Huế</Text>
+            <Text style={styles.greeting}>{t('home.greeting', { name: getGreetingName(userName, t('home.defaultUser'), t('home.greetingDefault')) })}</Text>
+            <Text style={styles.headerTitle}>{t('home.headerTitle')}</Text>
           </View>
           <TouchableOpacity style={styles.profileButton}>
             <Text style={styles.profileEmoji}>👤</Text>
@@ -135,7 +141,7 @@ export default function HomeScreen({ onSelectExperience, onOpenExplore, onOpenAI
         {/* Search Bar */}
         <TouchableOpacity style={styles.searchBar} activeOpacity={0.7} onPress={onOpenExplore}>
           <Text style={styles.searchIcon}>🔍</Text>
-          <Text style={styles.searchPlaceholder}>Tìm tour, quán ăn, trải nghiệm...</Text>
+          <Text style={styles.searchPlaceholder}>{t('home.searchPlaceholder')}</Text>
         </TouchableOpacity>
 
         {/* AI Trip Planner Banner */}
@@ -145,9 +151,9 @@ export default function HomeScreen({ onSelectExperience, onOpenExplore, onOpenAI
               <Text style={styles.aiIcon}>🤖</Text>
             </View>
             <View style={styles.aiBannerText}>
-              <Text style={styles.aiBannerTitle}>AI Trip Planner</Text>
+              <Text style={styles.aiBannerTitle}>{t('home.aiTitle')}</Text>
               <Text style={styles.aiBannerSubtitle}>
-                Tạo lịch trình thông minh trong 30 giây
+                {t('home.aiSubtitle')}
               </Text>
             </View>
             <Text style={styles.aiBannerArrow}>→</Text>
@@ -155,13 +161,13 @@ export default function HomeScreen({ onSelectExperience, onOpenExplore, onOpenAI
         </TouchableOpacity>
 
         {/* Categories */}
-        <Text style={styles.sectionTitle}>Danh mục</Text>
+        <Text style={styles.sectionTitle}>{t('home.categories')}</Text>
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.categoriesContainer}
         >
-          {CATEGORIES.map((cat) => (
+          {categories.map((cat) => (
             <TouchableOpacity
               key={cat.key}
               style={[
@@ -186,9 +192,9 @@ export default function HomeScreen({ onSelectExperience, onOpenExplore, onOpenAI
 
         {/* Popular Experiences */}
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Trải nghiệm nổi bật</Text>
+          <Text style={styles.sectionTitle}>{t('home.featuredExperiences')}</Text>
           <TouchableOpacity onPress={onOpenExplore}>
-            <Text style={styles.seeAll}>Xem tất cả →</Text>
+            <Text style={styles.seeAll}>{t('common.seeAll')}</Text>
           </TouchableOpacity>
         </View>
 
@@ -205,15 +211,15 @@ export default function HomeScreen({ onSelectExperience, onOpenExplore, onOpenAI
           />
         ) : (
           <EmptyStateCard
-            title="Chưa có trải nghiệm phù hợp"
-            description={experiencesError || 'Hãy đổi danh mục hoặc kéo xuống để tải lại dữ liệu.'}
-            actionLabel="Khám phá ngay"
+            title={t('home.noExperiences')}
+            description={experiencesError || t('home.noExperiencesDesc')}
+            actionLabel={t('home.exploreNow')}
             onPress={onOpenExplore}
           />
         )}
 
         {/* Top Guides */}
-        <Text style={styles.sectionTitle}>Hướng dẫn viên hàng đầu</Text>
+        <Text style={styles.sectionTitle}>{t('home.topGuides')}</Text>
         {guides.length > 0 ? (
           <ScrollView
             horizontal
@@ -236,8 +242,8 @@ export default function HomeScreen({ onSelectExperience, onOpenExplore, onOpenAI
           </ScrollView>
         ) : (
           <EmptyStateCard
-            title="Chưa có hướng dẫn viên nổi bật"
-            description={guidesError || 'Dữ liệu hướng dẫn viên sẽ xuất hiện khi hệ thống có thêm hồ sơ được duyệt.'}
+            title={t('home.noGuides')}
+            description={guidesError || t('home.noGuidesDesc')}
           />
         )}
 
@@ -279,6 +285,7 @@ function ExperienceCard({
   experience: Experience;
   onPress: () => void;
 }) {
+  const { t } = useTranslation();
   const formatPrice = (price: number) => {
     return new Intl.NumberFormat('vi-VN').format(price) + '₫';
   };
@@ -287,14 +294,25 @@ function ExperienceCard({
     <TouchableOpacity style={styles.expCard} activeOpacity={0.85} onPress={onPress}>
       {/* Image */}
       <View style={styles.expImageContainer}>
-        <View style={styles.expImagePlaceholder}>
-          <Text style={styles.expImageEmoji}>
-            {experience.category === 'food' ? '🍜' : '🏛️'}
-          </Text>
-        </View>
+        {experience.image_urls?.length > 0 ? (
+          <Image
+            source={{ uri: experience.image_urls[0] }}
+            style={styles.expImage}
+            resizeMode="cover"
+          />
+        ) : (
+          <View style={styles.expImagePlaceholder}>
+            <Text style={styles.expImageEmoji}>
+              {experience.category === 'food' ? '🍜' :
+               experience.category === 'sightseeing' ? '📸' :
+               experience.category === 'tour' ? '🏛️' :
+               experience.category === 'stay' ? '🏨' : '🎭'}
+            </Text>
+          </View>
+        )}
         {experience.is_instant && (
           <View style={styles.instantBadge}>
-            <Text style={styles.instantText}>⚡ Đặt ngay</Text>
+            <Text style={styles.instantText}>{t('home.bookNow')}</Text>
           </View>
         )}
         <TouchableOpacity style={styles.heartButton}>
@@ -319,7 +337,7 @@ function ExperienceCard({
 
         <View style={styles.expFooter}>
           <Text style={styles.expPrice}>{formatPrice(experience.price)}</Text>
-          <Text style={styles.expPriceUnit}>/người</Text>
+          <Text style={styles.expPriceUnit}>{t('common.perPerson')}</Text>
         </View>
       </View>
     </TouchableOpacity>
@@ -539,6 +557,10 @@ const styles = StyleSheet.create({
   expImageContainer: {
     height: 160,
     position: 'relative',
+  },
+  expImage: {
+    width: '100%',
+    height: '100%',
   },
   expImagePlaceholder: {
     flex: 1,

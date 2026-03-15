@@ -4,6 +4,9 @@ import './globals.css';
 export const metadata: Metadata = {
   title: 'Huế Travel — Provider Portal',
   description: 'Trang quản lý dành cho hướng dẫn viên du lịch Huế',
+  icons: {
+    icon: '/icon.svg',
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

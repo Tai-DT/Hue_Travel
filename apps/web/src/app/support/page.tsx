@@ -23,6 +23,10 @@ type ChatMessage = {
   is_read: boolean;
 };
 
+function toArray<T>(value: unknown): T[] {
+  return Array.isArray(value) ? value as T[] : [];
+}
+
 export default function SupportPage() {
   const [rooms, setRooms] = useState<ChatRoom[]>([]);
   const [selectedRoom, setSelectedRoom] = useState<string | null>(null);
@@ -35,7 +39,10 @@ export default function SupportPage() {
     setLoading(true);
     const res = await adminApi.getChatRooms();
     if (res.success && res.data) {
-      setRooms((res.data as any).rooms || res.data || []);
+      const payload = res.data as any;
+      setRooms(toArray<ChatRoom>(payload?.rooms ?? payload));
+    } else {
+      setRooms([]);
     }
     setLoading(false);
   }, []);
@@ -44,7 +51,10 @@ export default function SupportPage() {
     setLoadingMessages(true);
     const res = await adminApi.getChatMessages(roomId);
     if (res.success && res.data) {
-      setMessages((res.data as any).messages || res.data || []);
+      const payload = res.data as any;
+      setMessages(toArray<ChatMessage>(payload?.messages ?? payload));
+    } else {
+      setMessages([]);
     }
     setLoadingMessages(false);
   }, []);
