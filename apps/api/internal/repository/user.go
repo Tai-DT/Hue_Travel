@@ -81,6 +81,24 @@ func (r *UserRepository) GetByPhone(ctx context.Context, phone string) (*model.U
 	return user, err
 }
 
+func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*model.User, error) {
+	user := &model.User{}
+	err := r.pool.QueryRow(ctx, `
+		SELECT id, phone, email, full_name, avatar_url, role, bio, languages,
+			   xp, level, is_verified, is_active, last_login_at, created_at, updated_at
+		FROM users WHERE LOWER(email) = LOWER($1) AND is_active = TRUE`, email,
+	).Scan(
+		&user.ID, &user.Phone, &user.Email, &user.FullName, &user.AvatarURL,
+		&user.Role, &user.Bio, &user.Languages,
+		&user.XP, &user.Level, &user.IsVerified, &user.IsActive,
+		&user.LastLoginAt, &user.CreatedAt, &user.UpdatedAt,
+	)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	return user, err
+}
+
 func (r *UserRepository) GetByGoogleID(ctx context.Context, googleID string) (*model.User, error) {
 	user := &model.User{}
 	err := r.pool.QueryRow(ctx, `
@@ -120,6 +138,22 @@ func (r *UserRepository) CreateWithGoogle(ctx context.Context, googleID, email, 
 		true, true, "Newbie", googleID, user.CreatedAt, user.UpdatedAt,
 	)
 	return user, err
+}
+
+func (r *UserRepository) LinkGoogleID(ctx context.Context, userID uuid.UUID, googleID, avatarURL string) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE users
+		SET google_id = $1,
+		    avatar_url = CASE
+		        WHEN $2 <> '' THEN COALESCE(avatar_url, $2)
+		        ELSE avatar_url
+		    END,
+		    is_verified = TRUE,
+		    updated_at = NOW()
+		WHERE id = $3 AND is_active = TRUE`,
+		googleID, avatarURL, userID,
+	)
+	return err
 }
 
 func (r *UserRepository) UpdateLastLogin(ctx context.Context, userID uuid.UUID) error {

@@ -3,6 +3,7 @@ package testutil
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,16 +17,18 @@ import (
 // ============================================
 
 type MockUserRepo struct {
-	Users      map[uuid.UUID]*model.User
-	PhoneIndex map[string]uuid.UUID
+	Users       map[uuid.UUID]*model.User
+	PhoneIndex  map[string]uuid.UUID
+	EmailIndex  map[string]uuid.UUID
 	GoogleIndex map[string]uuid.UUID
-	CreateErr  error
+	CreateErr   error
 }
 
 func NewMockUserRepo() *MockUserRepo {
 	return &MockUserRepo{
 		Users:       make(map[uuid.UUID]*model.User),
 		PhoneIndex:  make(map[string]uuid.UUID),
+		EmailIndex:  make(map[string]uuid.UUID),
 		GoogleIndex: make(map[string]uuid.UUID),
 	}
 }
@@ -44,6 +47,9 @@ func (m *MockUserRepo) Create(_ context.Context, user *model.User) error {
 	if user.Phone != nil {
 		m.PhoneIndex[*user.Phone] = user.ID
 	}
+	if user.Email != nil {
+		m.EmailIndex[strings.ToLower(*user.Email)] = user.ID
+	}
 	return nil
 }
 
@@ -57,6 +63,14 @@ func (m *MockUserRepo) GetByID(_ context.Context, id uuid.UUID) (*model.User, er
 
 func (m *MockUserRepo) GetByPhone(_ context.Context, phone string) (*model.User, error) {
 	id, ok := m.PhoneIndex[phone]
+	if !ok {
+		return nil, nil
+	}
+	return m.Users[id], nil
+}
+
+func (m *MockUserRepo) GetByEmail(_ context.Context, email string) (*model.User, error) {
+	id, ok := m.EmailIndex[strings.ToLower(email)]
 	if !ok {
 		return nil, nil
 	}
@@ -85,8 +99,22 @@ func (m *MockUserRepo) CreateWithGoogle(_ context.Context, googleID, email, name
 		UpdatedAt:  time.Now(),
 	}
 	m.Users[user.ID] = user
+	m.EmailIndex[strings.ToLower(email)] = user.ID
 	m.GoogleIndex[googleID] = user.ID
 	return user, nil
+}
+
+func (m *MockUserRepo) LinkGoogleID(_ context.Context, userID uuid.UUID, googleID, avatarURL string) error {
+	u, ok := m.Users[userID]
+	if !ok {
+		return fmt.Errorf("user not found")
+	}
+	if avatarURL != "" && u.AvatarURL == nil {
+		u.AvatarURL = &avatarURL
+	}
+	u.IsVerified = true
+	m.GoogleIndex[googleID] = userID
+	return nil
 }
 
 func (m *MockUserRepo) UpdateLastLogin(_ context.Context, userID uuid.UUID) error {

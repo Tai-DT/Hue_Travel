@@ -33,16 +33,16 @@ type Container struct {
 	ChatRepo    *repository.ChatRepository
 
 	// Services
-	AuthSvc     *service.AuthService
-	BookingSvc  *service.BookingService
-	PlacesSvc   *service.GooglePlacesService
-	AISvc       *service.AITripPlannerService
-	VNPaySvc    *service.VNPayService
-	NotifSvc    *service.NotificationService
-	SearchSvc   *service.SearchService
-	SMSSvc      *service.SMSService
-	UploadSvc   *service.FileUploadService
-	BGWorker    *service.BackgroundWorker
+	AuthSvc    *service.AuthService
+	BookingSvc *service.BookingService
+	PlacesSvc  *service.GoongPlacesService
+	AISvc      *service.AITripPlannerService
+	VNPaySvc   *service.VNPayService
+	NotifSvc   *service.NotificationService
+	SearchSvc  *service.SearchService
+	SMSSvc     *service.SMSService
+	UploadSvc  *service.FileUploadService
+	BGWorker   *service.BackgroundWorker
 
 	// Handlers
 	HealthH    *handler.HealthHandler
@@ -150,7 +150,7 @@ func (c *Container) initServices() {
 	}
 
 	// External-API services (always init — they handle "not configured" gracefully)
-	c.PlacesSvc = service.NewGooglePlacesService(cfg.Google.MapsAPIKey)
+	c.PlacesSvc = service.NewGoongPlacesService(cfg.Goong.APIKey)
 	c.AISvc = service.NewAITripPlannerService(cfg.AI.GeminiAPIKey)
 	c.VNPaySvc = service.NewVNPayService(cfg.VNPay.TmnCode, cfg.VNPay.HashSecret, cfg.VNPay.ReturnURL, cfg.VNPay.Sandbox)
 	c.NotifSvc = service.NewNotificationService(cfg.FCM.ServerKey, c.Pool)

@@ -15,7 +15,7 @@ type Config struct {
 	Redis       RedisConfig
 	JWT         JWTConfig
 	MinIO       MinIOConfig
-	Google      GoogleConfig
+	Goong       GoongConfig
 	VNPay       VNPayConfig
 	AI          AIConfig
 	ESMS        ESMSConfig
@@ -59,10 +59,8 @@ type MinIOConfig struct {
 	UseSSL   bool
 }
 
-type GoogleConfig struct {
-	MapsAPIKey   string
-	ClientID     string
-	ClientSecret string
+type GoongConfig struct {
+	APIKey string
 }
 
 type VNPayConfig struct {
@@ -128,10 +126,8 @@ func Load() (*Config, error) {
 			Bucket:   getEnv("MINIO_BUCKET", "hue-travel"),
 			UseSSL:   getEnv("MINIO_USE_SSL", "false") == "true",
 		},
-		Google: GoogleConfig{
-			MapsAPIKey:   getEnv("GOOGLE_MAPS_API_KEY", ""),
-			ClientID:     getEnv("GOOGLE_CLIENT_ID", ""),
-			ClientSecret: getEnv("GOOGLE_CLIENT_SECRET", ""),
+		Goong: GoongConfig{
+			APIKey: getEnvAny([]string{"GOONG_API_KEY", "GOOGLE_MAPS_API_KEY"}, ""),
 		},
 		VNPay: VNPayConfig{
 			TmnCode:    getEnv("VNPAY_TMN_CODE", ""),
@@ -181,7 +177,7 @@ func (c *Config) Validate() error {
 
 	if c.App.StrictMode {
 		required := map[string]string{
-			"GOOGLE_MAPS_API_KEY":    c.Google.MapsAPIKey,
+			"GOONG_API_KEY":          c.Goong.APIKey,
 			"GEMINI_API_KEY":         c.AI.GeminiAPIKey,
 			"VNPAY_TMN_CODE":         c.VNPay.TmnCode,
 			"VNPAY_HASH_SECRET":      c.VNPay.HashSecret,

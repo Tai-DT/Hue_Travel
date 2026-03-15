@@ -15,10 +15,10 @@ import (
 // ============================================
 
 type PlaceHandler struct {
-	placesSvc *service.GooglePlacesService
+	placesSvc *service.GoongPlacesService
 }
 
-func NewPlaceHandler(placesSvc *service.GooglePlacesService) *PlaceHandler {
+func NewPlaceHandler(placesSvc *service.GoongPlacesService) *PlaceHandler {
 	return &PlaceHandler{placesSvc: placesSvc}
 }
 

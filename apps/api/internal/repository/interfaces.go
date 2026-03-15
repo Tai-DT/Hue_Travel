@@ -19,8 +19,10 @@ type UserRepo interface {
 	Create(ctx context.Context, user *model.User) error
 	GetByID(ctx context.Context, id uuid.UUID) (*model.User, error)
 	GetByPhone(ctx context.Context, phone string) (*model.User, error)
+	GetByEmail(ctx context.Context, email string) (*model.User, error)
 	GetByGoogleID(ctx context.Context, googleID string) (*model.User, error)
 	CreateWithGoogle(ctx context.Context, googleID, email, name, avatarURL string) (*model.User, error)
+	LinkGoogleID(ctx context.Context, userID uuid.UUID, googleID, avatarURL string) error
 	UpdateLastLogin(ctx context.Context, userID uuid.UUID) error
 	AddXP(ctx context.Context, userID uuid.UUID, xp int) error
 	UpdateProfile(ctx context.Context, userID uuid.UUID, fullName string, email, bio, avatarURL *string, languages []string) error

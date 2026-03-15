@@ -1,23 +1,18 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
-  TextInput,
-  KeyboardAvoidingView,
-  Platform,
   ActivityIndicator,
   Linking,
   Alert,
   ScrollView,
+  Platform,
 } from 'react-native';
 import { Colors, Fonts, Spacing, BorderRadius, Shadows } from '@/constants/theme';
 import api, { User } from '@/services/api';
 
-// ============================================
-// Google OAuth Config
-// ============================================
 const GOOGLE_WEB_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID || '';
 const GOOGLE_ANDROID_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID || '';
 const GOOGLE_IOS_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID || '';
@@ -30,370 +25,209 @@ type Props = {
   onLoginSuccess: (token: string, user?: User, isNewUser?: boolean) => void;
 };
 
+function buildGoogleLoginURL(clientID: string, redirectURI: string) {
+  const params = new URLSearchParams({
+    client_id: clientID,
+    redirect_uri: redirectURI,
+    response_type: 'id_token',
+    scope: 'openid email profile',
+    prompt: 'select_account',
+    nonce: `${Date.now()}`,
+  });
+
+  return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+}
+
+function extractOAuthParams(url: string) {
+  const hashIndex = url.indexOf('#');
+  if (hashIndex >= 0) {
+    return new URLSearchParams(url.slice(hashIndex + 1));
+  }
+
+  const queryIndex = url.indexOf('?');
+  if (queryIndex >= 0) {
+    return new URLSearchParams(url.slice(queryIndex + 1));
+  }
+
+  return new URLSearchParams();
+}
+
+function clearWebOAuthState() {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') {
+    return;
+  }
+
+  window.history.replaceState({}, document.title, `${window.location.pathname}${window.location.search}`);
+}
+
 export default function LoginScreen({ onLoginSuccess }: Props) {
-  const [mode, setMode] = useState<'main' | 'phone' | 'otp'>('main');
-  const [phone, setPhone] = useState('');
-  const [otp, setOtp] = useState(['', '', '', '', '', '']);
-  const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const otpRefs = useRef<(TextInput | null)[]>([]);
+  const completeGoogleLogin = useCallback(async (idToken: string) => {
+    setGoogleLoading(true);
+    setError('');
 
-  // ── Google Sign-In ──────────────────────────
+    const result = await api.googleLogin(idToken);
+    if (result.success && result.data) {
+      await api.setSession(result.data.token, result.data.refresh_token);
+      onLoginSuccess(result.data.token, result.data.user, result.data.is_new_user);
+      setGoogleLoading(false);
+      return;
+    }
+
+    setGoogleLoading(false);
+    setError(result.error?.message || 'Đăng nhập Google thất bại.');
+  }, [onLoginSuccess]);
+
+  const handleOAuthCallback = useCallback(async (url: string) => {
+    if (!url || (!url.includes('auth/callback') && !url.includes('id_token='))) {
+      return;
+    }
+
+    const params = extractOAuthParams(url);
+    const googleError = params.get('error');
+    const idToken = params.get('id_token');
+
+    if (!googleError && !idToken) {
+      return;
+    }
+
+    clearWebOAuthState();
+
+    if (googleError) {
+      setError('Google đã huỷ hoặc từ chối phiên đăng nhập.');
+      return;
+    }
+
+    if (!idToken) {
+      setError('Không nhận được Google ID token.');
+      return;
+    }
+
+    await completeGoogleLogin(idToken);
+  }, [completeGoogleLogin]);
+
+  useEffect(() => {
+    let active = true;
+
+    const processInitialURL = async () => {
+      const initialURL = await Linking.getInitialURL();
+      if (!active) {
+        return;
+      }
+      if (initialURL) {
+        await handleOAuthCallback(initialURL);
+        return;
+      }
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        await handleOAuthCallback(window.location.href);
+      }
+    };
+
+    void processInitialURL();
+
+    const subscription = Linking.addEventListener('url', (event) => {
+      if (!active) {
+        return;
+      }
+      void handleOAuthCallback(event.url);
+    });
+
+    return () => {
+      active = false;
+      subscription.remove();
+    };
+  }, [handleOAuthCallback]);
+
   const handleGoogleLogin = useCallback(async () => {
-    if (googleLoading) return;
+    if (googleLoading) {
+      return;
+    }
+    if (!googleConfigured) {
+      Alert.alert(
+        'Thiếu cấu hình Google',
+        'Cần cấu hình EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID, EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID hoặc EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID trước khi đăng nhập.',
+      );
+      return;
+    }
+
+    const clientID = Platform.select({
+      ios: GOOGLE_IOS_CLIENT_ID || GOOGLE_WEB_CLIENT_ID,
+      android: GOOGLE_ANDROID_CLIENT_ID || GOOGLE_WEB_CLIENT_ID,
+      default: GOOGLE_WEB_CLIENT_ID,
+    }) || GOOGLE_WEB_CLIENT_ID;
+
+    if (!clientID) {
+      setError('Thiếu Google OAuth client ID cho nền tảng hiện tại.');
+      return;
+    }
+
+    const redirectURI = Platform.OS === 'web' && typeof window !== 'undefined'
+      ? window.location.origin
+      : 'huetravel://auth/callback';
+
     setGoogleLoading(true);
     setError('');
 
     try {
-      // Use a demo flow for development:
-      // In production, you'd use expo-auth-session or react-native-google-signin
-      // For now, simulate a Google login by calling the API with a test token
-      if (!googleConfigured) {
-        // Demo mode — show info
-        Alert.alert(
-          '🔐 Google Sign-In',
-          'Để bật đăng nhập Google, cần cấu hình:\n\n' +
-          '1. Tạo Google Cloud project\n' +
-          '2. Bật Google Identity API\n' +
-          '3. Tạo OAuth 2.0 Client IDs\n' +
-          '4. Set EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID trong .env\n\n' +
-          'Sau khi cấu hình, nút này sẽ tự kích hoạt.',
-          [
-            { text: 'Đã hiểu', style: 'cancel' },
-            {
-              text: 'Demo Login',
-              onPress: async () => {
-                // Demo: simulate Google login with a test account
-                await demoGoogleLogin();
-              },
-            },
-          ],
-        );
-        setGoogleLoading(false);
-        return;
-      }
-
-      // Production: Open Google OAuth
-      const clientId = Platform.select({
-        ios: GOOGLE_IOS_CLIENT_ID || GOOGLE_WEB_CLIENT_ID,
-        android: GOOGLE_ANDROID_CLIENT_ID || GOOGLE_WEB_CLIENT_ID,
-        default: GOOGLE_WEB_CLIENT_ID,
-      }) || GOOGLE_WEB_CLIENT_ID;
-
-      const redirectUri = Platform.select({
-        web: `${window.location.origin}/auth/callback`,
-        default: 'huetravel://auth/callback',
-      });
-
-      const authUrl =
-        'https://accounts.google.com/o/oauth2/v2/auth?' +
-        `client_id=${encodeURIComponent(clientId)}` +
-        `&redirect_uri=${encodeURIComponent(redirectUri || '')}` +
-        '&response_type=id_token' +
-        '&scope=openid%20email%20profile' +
-        `&nonce=${Date.now()}`;
-
-      const supported = await Linking.canOpenURL(authUrl);
-      if (supported) {
-        await Linking.openURL(authUrl);
-      } else {
-        setError('Không thể mở Google Sign-In');
-      }
-    } catch (err) {
-      setError('Lỗi đăng nhập Google');
-    } finally {
+      await Linking.openURL(buildGoogleLoginURL(clientID, redirectURI));
       setGoogleLoading(false);
+    } catch {
+      setGoogleLoading(false);
+      setError('Không thể mở trang đăng nhập Google.');
     }
   }, [googleLoading]);
 
-  const demoGoogleLogin = async () => {
-    setGoogleLoading(true);
-    // In demo mode, call API with a test token
-    // The backend's GoogleLogin will verify with Google — this will fail in demo
-    // Instead, use OTP login with demo credentials
-    const result = await api.sendOTP('0900000000');
-    if (result.success) {
-      // Auto-verify with dev OTP code
-      const verifyResult = await api.verifyOTP('0900000000', '123456');
-      if (verifyResult.success && verifyResult.data) {
-        await api.setSession(verifyResult.data.token, verifyResult.data.refresh_token);
-        onLoginSuccess(verifyResult.data.token, verifyResult.data.user, verifyResult.data.is_new_user);
-      } else {
-        Alert.alert('Demo', 'Demo login thất bại. Vui lòng đảm bảo API server đang chạy.');
-      }
-    } else {
-      Alert.alert('Demo', 'Không thể kết nối API server.');
-    }
-    setGoogleLoading(false);
-  };
-
-  // ── Handle deep link callback for Google OAuth ──
-  React.useEffect(() => {
-    const handleDeepLink = async (event: { url: string }) => {
-      const url = event.url;
-      if (url.includes('auth/callback') && url.includes('id_token=')) {
-        const idToken = url.split('id_token=')[1]?.split('&')[0];
-        if (idToken) {
-          setGoogleLoading(true);
-          setError('');
-          const result = await api.googleLogin(idToken);
-          if (result.success && result.data) {
-            const data = result.data as {
-              token: string;
-              refresh_token: string;
-              user: User;
-              is_new_user: boolean;
-            };
-            await api.setSession(data.token, data.refresh_token);
-            onLoginSuccess(data.token, data.user, data.is_new_user);
-          } else {
-            setError('Đăng nhập Google thất bại');
-          }
-          setGoogleLoading(false);
-        }
-      }
-    };
-
-    const subscription = Linking.addEventListener('url', handleDeepLink);
-    return () => subscription.remove();
-  }, [onLoginSuccess]);
-
-  // ── OTP Handlers ────────────────────────────
-  const handleSendOTP = async () => {
-    if (phone.length < 9) {
-      setError('Vui lòng nhập số điện thoại hợp lệ');
-      return;
-    }
-    setLoading(true);
-    setError('');
-    const formattedPhone = phone.startsWith('0') ? phone : `0${phone}`;
-    const result = await api.sendOTP(formattedPhone);
-    setLoading(false);
-    if (result.success) {
-      setMode('otp');
-    } else {
-      setError(result.error?.message || 'Không thể gửi OTP');
-    }
-  };
-
-  const handleOTPChange = (value: string, index: number) => {
-    const newOtp = [...otp];
-    newOtp[index] = value;
-    setOtp(newOtp);
-    if (value && index < 5) {
-      otpRefs.current[index + 1]?.focus();
-    }
-    if (index === 5 && value) {
-      const code = newOtp.join('');
-      if (code.length === 6) handleVerifyOTP(code);
-    }
-  };
-
-  const handleOTPKeyPress = (key: string, index: number) => {
-    if (key === 'Backspace' && !otp[index] && index > 0) {
-      otpRefs.current[index - 1]?.focus();
-    }
-  };
-
-  const handleVerifyOTP = async (code: string) => {
-    setLoading(true);
-    setError('');
-    const formattedPhone = phone.startsWith('0') ? phone : `0${phone}`;
-    const result = await api.verifyOTP(formattedPhone, code);
-    setLoading(false);
-    if (result.success && result.data) {
-      await api.setSession(result.data.token, result.data.refresh_token);
-      onLoginSuccess(result.data.token, result.data.user, result.data.is_new_user);
-    } else {
-      setError(result.error?.message || 'Mã OTP không đúng');
-      setOtp(['', '', '', '', '', '']);
-      otpRefs.current[0]?.focus();
-    }
-  };
-
-  const handleResendOTP = async () => {
-    if (loading) return;
-    setOtp(['', '', '', '', '', '']);
-    await handleSendOTP();
-    otpRefs.current[0]?.focus();
-  };
-
-  // ── Main Screen (Login options) ─────────────
-  if (mode === 'main') {
-    return (
-      <View style={styles.container}>
-        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-          {/* Hero */}
-          <View style={styles.heroSection}>
-            <Text style={styles.heroEmoji}>🌏</Text>
-            <Text style={styles.heroTitle}>Huế Travel</Text>
-            <Text style={styles.heroSubtitle}>
-              Khám phá cố đô, trải nghiệm văn hóa
-            </Text>
-          </View>
-
-          {/* Login Buttons */}
-          <View style={styles.buttonsSection}>
-            {/* Google Sign-In Button */}
-            <TouchableOpacity
-              style={styles.googleButton}
-              onPress={handleGoogleLogin}
-              disabled={googleLoading}
-              activeOpacity={0.85}
-            >
-              {googleLoading ? (
-                <ActivityIndicator color="#333" />
-              ) : (
-                <>
-                  <Text style={styles.googleIcon}>G</Text>
-                  <Text style={styles.googleButtonText}>
-                    Đăng nhập bằng Google
-                  </Text>
-                </>
-              )}
-            </TouchableOpacity>
-
-            {/* Divider */}
-            <View style={styles.divider}>
-              <View style={styles.dividerLine} />
-              <Text style={styles.dividerText}>hoặc</Text>
-              <View style={styles.dividerLine} />
-            </View>
-
-            {/* Phone Login Button */}
-            <TouchableOpacity
-              style={styles.phoneButton}
-              onPress={() => { setMode('phone'); setError(''); }}
-              activeOpacity={0.85}
-            >
-              <Text style={styles.phoneIcon}>📱</Text>
-              <Text style={styles.phoneButtonText}>
-                Đăng nhập bằng số điện thoại
-              </Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Error */}
-          {error ? <Text style={styles.errorText}>{error}</Text> : null}
-
-          {/* Terms */}
-          <Text style={styles.termsText}>
-            Bằng việc đăng nhập, bạn đồng ý với{' '}
-            <Text style={styles.termsLink}>Điều khoản sử dụng</Text> và{' '}
-            <Text style={styles.termsLink}>Chính sách bảo mật</Text> của chúng tôi.
-          </Text>
-        </ScrollView>
-      </View>
-    );
-  }
-
-  // ── Phone / OTP Screen ──────────────────────
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity
-          onPress={() => { setMode(mode === 'otp' ? 'phone' : 'main'); setError(''); }}
-          style={styles.backButton}
-        >
-          <Text style={styles.backText}>← Quay lại</Text>
-        </TouchableOpacity>
-        <Text style={styles.logo}>🌏</Text>
-        <Text style={styles.title}>
-          {mode === 'phone' ? 'Đăng nhập' : 'Xác thực OTP'}
-        </Text>
-        <Text style={styles.subtitle}>
-          {mode === 'phone'
-            ? 'Nhập số điện thoại để tiếp tục'
-            : `Nhập mã 6 số đã gửi đến ${phone}`}
-        </Text>
-      </View>
+    <View style={styles.container}>
+      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        <View style={styles.heroSection}>
+          <Text style={styles.heroEmoji}>🌏</Text>
+          <Text style={styles.heroTitle}>Huế Travel</Text>
+          <Text style={styles.heroSubtitle}>
+            Đăng nhập nhanh bằng Gmail để tiếp tục hành trình của bạn.
+          </Text>
+        </View>
 
-      {/* Form */}
-      <View style={styles.form}>
-        {mode === 'phone' ? (
-          <>
-            <View style={styles.phoneInputContainer}>
-              <View style={styles.countryCode}>
-                <Text style={styles.flag}>🇻🇳</Text>
-                <Text style={styles.codeText}>+84</Text>
-              </View>
-              <TextInput
-                style={styles.phoneInput}
-                placeholder="Số điện thoại"
-                placeholderTextColor={Colors.textMuted}
-                keyboardType="phone-pad"
-                value={phone}
-                onChangeText={(text) => { setPhone(text); setError(''); }}
-                maxLength={11}
-                autoFocus
-              />
-            </View>
-            {error ? <Text style={styles.errorText}>{error}</Text> : null}
-            <TouchableOpacity
-              style={[styles.submitButton, loading && styles.submitButtonDisabled]}
-              onPress={handleSendOTP}
-              disabled={loading}
-              activeOpacity={0.8}
-            >
-              {loading ? (
-                <ActivityIndicator color={Colors.textOnPrimary} />
-              ) : (
-                <Text style={styles.submitText}>Gửi mã OTP</Text>
-              )}
-            </TouchableOpacity>
-          </>
-        ) : (
-          <>
-            <View style={styles.otpContainer}>
-              {otp.map((digit, index) => (
-                <TextInput
-                  key={index}
-                  ref={(ref: TextInput | null) => { otpRefs.current[index] = ref; }}
-                  style={[styles.otpInput, digit ? styles.otpInputFilled : null]}
-                  value={digit}
-                  onChangeText={(value) => handleOTPChange(value, index)}
-                  onKeyPress={({ nativeEvent }) => handleOTPKeyPress(nativeEvent.key, index)}
-                  keyboardType="number-pad"
-                  maxLength={1}
-                  autoFocus={index === 0}
-                  selectTextOnFocus
-                />
-              ))}
-            </View>
-            {error ? <Text style={styles.errorText}>{error}</Text> : null}
-            <TouchableOpacity style={styles.resendButton} onPress={handleResendOTP} disabled={loading}>
-              <Text style={styles.resendText}>
-                Không nhận được mã? <Text style={styles.resendLink}>Gửi lại</Text>
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.submitButton, loading && styles.submitButtonDisabled]}
-              onPress={() => handleVerifyOTP(otp.join(''))}
-              disabled={loading || otp.join('').length < 6}
-              activeOpacity={0.8}
-            >
-              {loading ? (
-                <ActivityIndicator color={Colors.textOnPrimary} />
-              ) : (
-                <Text style={styles.submitText}>Xác nhận</Text>
-              )}
-            </TouchableOpacity>
-          </>
-        )}
-      </View>
-    </KeyboardAvoidingView>
+        <View style={styles.buttonsSection}>
+          <TouchableOpacity
+            style={styles.googleButton}
+            onPress={handleGoogleLogin}
+            disabled={googleLoading}
+            activeOpacity={0.85}
+          >
+            {googleLoading ? (
+              <ActivityIndicator color="#333333" />
+            ) : (
+              <>
+                <Text style={styles.googleIcon}>G</Text>
+                <Text style={styles.googleButtonText}>Đăng nhập bằng Google</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+
+        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+        <Text style={styles.helperText}>
+          Dùng đúng Gmail đã liên kết với tài khoản Huế Travel của bạn. Với Expo Web, redirect URI là{' '}
+          <Text style={styles.helperTextStrong}>http://localhost:19006</Text>
+          {' '}và với mobile native là{' '}
+          <Text style={styles.helperTextStrong}>huetravel://auth/callback</Text>
+          .
+        </Text>
+
+        <Text style={styles.termsText}>
+          Bằng việc đăng nhập, bạn đồng ý với{' '}
+          <Text style={styles.termsLink}>Điều khoản sử dụng</Text> và{' '}
+          <Text style={styles.termsLink}>Chính sách bảo mật</Text> của chúng tôi.
+        </Text>
+      </ScrollView>
+    </View>
   );
 }
 
-// ============================================
-// Styles
-// ============================================
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -405,8 +239,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.xl,
     paddingBottom: Spacing.xxxl,
   },
-
-  // ── Hero ──
   heroSection: {
     alignItems: 'center',
     marginBottom: Spacing.xxxl + 16,
@@ -428,8 +260,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 26,
   },
-
-  // ── Buttons ──
   buttonsSection: {
     gap: Spacing.base,
     marginBottom: Spacing.lg,
@@ -454,42 +284,23 @@ const styles = StyleSheet.create({
     fontWeight: Fonts.weights.semibold,
     color: '#333333',
   },
-  divider: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: Spacing.sm,
+  errorText: {
+    color: Colors.error,
+    fontSize: Fonts.sizes.sm,
+    textAlign: 'center',
+    marginBottom: Spacing.base,
   },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: Colors.border,
+  helperText: {
+    color: Colors.textSecondary,
+    fontSize: Fonts.sizes.sm,
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: Spacing.base,
   },
-  dividerText: {
-    color: Colors.textMuted,
-    fontSize: Fonts.sizes.md,
-    marginHorizontal: Spacing.base,
-  },
-  phoneButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: Colors.surface,
-    paddingVertical: Spacing.base,
-    borderRadius: BorderRadius.xl,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    gap: Spacing.md,
-  },
-  phoneIcon: {
-    fontSize: 20,
-  },
-  phoneButtonText: {
-    fontSize: Fonts.sizes.lg,
+  helperTextStrong: {
     fontWeight: Fonts.weights.semibold,
     color: Colors.text,
   },
-
-  // ── Terms ──
   termsText: {
     color: Colors.textMuted,
     fontSize: Fonts.sizes.sm,
@@ -500,126 +311,5 @@ const styles = StyleSheet.create({
   termsLink: {
     color: Colors.primary,
     fontWeight: Fonts.weights.medium,
-  },
-
-  // ── Phone / OTP screen ──
-  header: {
-    paddingTop: 100,
-    alignItems: 'center',
-    marginBottom: Spacing.xxxl,
-    paddingHorizontal: Spacing.xl,
-  },
-  backButton: {
-    position: 'absolute',
-    top: 60,
-    left: Spacing.xl,
-  },
-  backText: {
-    color: Colors.primary,
-    fontSize: Fonts.sizes.base,
-  },
-  logo: {
-    fontSize: 48,
-    marginBottom: Spacing.lg,
-  },
-  title: {
-    fontSize: Fonts.sizes.xxl,
-    fontWeight: Fonts.weights.bold,
-    color: Colors.text,
-    marginBottom: Spacing.sm,
-  },
-  subtitle: {
-    fontSize: Fonts.sizes.md,
-    color: Colors.textSecondary,
-    textAlign: 'center',
-  },
-  form: {
-    gap: Spacing.lg,
-    paddingHorizontal: Spacing.xl,
-  },
-  phoneInputContainer: {
-    flexDirection: 'row',
-    backgroundColor: Colors.surface,
-    borderRadius: BorderRadius.lg,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    overflow: 'hidden',
-  },
-  countryCode: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: Spacing.base,
-    borderRightWidth: 1,
-    borderRightColor: Colors.border,
-    gap: Spacing.xs,
-  },
-  flag: {
-    fontSize: 20,
-  },
-  codeText: {
-    color: Colors.text,
-    fontSize: Fonts.sizes.base,
-    fontWeight: Fonts.weights.medium,
-  },
-  phoneInput: {
-    flex: 1,
-    paddingHorizontal: Spacing.base,
-    paddingVertical: Spacing.base,
-    color: Colors.text,
-    fontSize: Fonts.sizes.lg,
-    fontWeight: Fonts.weights.medium,
-  },
-  errorText: {
-    color: Colors.error,
-    fontSize: Fonts.sizes.sm,
-    textAlign: 'center',
-  },
-  submitButton: {
-    backgroundColor: Colors.primary,
-    paddingVertical: Spacing.base,
-    borderRadius: BorderRadius.xl,
-    alignItems: 'center',
-    marginTop: Spacing.sm,
-  },
-  submitButtonDisabled: {
-    opacity: 0.6,
-  },
-  submitText: {
-    fontSize: Fonts.sizes.lg,
-    fontWeight: Fonts.weights.bold,
-    color: Colors.textOnPrimary,
-  },
-  otpContainer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    gap: Spacing.md,
-  },
-  otpInput: {
-    width: 48,
-    height: 56,
-    borderRadius: BorderRadius.md,
-    backgroundColor: Colors.surface,
-    borderWidth: 1.5,
-    borderColor: Colors.border,
-    textAlign: 'center',
-    fontSize: Fonts.sizes.xxl,
-    fontWeight: Fonts.weights.bold,
-    color: Colors.text,
-  },
-  otpInputFilled: {
-    borderColor: Colors.primary,
-    backgroundColor: Colors.surfaceLight,
-  },
-  resendButton: {
-    alignItems: 'center',
-    paddingVertical: Spacing.sm,
-  },
-  resendText: {
-    color: Colors.textSecondary,
-    fontSize: Fonts.sizes.md,
-  },
-  resendLink: {
-    color: Colors.primary,
-    fontWeight: Fonts.weights.semibold,
   },
 });

@@ -1,52 +1,112 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { adminApi } from '@/lib/api';
 
 type LoginPageProps = {
   onLoginSuccess: () => void;
 };
 
+const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || '';
+
+function buildGoogleLoginUrl(clientID: string, redirectURI: string) {
+  const params = new URLSearchParams({
+    client_id: clientID,
+    redirect_uri: redirectURI,
+    response_type: 'id_token',
+    scope: 'openid email profile',
+    prompt: 'select_account',
+    nonce: `${Date.now()}`,
+  });
+
+  return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+}
+
+function extractOAuthParams(url: string) {
+  const hashIndex = url.indexOf('#');
+  if (hashIndex >= 0) {
+    return new URLSearchParams(url.slice(hashIndex + 1));
+  }
+
+  const queryIndex = url.indexOf('?');
+  if (queryIndex >= 0) {
+    return new URLSearchParams(url.slice(queryIndex + 1));
+  }
+
+  return new URLSearchParams();
+}
+
+function clearOAuthRedirectState() {
+  window.history.replaceState({}, document.title, `${window.location.pathname}${window.location.search}`);
+}
+
 export default function LoginPage({ onLoginSuccess }: LoginPageProps) {
-  const [phone, setPhone] = useState('');
-  const [code, setCode] = useState('');
-  const [step, setStep] = useState<'phone' | 'otp'>('phone');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [devOtp, setDevOtp] = useState('');
 
-  const handleSendOTP = async () => {
-    if (!phone.trim()) { setError('Vui lòng nhập số điện thoại'); return; }
-    setLoading(true);
-    setError('');
-    const res = await adminApi.sendOTP(phone);
-    setLoading(false);
-    if (res.success) {
-      setStep('otp');
-      // In dev mode, server log will show OTP
-      setDevOtp('(Xem console server để lấy OTP)');
-    } else {
-      setError(res.error?.message || 'Không thể gửi OTP');
-    }
-  };
+  useEffect(() => {
+    let cancelled = false;
 
-  const handleVerify = async () => {
-    if (!code.trim()) { setError('Vui lòng nhập mã OTP'); return; }
-    setLoading(true);
-    setError('');
-    const res = await adminApi.login(phone, code);
-    setLoading(false);
-    if (res.success && res.data) {
-      // Check if user is admin
-      if (res.data.user?.role !== 'admin') {
-        setError('Bạn không có quyền truy cập Admin Dashboard');
-        adminApi.clearToken();
+    const processGoogleRedirect = async () => {
+      const params = extractOAuthParams(window.location.href);
+      const googleError = params.get('error');
+      const idToken = params.get('id_token');
+
+      if (!googleError && !idToken) {
         return;
       }
-      onLoginSuccess();
-    } else {
-      setError(res.error?.message || 'Mã OTP không đúng');
+
+      clearOAuthRedirectState();
+
+      if (googleError) {
+        if (!cancelled) {
+          setError('Google đã huỷ hoặc từ chối phiên đăng nhập.');
+        }
+        return;
+      }
+
+      if (!idToken) {
+        return;
+      }
+
+      setLoading(true);
+      setError('');
+
+      const res = await adminApi.googleLogin(idToken);
+      if (cancelled) {
+        return;
+      }
+
+      setLoading(false);
+      if (res.success && res.data) {
+        if (res.data.user?.role !== 'admin') {
+          adminApi.clearToken();
+          setError('Tài khoản Google này không có quyền truy cập Admin Dashboard.');
+          return;
+        }
+        onLoginSuccess();
+        return;
+      }
+
+      setError(res.error?.message || 'Đăng nhập Google thất bại.');
+    };
+
+    void processGoogleRedirect();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [onLoginSuccess]);
+
+  const handleGoogleLogin = () => {
+    if (!GOOGLE_CLIENT_ID) {
+      setError('Thiếu NEXT_PUBLIC_GOOGLE_CLIENT_ID. Hãy cấu hình Google OAuth trước khi đăng nhập.');
+      return;
     }
+
+    setError('');
+    setLoading(true);
+    window.location.href = buildGoogleLoginUrl(GOOGLE_CLIENT_ID, window.location.origin);
   };
 
   return (
@@ -61,61 +121,21 @@ export default function LoginPage({ onLoginSuccess }: LoginPageProps) {
 
         {/* Form */}
         <div className="login-form">
-          {step === 'phone' ? (
-            <>
-              <label className="login-label">Số điện thoại</label>
-              <div className="login-input-group">
-                <span className="login-input-prefix">🇻🇳 +84</span>
-                <input
-                  type="tel"
-                  className="login-input"
-                  placeholder="901 234 567"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleSendOTP()}
-                  autoFocus
-                />
-              </div>
-              <button
-                className="login-btn"
-                onClick={handleSendOTP}
-                disabled={loading}
-              >
-                {loading ? '⏳ Đang gửi...' : '📲 Gửi mã OTP'}
-              </button>
-            </>
-          ) : (
-            <>
-              <div className="login-otp-info">
-                <p>Mã OTP đã gửi đến <strong>{phone}</strong></p>
-                {devOtp && <p className="login-dev-note">{devOtp}</p>}
-              </div>
-              <label className="login-label">Mã xác thực OTP</label>
-              <input
-                type="text"
-                className="login-input login-input-otp"
-                placeholder="••••••"
-                maxLength={6}
-                value={code}
-                onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
-                onKeyDown={(e) => e.key === 'Enter' && handleVerify()}
-                autoFocus
-              />
-              <button
-                className="login-btn"
-                onClick={handleVerify}
-                disabled={loading}
-              >
-                {loading ? '⏳ Đang xác thực...' : '🔐 Đăng nhập'}
-              </button>
-              <button
-                className="login-btn-secondary"
-                onClick={() => { setStep('phone'); setCode(''); setError(''); }}
-              >
-                ← Quay lại
-              </button>
-            </>
-          )}
+          <p style={{ color: 'var(--text-secondary)', textAlign: 'center', lineHeight: 1.6, marginBottom: 16 }}>
+            Đăng nhập bằng tài khoản Google đã được gán email admin trong hệ thống.
+          </p>
+          <button
+            className="login-btn"
+            onClick={handleGoogleLogin}
+            disabled={loading}
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10 }}
+          >
+            <span style={{ fontSize: 18 }}>G</span>
+            <span>{loading ? 'Đang chuyển đến Google...' : 'Đăng nhập với Google'}</span>
+          </button>
+          <p style={{ color: 'var(--text-muted)', fontSize: 13, textAlign: 'center', marginTop: 12 }}>
+            Redirect URI cần được khai báo trong Google Cloud Console. Ví dụ local: <strong>http://localhost:3000</strong>
+          </p>
 
           {error && <div className="login-error">{error}</div>}
         </div>

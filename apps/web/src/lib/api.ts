@@ -251,6 +251,16 @@ class AdminApi {
     return res;
   }
 
+  async googleLogin(idToken: string) {
+    const res = await this.request<{ token: string; refresh_token: string; user: any }>('/auth/google', {
+      method: 'POST', body: { id_token: idToken },
+    });
+    if (res.success && res.data?.token && res.data?.refresh_token) {
+      this.setSession(res.data.token, res.data.refresh_token);
+    }
+    return res;
+  }
+
   async getMe() {
     const res = await this.request<{ user: any }>('/me');
     if (res.success && res.data?.user) {

@@ -1,48 +1,111 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { providerApi } from '@/lib/api';
 
 type LoginPageProps = {
   onLoginSuccess: () => void;
 };
 
+const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || '';
+
+function buildGoogleLoginUrl(clientID: string, redirectURI: string) {
+  const params = new URLSearchParams({
+    client_id: clientID,
+    redirect_uri: redirectURI,
+    response_type: 'id_token',
+    scope: 'openid email profile',
+    prompt: 'select_account',
+    nonce: `${Date.now()}`,
+  });
+
+  return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+}
+
+function extractOAuthParams(url: string) {
+  const hashIndex = url.indexOf('#');
+  if (hashIndex >= 0) {
+    return new URLSearchParams(url.slice(hashIndex + 1));
+  }
+
+  const queryIndex = url.indexOf('?');
+  if (queryIndex >= 0) {
+    return new URLSearchParams(url.slice(queryIndex + 1));
+  }
+
+  return new URLSearchParams();
+}
+
+function clearOAuthRedirectState() {
+  window.history.replaceState({}, document.title, `${window.location.pathname}${window.location.search}`);
+}
+
 export default function GuideLoginPage({ onLoginSuccess }: LoginPageProps) {
-  const [phone, setPhone] = useState('');
-  const [code, setCode] = useState('');
-  const [step, setStep] = useState<'phone' | 'otp'>('phone');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const handleSendOTP = async () => {
-    if (!phone.trim()) { setError('Vui lòng nhập số điện thoại'); return; }
-    setLoading(true);
-    setError('');
-    const res = await providerApi.sendOTP(phone);
-    setLoading(false);
-    if (res.success) {
-      setStep('otp');
-    } else {
-      setError(res.error?.message || 'Không thể gửi OTP');
-    }
-  };
+  useEffect(() => {
+    let cancelled = false;
 
-  const handleVerify = async () => {
-    if (!code.trim()) { setError('Vui lòng nhập mã OTP'); return; }
-    setLoading(true);
-    setError('');
-    const res = await providerApi.login(phone, code);
-    setLoading(false);
-    if (res.success && res.data) {
-      if (res.data.user?.role !== 'guide') {
-        setError('Tài khoản của bạn không phải hướng dẫn viên');
-        providerApi.clearToken();
+    const processGoogleRedirect = async () => {
+      const params = extractOAuthParams(window.location.href);
+      const googleError = params.get('error');
+      const idToken = params.get('id_token');
+
+      if (!googleError && !idToken) {
         return;
       }
-      onLoginSuccess();
-    } else {
-      setError(res.error?.message || 'Mã OTP không đúng');
+
+      clearOAuthRedirectState();
+
+      if (googleError) {
+        if (!cancelled) {
+          setError('Google đã huỷ hoặc từ chối phiên đăng nhập.');
+        }
+        return;
+      }
+
+      if (!idToken) {
+        return;
+      }
+
+      setLoading(true);
+      setError('');
+      const res = await providerApi.googleLogin(idToken);
+      if (cancelled) {
+        return;
+      }
+
+      setLoading(false);
+      if (res.success && res.data) {
+        if (res.data.user?.role !== 'guide') {
+          providerApi.clearToken();
+          setError('Tài khoản Google này không phải hướng dẫn viên.');
+          return;
+        }
+        onLoginSuccess();
+        return;
+      }
+
+      setError(res.error?.message || 'Đăng nhập Google thất bại.');
+    };
+
+    void processGoogleRedirect();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [onLoginSuccess]);
+
+  const handleGoogleLogin = () => {
+    if (!GOOGLE_CLIENT_ID) {
+      setError('Thiếu NEXT_PUBLIC_GOOGLE_CLIENT_ID. Hãy cấu hình Google OAuth trước khi đăng nhập.');
+      return;
     }
+
+    setError('');
+    setLoading(true);
+    window.location.href = buildGoogleLoginUrl(GOOGLE_CLIENT_ID, window.location.origin);
   };
 
   return (
@@ -76,83 +139,29 @@ export default function GuideLoginPage({ onLoginSuccess }: LoginPageProps) {
 
         {/* Form */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {step === 'phone' ? (
-            <>
-              <label style={{ fontSize: 13, fontWeight: 600, color: '#666' }}>Số điện thoại</label>
-              <div style={{
-                display: 'flex', alignItems: 'center', border: '1px solid #ddd',
-                borderRadius: 12, overflow: 'hidden', background: '#f5f5f5',
-              }}>
-                <span style={{ padding: '12px 14px', color: '#888', borderRight: '1px solid #ddd' }}>🇻🇳 +84</span>
-                <input
-                  type="tel"
-                  placeholder="901 234 567"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleSendOTP()}
-                  autoFocus
-                  style={{
-                    flex: 1, padding: '14px 16px', border: 'none', background: 'transparent',
-                    fontSize: 16, outline: 'none', color: '#1a1a1a',
-                  }}
-                />
-              </div>
-              <button
-                onClick={handleSendOTP}
-                disabled={loading}
-                style={{
-                  padding: 14, background: 'linear-gradient(135deg, #2E7D32, #1B5E20)',
-                  color: '#fff', border: 'none', borderRadius: 12, fontSize: 15,
-                  fontWeight: 700, cursor: loading ? 'not-allowed' : 'pointer',
-                  opacity: loading ? 0.6 : 1,
-                }}
-              >
-                {loading ? '⏳ Đang gửi...' : '📲 Gửi mã OTP'}
-              </button>
-            </>
-          ) : (
-            <>
-              <p style={{ textAlign: 'center', fontSize: 14, color: '#666' }}>
-                Mã OTP đã gửi đến <strong>{phone}</strong>
-              </p>
-              <label style={{ fontSize: 13, fontWeight: 600, color: '#666' }}>Mã xác thực</label>
-              <input
-                type="text"
-                placeholder="••••••"
-                maxLength={6}
-                value={code}
-                onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
-                onKeyDown={(e) => e.key === 'Enter' && handleVerify()}
-                autoFocus
-                style={{
-                  padding: '14px 16px', textAlign: 'center', fontSize: 28,
-                  letterSpacing: 12, fontWeight: 700, border: '1px solid #ddd',
-                  borderRadius: 12, outline: 'none', background: '#f5f5f5', color: '#1a1a1a',
-                }}
-              />
-              <button
-                onClick={handleVerify}
-                disabled={loading}
-                style={{
-                  padding: 14, background: 'linear-gradient(135deg, #2E7D32, #1B5E20)',
-                  color: '#fff', border: 'none', borderRadius: 12, fontSize: 15,
-                  fontWeight: 700, cursor: loading ? 'not-allowed' : 'pointer',
-                  opacity: loading ? 0.6 : 1,
-                }}
-              >
-                {loading ? '⏳ Đang xác thực...' : '🔐 Đăng nhập'}
-              </button>
-              <button
-                onClick={() => { setStep('phone'); setCode(''); setError(''); }}
-                style={{
-                  padding: 10, background: 'transparent', color: '#666',
-                  border: '1px solid #ddd', borderRadius: 12, fontSize: 13, cursor: 'pointer',
-                }}
-              >
-                ← Quay lại
-              </button>
-            </>
-          )}
+          <p style={{ textAlign: 'center', fontSize: 14, color: '#666', lineHeight: 1.6 }}>
+            Đăng nhập bằng Gmail đã được gán email cho tài khoản hướng dẫn viên.
+          </p>
+          <button
+            onClick={handleGoogleLogin}
+            disabled={loading}
+            style={{
+              padding: 14,
+              background: 'linear-gradient(135deg, #2E7D32, #1B5E20)',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 12,
+              fontSize: 15,
+              fontWeight: 700,
+              cursor: loading ? 'not-allowed' : 'pointer',
+              opacity: loading ? 0.6 : 1,
+            }}
+          >
+            {loading ? 'Đang chuyển đến Google...' : 'Đăng nhập với Google'}
+          </button>
+          <p style={{ textAlign: 'center', fontSize: 12, color: '#999', lineHeight: 1.6 }}>
+            Redirect URI cần khai báo trong Google Cloud Console. Ví dụ local: <strong>http://localhost:3001</strong>
+          </p>
 
           {error && (
             <div style={{

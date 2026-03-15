@@ -178,7 +178,7 @@ func (s *AuthService) VerifyOTP(ctx context.Context, req VerifyOTPRequest) (*Aut
 // GoogleLogin — Xử lý Google OAuth
 func (s *AuthService) GoogleLogin(ctx context.Context, idToken string) (*AuthResponse, error) {
 	// Verify Google ID token
-	googleUser, err := verifyGoogleToken(idToken)
+	googleUser, err := googleTokenVerifier(idToken)
 	if err != nil {
 		return nil, fmt.Errorf("token Google không hợp lệ: %w", err)
 	}
@@ -188,6 +188,25 @@ func (s *AuthService) GoogleLogin(ctx context.Context, idToken string) (*AuthRes
 	user, err := s.userRepo.GetByGoogleID(ctx, googleUser.ID)
 	if err != nil {
 		return nil, err
+	}
+
+	if user == nil && googleUser.Email != "" {
+		user, err = s.userRepo.GetByEmail(ctx, googleUser.Email)
+		if err != nil {
+			return nil, err
+		}
+		if user != nil {
+			if err := s.userRepo.LinkGoogleID(ctx, user.ID, googleUser.ID, googleUser.Picture); err != nil {
+				return nil, fmt.Errorf("không thể liên kết tài khoản Google: %w", err)
+			}
+			user, err = s.userRepo.GetByID(ctx, user.ID)
+			if err != nil {
+				return nil, err
+			}
+			if user == nil {
+				return nil, fmt.Errorf("không tìm thấy tài khoản sau khi liên kết Google")
+			}
+		}
 	}
 
 	if user == nil {
@@ -529,6 +548,50 @@ type GoogleUser struct {
 	EmailVerified string `json:"email_verified"`
 }
 
+var googleTokenVerifier = verifyGoogleToken
+
+func googleClientIDsFromEnv() []string {
+	rawIDs := strings.Split(os.Getenv("GOOGLE_CLIENT_IDS"), ",")
+	clientIDs := make([]string, 0, len(rawIDs)+1)
+	seen := make(map[string]struct{}, len(rawIDs)+1)
+
+	for _, rawID := range rawIDs {
+		clientID := strings.TrimSpace(rawID)
+		if clientID == "" {
+			continue
+		}
+		if _, exists := seen[clientID]; exists {
+			continue
+		}
+		seen[clientID] = struct{}{}
+		clientIDs = append(clientIDs, clientID)
+	}
+
+	if len(clientIDs) == 0 {
+		fallbackClientID := strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID"))
+		if fallbackClientID != "" {
+			clientIDs = append(clientIDs, fallbackClientID)
+		}
+	}
+
+	return clientIDs
+}
+
+func isAllowedGoogleAudience(audience string) bool {
+	clientIDs := googleClientIDsFromEnv()
+	if len(clientIDs) == 0 {
+		return true
+	}
+
+	for _, clientID := range clientIDs {
+		if audience == clientID {
+			return true
+		}
+	}
+
+	return false
+}
+
 func verifyGoogleToken(idToken string) (*GoogleUser, error) {
 	resp, err := http.Get("https://oauth2.googleapis.com/tokeninfo?id_token=" + idToken)
 	if err != nil {
@@ -548,7 +611,7 @@ func verifyGoogleToken(idToken string) (*GoogleUser, error) {
 	if user.Email == "" || user.EmailVerified != "true" {
 		return nil, fmt.Errorf("google account is not verified")
 	}
-	if clientID := os.Getenv("GOOGLE_CLIENT_ID"); clientID != "" && user.Audience != clientID {
+	if !isAllowedGoogleAudience(user.Audience) {
 		return nil, fmt.Errorf("google token audience mismatch")
 	}
 	return &user, nil

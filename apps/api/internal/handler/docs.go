@@ -43,7 +43,7 @@ func (h *DocsHandler) GetDocs(c *gin.Context) {
 		{Method: "PUT", Path: "/api/v1/experiences/:id", Description: "Cập nhật trải nghiệm", Auth: true, Category: "Experiences"},
 
 		// Places
-		{Method: "GET", Path: "/api/v1/places/search", Description: "Tìm kiếm địa điểm (Google Maps)", Category: "Places"},
+		{Method: "GET", Path: "/api/v1/places/search", Description: "Tìm kiếm địa điểm (Goong Maps)", Category: "Places"},
 		{Method: "GET", Path: "/api/v1/places/nearby", Description: "Địa điểm lân cận", Category: "Places"},
 		{Method: "GET", Path: "/api/v1/places/directions", Description: "Lấy chỉ đường", Category: "Places"},
 
@@ -111,13 +111,13 @@ func (h *DocsHandler) GetDocs(c *gin.Context) {
 	}
 
 	response.OK(c, gin.H{
-		"title":       "Huế Travel API Documentation",
-		"version":     "1.0.0",
-		"base_url":    "http://localhost:8080",
-		"total":       len(endpoints),
-		"categories":  categories,
-		"endpoints":   endpoints,
-		"auth_header": "Authorization: Bearer <token>",
+		"title":        "Huế Travel API Documentation",
+		"version":      "1.0.0",
+		"base_url":     "http://localhost:8080",
+		"total":        len(endpoints),
+		"categories":   categories,
+		"endpoints":    endpoints,
+		"auth_header":  "Authorization: Bearer <token>",
 		"content_type": "application/json",
 	})
 }
