@@ -75,26 +75,42 @@ npm install
 npm run dev  # http://localhost:3001
 ```
 
-## 📊 API Endpoints (63 endpoints)
+## 📊 API Endpoints (100+ endpoints)
 
 | Category | Count | Description |
 |---|---|---|
-| Auth | 6 | OTP, Google, refresh, logout |
+| Auth | 6 | OTP, Google OAuth, refresh, logout |
 | User | 3 | Profile, update, device token |
 | Experiences | 5 | CRUD, search, filter |
 | Bookings | 7 | Create, confirm, complete, cancel, guide |
-| Places | 3 | Search, nearby, detail |
-| Chat | 5 | Rooms, messages, WebSocket |
+| Places | 3 | Search, nearby, directions (Goong Maps) |
+| Chat | 5 | Rooms, messages, read, WebSocket |
 | Reviews | 4 | Create, list, featured |
-| Favorites | 3 | Add, remove, list |
-| Search | 3 | Full-text, suggest, trending |
-| Notifications | 3 | List, mark read, device |
-| AI | 4 | Trip plan, guide, translate |
-| Upload | 2 | File, avatar |
-| Payment | 3 | VNPay create, callback, verify |
-| Admin | 8 | Users, experiences, bookings CRUD |
+| Favorites | 3 | Toggle, list |
+| Search | 3 | Full-text (Meilisearch), suggest, trending |
+| Notifications | 4 | List, unread, mark read, device token |
+| AI | 4 | Trip plan, chat, suggest, translate |
+| Upload | 2 | File, avatar (MinIO) |
+| Payment | 3 | VNPay create, callback, methods |
+| Admin | 12 | Dashboard, users, experiences, bookings, reviews, reports |
+| Guides | 4 | Top, profile, direct booking, update |
+| Friends | 7 | Request, accept, decline, unfriend, list, pending, status |
+| Trips | 12 | Create, discover, invite, join, leave, invitations |
+| Feed/Stories | 6 | Create, list, like, comment, delete |
+| Blog | 7 | Posts, trending, create, like, comments |
+| Diary | 3 | Create, my entries, public entries |
+| Events | 3 | List, detail, RSVP |
+| Emergency | 4 | SOS, cancel, contacts, hospitals |
+| Calls | 8 | Initiate, answer, decline, end, leave, participants, history |
+| Reactions | 2 | Toggle, list |
+| Gamification | 6 | Achievements, leaderboard, check-in, stats |
+| Promotions | 4 | Active, create, apply, my coupons |
+| Weather | 3 | Current, forecast, best time |
+| Translate | 3 | Translate, detect, phrasebook |
+| Collections | 6 | Create, list, add/remove items, delete |
+| Report/Block | 4 | Report, block, unblock, list |
+| Guide Apply | 2 | Apply, status |
 | Health | 1 | Server health check |
-| Guides | 3 | List, profile, ratings |
 
 ## 🔧 Services Integration
 
@@ -108,7 +124,7 @@ npm run dev  # http://localhost:3001
 | ESMS.vn | SMS OTP | REST API |
 | Gemini | AI trip planning | REST API |
 | VNPay | Payment gateway | HTTP API |
-| Google Maps | Maps & geocoding | JS SDK |
+| Goong Maps | Maps, places, directions | REST API |
 
 ## 📖 Documentation
 

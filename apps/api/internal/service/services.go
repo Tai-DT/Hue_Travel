@@ -552,27 +552,33 @@ var googleTokenVerifier = verifyGoogleToken
 
 func googleClientIDsFromEnv() []string {
 	rawIDs := strings.Split(os.Getenv("GOOGLE_CLIENT_IDS"), ",")
-	clientIDs := make([]string, 0, len(rawIDs)+1)
-	seen := make(map[string]struct{}, len(rawIDs)+1)
+	clientIDs := make([]string, 0, len(rawIDs)+4)
+	seen := make(map[string]struct{}, len(rawIDs)+4)
+
+	addID := func(id string) {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return
+		}
+		if _, exists := seen[id]; exists {
+			return
+		}
+		seen[id] = struct{}{}
+		clientIDs = append(clientIDs, id)
+	}
 
 	for _, rawID := range rawIDs {
-		clientID := strings.TrimSpace(rawID)
-		if clientID == "" {
-			continue
-		}
-		if _, exists := seen[clientID]; exists {
-			continue
-		}
-		seen[clientID] = struct{}{}
-		clientIDs = append(clientIDs, clientID)
+		addID(rawID)
 	}
 
 	if len(clientIDs) == 0 {
-		fallbackClientID := strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID"))
-		if fallbackClientID != "" {
-			clientIDs = append(clientIDs, fallbackClientID)
-		}
+		addID(os.Getenv("GOOGLE_CLIENT_ID"))
 	}
+
+	// Also accept mobile platform client IDs (Expo / React Native)
+	addID(os.Getenv("EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID"))
+	addID(os.Getenv("EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID"))
+	addID(os.Getenv("EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID"))
 
 	return clientIDs
 }
@@ -580,6 +586,8 @@ func googleClientIDsFromEnv() []string {
 func isAllowedGoogleAudience(audience string) bool {
 	clientIDs := googleClientIDsFromEnv()
 	if len(clientIDs) == 0 {
+		// No client IDs configured — allow all audiences (dev mode)
+		log.Printf("⚠️ No GOOGLE_CLIENT_IDS configured — accepting all audiences (audience=%s)", audience)
 		return true
 	}
 
@@ -589,6 +597,7 @@ func isAllowedGoogleAudience(audience string) bool {
 		}
 	}
 
+	log.Printf("❌ Google audience mismatch: token_aud=%q, allowed=%v", audience, clientIDs)
 	return false
 }
 
@@ -600,7 +609,9 @@ func verifyGoogleToken(idToken string) (*GoogleUser, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("invalid token")
+		body, _ := io.ReadAll(resp.Body)
+		log.Printf("❌ Google tokeninfo returned %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("invalid token (status %d)", resp.StatusCode)
 	}
 
 	body, _ := io.ReadAll(resp.Body)
@@ -612,7 +623,7 @@ func verifyGoogleToken(idToken string) (*GoogleUser, error) {
 		return nil, fmt.Errorf("google account is not verified")
 	}
 	if !isAllowedGoogleAudience(user.Audience) {
-		return nil, fmt.Errorf("google token audience mismatch")
+		return nil, fmt.Errorf("google token audience mismatch: aud=%q not in allowed list (set GOOGLE_CLIENT_IDS env var)", user.Audience)
 	}
 	return &user, nil
 }

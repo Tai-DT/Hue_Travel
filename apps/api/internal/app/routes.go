@@ -24,8 +24,11 @@ func SetupRouter(c *Container) (*gin.Engine, *ws.Hub) {
 	r.Use(middleware.RequestID())
 	r.Use(middleware.Logger())
 	r.Use(middleware.CORS())
+	r.Use(middleware.SecurityHeaders())
 	r.Use(middleware.APIVersion(APIVersion))
 	r.Use(middleware.RateLimit(100, time.Minute))
+	r.Use(middleware.MaxBodySize(10 * 1024 * 1024)) // 10MB max
+	r.Use(middleware.Timeout(30 * time.Second))
 
 	// WebSocket Hub
 	hub := ws.NewHub()
@@ -58,10 +61,33 @@ func SetupRouter(c *Container) (*gin.Engine, *ws.Hub) {
 	registerAdminRoutes(v1, c, jwtSecret)
 	registerSearchRoutes(v1, c)
 	registerDocsRoutes(v1, c)
+	registerFriendRoutes(v1, c, jwtSecret)
+	registerTripRoutes(v1, c, jwtSecret)
+	registerReactionRoutes(v1, c, jwtSecret)
+	registerCallRoutes(v1, c, jwtSecret)
+	registerWeatherRoutes(v1, c)
+	registerPromotionRoutes(v1, c, jwtSecret)
+	registerGamificationRoutes(v1, c, jwtSecret)
+	registerBlogRoutes(v1, c, jwtSecret)
+	registerDiaryRoutes(v1, c, jwtSecret)
+	registerEventRoutes(v1, c, jwtSecret)
+	registerSOSRoutes(v1, c, jwtSecret)
+	registerTranslationRoutes(v1, c)
+	registerReportBlockRoutes(v1, c, jwtSecret)
+	registerGuideAppRoutes(v1, c, jwtSecret)
+	registerStoryRoutes(v1, c, jwtSecret)
+	registerTranslateRoutes(v1, c)
+	registerCollectionRoutes(v1, c, jwtSecret)
 
 	// Wire WebSocket hub to ChatHandler for real-time broadcast
 	if c.ChatH != nil {
 		c.ChatH.SetHub(hub)
+	}
+	if c.ReactionH != nil {
+		c.ReactionH.SetHub(hub)
+	}
+	if c.CallH != nil {
+		c.CallH.SetHub(hub)
 	}
 
 	return r, hub
@@ -144,6 +170,7 @@ func registerGuideRoutes(v1 *gin.RouterGroup, c *Container, jwtSecret string) {
 	}
 	guides := v1.Group("/guides")
 	guides.GET("/top", c.GuideH.TopGuides)
+	guides.GET("/:id/direct-booking", c.GuideH.GetDirectBookingExperience)
 	guides.GET("/:id", c.GuideH.GetProfile)
 
 	guideAuth := v1.Group("/guides")
@@ -237,6 +264,18 @@ func registerAdminRoutes(v1 *gin.RouterGroup, c *Container, jwtSecret string) {
 		admin.GET("/bookings", c.AdminMgmtH.ListBookings)
 		admin.PUT("/bookings/:id/status", c.AdminMgmtH.UpdateBookingStatus)
 	}
+
+	// Guide Applications (admin)
+	if c.GuideAppH != nil {
+		admin.GET("/guide-applications", c.GuideAppH.ListPending)
+		admin.POST("/guide-applications/:id/approve", c.GuideAppH.Approve)
+		admin.POST("/guide-applications/:id/reject", c.GuideAppH.Reject)
+	}
+
+	// Reports (admin)
+	if c.ReportH != nil {
+		admin.GET("/reports", c.ReportH.ListReports)
+	}
 }
 
 func registerSearchRoutes(v1 *gin.RouterGroup, c *Container) {
@@ -249,4 +288,260 @@ func registerSearchRoutes(v1 *gin.RouterGroup, c *Container) {
 
 func registerDocsRoutes(v1 *gin.RouterGroup, c *Container) {
 	v1.GET("/docs", c.DocsH.GetDocs)
+}
+
+func registerFriendRoutes(v1 *gin.RouterGroup, c *Container, jwtSecret string) {
+	if c.FriendH == nil {
+		return
+	}
+	friends := v1.Group("/friends")
+	friends.Use(middleware.Auth(jwtSecret))
+	friends.POST("/request", c.FriendH.SendRequest)
+	friends.POST("/:id/accept", c.FriendH.AcceptRequest)
+	friends.POST("/:id/decline", c.FriendH.DeclineRequest)
+	friends.DELETE("/:id", c.FriendH.Unfriend)
+	friends.GET("", c.FriendH.ListFriends)
+	friends.GET("/pending", c.FriendH.ListPendingRequests)
+	friends.GET("/status/:id", c.FriendH.CheckStatus)
+}
+
+func registerTripRoutes(v1 *gin.RouterGroup, c *Container, jwtSecret string) {
+	if c.TripH == nil {
+		return
+	}
+	trips := v1.Group("/trips")
+
+	// Public endpoints
+	trips.GET("/discover", c.TripH.Discover)
+
+	// Auth required
+	tripsAuth := trips.Group("")
+	tripsAuth.Use(middleware.Auth(jwtSecret))
+	tripsAuth.POST("", c.TripH.Create)
+	tripsAuth.GET("", c.TripH.ListMyTrips)
+	tripsAuth.GET("/invitations", c.TripH.ListInvitations)
+	tripsAuth.GET("/:id", c.TripH.GetByID)
+	tripsAuth.POST("/:id/invite", c.TripH.InviteMember)
+	tripsAuth.POST("/:id/invite-guide", c.TripH.InviteGuide)
+	tripsAuth.POST("/:id/accept", c.TripH.AcceptInvite)
+	tripsAuth.POST("/:id/decline", c.TripH.DeclineInvite)
+	tripsAuth.POST("/:id/join", c.TripH.JoinPublic)
+	tripsAuth.POST("/:id/leave", c.TripH.Leave)
+	tripsAuth.GET("/:id/guides", c.TripH.SearchGuides)
+}
+
+func registerReactionRoutes(v1 *gin.RouterGroup, c *Container, jwtSecret string) {
+	if c.ReactionH == nil {
+		return
+	}
+	reactions := v1.Group("/messages")
+	reactions.Use(middleware.Auth(jwtSecret))
+	reactions.POST("/:message_id/reactions", c.ReactionH.ToggleReaction)
+	reactions.GET("/:message_id/reactions", c.ReactionH.GetReactions)
+}
+
+func registerCallRoutes(v1 *gin.RouterGroup, c *Container, jwtSecret string) {
+	if c.CallH == nil {
+		return
+	}
+	calls := v1.Group("/calls")
+	calls.Use(middleware.Auth(jwtSecret))
+
+	// Call management
+	calls.POST("/rooms/:room_id/call", c.CallH.InitiateCall)
+	calls.GET("/rooms/:room_id/active", c.CallH.GetActiveCall)
+	calls.POST("/:call_id/answer", c.CallH.AnswerCall)
+	calls.POST("/:call_id/decline", c.CallH.DeclineCall)
+	calls.POST("/:call_id/end", c.CallH.EndCall)
+	calls.POST("/:call_id/leave", c.CallH.LeaveCall)
+	calls.GET("/:call_id/participants", c.CallH.GetCallParticipants)
+	calls.GET("/history", c.CallH.GetCallHistory)
+}
+
+func registerWeatherRoutes(v1 *gin.RouterGroup, c *Container) {
+	if c.WeatherH == nil {
+		return
+	}
+	weather := v1.Group("/weather")
+	weather.GET("/current", c.WeatherH.GetCurrent)
+	weather.GET("/forecast", c.WeatherH.GetForecast)
+	weather.GET("/best-time", c.WeatherH.GetBestTime)
+}
+
+func registerPromotionRoutes(v1 *gin.RouterGroup, c *Container, jwtSecret string) {
+	if c.PromoH == nil {
+		return
+	}
+	promos := v1.Group("/promotions")
+
+	// Public
+	promos.GET("/active", c.PromoH.ListActive)
+
+	// Auth required
+	promosAuth := promos.Group("")
+	promosAuth.Use(middleware.Auth(jwtSecret))
+	promosAuth.POST("", c.PromoH.Create)
+	promosAuth.POST("/apply", c.PromoH.Apply)
+	promosAuth.GET("/my-coupons", c.PromoH.MyCoupons)
+}
+
+func registerGamificationRoutes(v1 *gin.RouterGroup, c *Container, jwtSecret string) {
+	if c.GamH == nil {
+		return
+	}
+
+	// Public
+	v1.GET("/achievements", c.GamH.ListAchievements)
+	v1.GET("/leaderboard", c.GamH.GetLeaderboard)
+
+	// Auth required
+	gam := v1.Group("")
+	gam.Use(middleware.Auth(jwtSecret))
+	gam.GET("/achievements/my", c.GamH.MyAchievements)
+	gam.POST("/checkin", c.GamH.CheckIn)
+	gam.GET("/checkins", c.GamH.GetCheckins)
+	gam.GET("/gamification/stats", c.GamH.GetMyStats)
+}
+
+func registerBlogRoutes(v1 *gin.RouterGroup, c *Container, jwtSecret string) {
+	if c.BlogH == nil {
+		return
+	}
+	blog := v1.Group("/blog")
+
+	// Public
+	blog.GET("/posts", c.BlogH.List)
+	blog.GET("/posts/:slug", c.BlogH.GetBySlug)
+	blog.GET("/trending", c.BlogH.Trending)
+
+	// Separate group for post actions by ID
+	blogActions := v1.Group("/blog-posts")
+	blogActions.GET("/:id/comments", c.BlogH.ListComments)
+
+	// Auth
+	blogAuth := blogActions.Group("")
+	blogAuth.Use(middleware.Auth(jwtSecret))
+	blog.POST("/posts", middleware.Auth(jwtSecret), c.BlogH.Create)
+	blogAuth.POST("/:id/like", c.BlogH.ToggleLike)
+	blogAuth.POST("/:id/comments", c.BlogH.AddComment)
+}
+
+func registerDiaryRoutes(v1 *gin.RouterGroup, c *Container, jwtSecret string) {
+	if c.DiaryH == nil {
+		return
+	}
+
+	// Public
+	v1.GET("/diary/public", c.DiaryH.ListPublic)
+
+	// Auth
+	diary := v1.Group("/diary")
+	diary.Use(middleware.Auth(jwtSecret))
+	diary.POST("/entries", c.DiaryH.Create)
+	diary.GET("/entries", c.DiaryH.ListMine)
+}
+
+func registerEventRoutes(v1 *gin.RouterGroup, c *Container, jwtSecret string) {
+	if c.EventH == nil {
+		return
+	}
+	events := v1.Group("/events")
+
+	// Public
+	events.GET("", c.EventH.ListUpcoming)
+	events.GET("/:id", c.EventH.GetByID)
+
+	// Auth
+	eventsAuth := events.Group("")
+	eventsAuth.Use(middleware.Auth(jwtSecret))
+	eventsAuth.POST("/:id/rsvp", c.EventH.RSVP)
+}
+
+func registerSOSRoutes(v1 *gin.RouterGroup, c *Container, jwtSecret string) {
+	if c.SOSH == nil {
+		return
+	}
+	sos := v1.Group("/emergency")
+
+	// Public
+	sos.GET("/contacts", c.SOSH.GetContacts)
+	sos.GET("/hospitals", c.SOSH.GetNearbyHospitals)
+
+	// Auth
+	sosAuth := sos.Group("")
+	sosAuth.Use(middleware.Auth(jwtSecret))
+	sosAuth.POST("/sos", c.SOSH.SendSOS)
+	sosAuth.POST("/sos/:id/cancel", c.SOSH.CancelSOS)
+}
+
+func registerTranslationRoutes(v1 *gin.RouterGroup, c *Container) {
+	if c.TranslateH == nil {
+		return
+	}
+	v1.GET("/phrasebook", c.TranslateH.GetPhrasebook)
+}
+
+// ============================================
+// NEW FEATURES
+// ============================================
+
+func registerReportBlockRoutes(v1 *gin.RouterGroup, c *Container, jwtSecret string) {
+	if c.ReportH == nil {
+		return
+	}
+	rpt := v1.Group("/reports")
+	rpt.Use(middleware.Auth(jwtSecret))
+	rpt.POST("", c.ReportH.CreateReport)
+
+	block := v1.Group("/block")
+	block.Use(middleware.Auth(jwtSecret))
+	block.POST("", c.ReportH.BlockUser)
+	block.DELETE("/:id", c.ReportH.UnblockUser)
+	block.GET("", c.ReportH.ListBlocked)
+}
+
+func registerGuideAppRoutes(v1 *gin.RouterGroup, c *Container, jwtSecret string) {
+	if c.GuideAppH == nil {
+		return
+	}
+	ga := v1.Group("/guide-apply")
+	ga.Use(middleware.Auth(jwtSecret))
+	ga.POST("", c.GuideAppH.Apply)
+	ga.GET("/my", c.GuideAppH.MyApplication)
+}
+
+func registerStoryRoutes(v1 *gin.RouterGroup, c *Container, jwtSecret string) {
+	if c.StoryH == nil {
+		return
+	}
+	feed := v1.Group("/feed")
+	feed.Use(middleware.Auth(jwtSecret))
+	feed.POST("", c.StoryH.Create)
+	feed.GET("", c.StoryH.Feed)
+	feed.POST("/:id/like", c.StoryH.Like)
+	feed.POST("/:id/comment", c.StoryH.Comment)
+	feed.GET("/:id/comments", c.StoryH.ListComments)
+	feed.DELETE("/:id", c.StoryH.Delete)
+}
+
+func registerTranslateRoutes(v1 *gin.RouterGroup, c *Container) {
+	if c.TranslateNewH == nil {
+		return
+	}
+	v1.POST("/translate", c.TranslateNewH.Translate)
+	v1.POST("/translate/detect", c.TranslateNewH.DetectLanguage)
+}
+
+func registerCollectionRoutes(v1 *gin.RouterGroup, c *Container, jwtSecret string) {
+	if c.CollectionH == nil {
+		return
+	}
+	col := v1.Group("/collections")
+	col.Use(middleware.Auth(jwtSecret))
+	col.POST("", c.CollectionH.Create)
+	col.GET("", c.CollectionH.List)
+	col.POST("/:id/items", c.CollectionH.AddItem)
+	col.GET("/:id/items", c.CollectionH.GetItems)
+	col.DELETE("/:id/items/:item_id", c.CollectionH.RemoveItem)
+	col.DELETE("/:id", c.CollectionH.Delete)
 }

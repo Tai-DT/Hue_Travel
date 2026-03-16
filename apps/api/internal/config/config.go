@@ -21,6 +21,7 @@ type Config struct {
 	ESMS        ESMSConfig
 	FCM         FCMConfig
 	Meilisearch MeilisearchConfig
+	OpenWeather OpenWeatherConfig
 }
 
 type AppConfig struct {
@@ -89,6 +90,10 @@ type MeilisearchConfig struct {
 	MasterKey string
 }
 
+type OpenWeatherConfig struct {
+	APIKey string
+}
+
 func Load() (*Config, error) {
 	// Load .env file (optional in production)
 	_ = godotenv.Load("../../.env")
@@ -149,6 +154,9 @@ func Load() (*Config, error) {
 		Meilisearch: MeilisearchConfig{
 			URL:       getEnvAny([]string{"MEILISEARCH_URL", "MEILI_HOST"}, ""),
 			MasterKey: getEnvAny([]string{"MEILISEARCH_MASTER_KEY", "MEILI_MASTER_KEY"}, ""),
+		},
+		OpenWeather: OpenWeatherConfig{
+			APIKey: getEnv("OPENWEATHER_API_KEY", ""),
 		},
 	}
 

@@ -117,7 +117,7 @@ func (r *BookingRepository) ListByTraveler(ctx context.Context, travelerID uuid.
 	}
 	defer rows.Close()
 
-	var bookings []model.Booking
+	bookings := make([]model.Booking, 0)
 	for rows.Next() {
 		var b model.Booking
 		var exp model.Experience
@@ -191,7 +191,7 @@ func (r *BookingRepository) ListByGuide(ctx context.Context, guideID uuid.UUID, 
 	}
 	defer rows.Close()
 
-	var bookings []model.Booking
+	bookings := make([]model.Booking, 0)
 	for rows.Next() {
 		var b model.Booking
 		var exp model.Experience
@@ -265,7 +265,7 @@ func (r *BookingRepository) ListAll(ctx context.Context, status string, page, pe
 	}
 	defer rows.Close()
 
-	var bookings []model.Booking
+	bookings := make([]model.Booking, 0)
 	for rows.Next() {
 		var b model.Booking
 		var exp model.Experience

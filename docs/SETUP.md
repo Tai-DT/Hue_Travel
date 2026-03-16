@@ -215,7 +215,7 @@ Các biến điều khiển mock/strict:
 - `APP_STRICT_MODE=true` — Fail-fast khi thiếu cấu hình bắt buộc
 
 Các biến **tùy chọn** khi đang development:
-- `GOOGLE_MAPS_API_KEY` — Google Maps
+- `GOONG_API_KEY` — Goong Maps
 - `GEMINI_API_KEY` — AI features
 - `VNPAY_*` — Payment
 - `ESMS_*` — SMS OTP

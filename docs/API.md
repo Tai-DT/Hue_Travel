@@ -18,7 +18,7 @@
 8. [Guides](#guides)
 9. [Chat](#chat)
 10. [AI Trip Planner](#ai-trip-planner)
-11. [Places (Google Maps)](#places)
+11. [Places (Goong Maps)](#places)
 12. [Payment](#payment)
 13. [Notifications](#notifications)
 14. [File Upload](#file-upload)
@@ -361,9 +361,9 @@ Quick suggestions.
 ## Places
 
 ### `GET /places/search`
-Search places (Google Maps).
+Search places (Goong Maps).
 
-**Query params:** `query`
+**Query params:** `q`
 
 ### `GET /places/nearby`
 Find nearby restaurants.
@@ -374,6 +374,8 @@ Find nearby restaurants.
 Get directions.
 
 **Query params:** `origin`, `destination`, `mode`
+
+`origin` và `destination` dùng format `lat,lng`, ví dụ `16.4637,107.5909`.
 
 ---
 

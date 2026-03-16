@@ -31,6 +31,20 @@ type Container struct {
 	FavRepo     *repository.FavoriteRepository
 	GuideRepo   *repository.GuideProfileRepository
 	ChatRepo    *repository.ChatRepository
+	FriendRepo   *repository.FriendRepository
+	TripRepo     *repository.TripRepository
+	ReactionRepo *repository.ReactionRepository
+	CallRepo     *repository.CallRepository
+	PromoRepo    *repository.PromotionRepository
+	GamRepo      *repository.GamificationRepository
+	BlogRepo     *repository.BlogRepository
+	DiaryRepo    *repository.DiaryRepository
+	EventRepo    *repository.EventRepository
+	SOSRepo        *repository.SOSRepository
+	ReportRepo     *repository.ReportBlockRepository
+	GuideAppRepo   *repository.GuideAppRepository
+	StoryRepo      *repository.StoryRepository
+	CollectionRepo *repository.CollectionRepository
 
 	// Services
 	AuthSvc    *service.AuthService
@@ -42,6 +56,7 @@ type Container struct {
 	SearchSvc  *service.SearchService
 	SMSSvc     *service.SMSService
 	UploadSvc  *service.FileUploadService
+	WeatherSvc *service.WeatherService
 	BGWorker   *service.BackgroundWorker
 
 	// Handlers
@@ -62,6 +77,23 @@ type Container struct {
 	AdminH     *handler.AdminHandler
 	AdminMgmtH *handler.AdminManagementHandler
 	DocsH      *handler.DocsHandler
+	FriendH    *handler.FriendHandler
+	TripH      *handler.TripHandler
+	ReactionH  *handler.ReactionHandler
+	CallH      *handler.CallHandler
+	WeatherH   *handler.WeatherHandler
+	PromoH     *handler.PromotionHandler
+	GamH       *handler.GamificationHandler
+	BlogH      *handler.BlogHandler
+	DiaryH     *handler.DiaryHandler
+	EventH     *handler.EventHandler
+	SOSH       *handler.SOSHandler
+	TranslateH    *handler.TranslationHandler
+	ReportH       *handler.ReportBlockHandler
+	GuideAppH     *handler.GuideAppHandler
+	StoryH        *handler.StoryHandler
+	CollectionH   *handler.CollectionHandler
+	TranslateNewH *handler.TranslateHandler
 
 	// Status
 	DBConnected    bool
@@ -124,6 +156,20 @@ func (c *Container) initRepositories() {
 	c.FavRepo = repository.NewFavoriteRepository(c.Pool)
 	c.GuideRepo = repository.NewGuideProfileRepository(c.Pool)
 	c.ChatRepo = repository.NewChatRepository(c.Pool)
+	c.FriendRepo = repository.NewFriendRepository(c.Pool)
+	c.TripRepo = repository.NewTripRepository(c.Pool)
+	c.ReactionRepo = repository.NewReactionRepository(c.Pool)
+	c.CallRepo = repository.NewCallRepository(c.Pool)
+	c.PromoRepo = repository.NewPromotionRepository(c.Pool)
+	c.GamRepo = repository.NewGamificationRepository(c.Pool)
+	c.BlogRepo = repository.NewBlogRepository(c.Pool)
+	c.DiaryRepo = repository.NewDiaryRepository(c.Pool)
+	c.EventRepo = repository.NewEventRepository(c.Pool)
+	c.SOSRepo = repository.NewSOSRepository(c.Pool)
+	c.ReportRepo = repository.NewReportBlockRepository(c.Pool)
+	c.GuideAppRepo = repository.NewGuideAppRepository(c.Pool)
+	c.StoryRepo = repository.NewStoryRepository(c.Pool)
+	c.CollectionRepo = repository.NewCollectionRepository(c.Pool)
 
 	slog.Info("All repositories initialized")
 }
@@ -159,6 +205,7 @@ func (c *Container) initServices() {
 		cfg.MinIO.Endpoint, cfg.MinIO.User, cfg.MinIO.Password,
 		cfg.MinIO.Bucket, cfg.MinIO.UseSSL,
 	)
+	c.WeatherSvc = service.NewWeatherService(cfg.OpenWeather.APIKey)
 
 	slog.Info("All services initialized")
 }
@@ -201,6 +248,55 @@ func (c *Container) initHandlers() {
 	}
 	if c.UserRepo != nil && c.ExpRepo != nil && c.BookingRepo != nil {
 		c.AdminMgmtH = handler.NewAdminManagementHandler(c.UserRepo, c.ExpRepo, c.BookingRepo, c.ReviewRepo)
+	}
+	if c.FriendRepo != nil {
+		c.FriendH = handler.NewFriendHandler(c.FriendRepo)
+	}
+	if c.TripRepo != nil {
+		c.TripH = handler.NewTripHandler(c.TripRepo, c.ChatRepo, c.GuideRepo, c.FriendRepo)
+	}
+	if c.ReactionRepo != nil {
+		c.ReactionH = handler.NewReactionHandler(c.ReactionRepo)
+	}
+	if c.CallRepo != nil {
+		c.CallH = handler.NewCallHandler(c.CallRepo, c.ChatRepo)
+	}
+
+	// Always-available (weather)
+	c.WeatherH = handler.NewWeatherHandler(c.WeatherSvc)
+
+	// DB-dependent (promo, gamification)
+	if c.PromoRepo != nil {
+		c.PromoH = handler.NewPromotionHandler(c.PromoRepo)
+	}
+	if c.GamRepo != nil {
+		c.GamH = handler.NewGamificationHandler(c.GamRepo)
+	}
+	if c.BlogRepo != nil {
+		c.BlogH = handler.NewBlogHandler(c.BlogRepo)
+	}
+	if c.DiaryRepo != nil {
+		c.DiaryH = handler.NewDiaryHandler(c.DiaryRepo)
+	}
+	if c.EventRepo != nil {
+		c.EventH = handler.NewEventHandler(c.EventRepo)
+	}
+	if c.SOSRepo != nil {
+		c.SOSH = handler.NewSOSHandler(c.SOSRepo)
+	}
+	c.TranslateH = handler.NewTranslationHandler()
+	c.TranslateNewH = handler.NewTranslateHandler()
+	if c.ReportRepo != nil {
+		c.ReportH = handler.NewReportBlockHandler(c.ReportRepo)
+	}
+	if c.GuideAppRepo != nil {
+		c.GuideAppH = handler.NewGuideAppHandler(c.GuideAppRepo)
+	}
+	if c.StoryRepo != nil {
+		c.StoryH = handler.NewStoryHandler(c.StoryRepo)
+	}
+	if c.CollectionRepo != nil {
+		c.CollectionH = handler.NewCollectionHandler(c.CollectionRepo)
 	}
 
 	slog.Info("All handlers initialized")

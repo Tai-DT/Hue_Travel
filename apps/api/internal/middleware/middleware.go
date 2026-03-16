@@ -453,3 +453,66 @@ func APIVersion(version string) gin.HandlerFunc {
 		c.Next()
 	}
 }
+
+// ============================================
+// Security Headers Middleware
+// ============================================
+
+func SecurityHeaders() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Prevent XSS attacks
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("X-Frame-Options", "DENY")
+		c.Header("X-XSS-Protection", "1; mode=block")
+
+		// HSTS — Force HTTPS in production
+		if os.Getenv("APP_ENV") == "production" {
+			c.Header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
+
+		// Content Security Policy
+		c.Header("Content-Security-Policy", "default-src 'self'")
+
+		// Referrer Policy
+		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
+
+		// Permissions Policy
+		c.Header("Permissions-Policy", "camera=(), microphone=(), geolocation=(self)")
+
+		c.Next()
+	}
+}
+
+// ============================================
+// Max Body Size Middleware — Prevent large payloads
+// ============================================
+
+func MaxBodySize(maxBytes int64) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.Request.ContentLength > maxBytes {
+			c.AbortWithStatusJSON(http.StatusRequestEntityTooLarge, gin.H{
+				"success": false,
+				"error": gin.H{
+					"code":    "HT-SEC-001",
+					"message": fmt.Sprintf("Request quá lớn. Tối đa %dMB.", maxBytes/(1024*1024)),
+				},
+			})
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
+		c.Next()
+	}
+}
+
+// ============================================
+// Request Timeout Middleware
+// ============================================
+
+func Timeout(timeout time.Duration) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), timeout)
+		defer cancel()
+		c.Request = c.Request.WithContext(ctx)
+		c.Next()
+	}
+}

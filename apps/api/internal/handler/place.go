@@ -3,6 +3,7 @@ package handler
 import (
 	"errors"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -94,13 +95,21 @@ func (h *PlaceHandler) NearbyRestaurants(c *gin.Context) {
 }
 
 func (h *PlaceHandler) GetDirections(c *gin.Context) {
-	originLat, _ := strconv.ParseFloat(c.Query("origin_lat"), 64)
-	originLng, _ := strconv.ParseFloat(c.Query("origin_lng"), 64)
-	destLat, _ := strconv.ParseFloat(c.Query("dest_lat"), 64)
-	destLng, _ := strconv.ParseFloat(c.Query("dest_lng"), 64)
+	originLat, originLng := parseCoordinatePair(c.Query("origin"))
+	if originLat == 0 && originLng == 0 {
+		originLat, _ = strconv.ParseFloat(c.Query("origin_lat"), 64)
+		originLng, _ = strconv.ParseFloat(c.Query("origin_lng"), 64)
+	}
+
+	destLat, destLng := parseCoordinatePair(c.Query("destination"))
+	if destLat == 0 && destLng == 0 {
+		destLat, _ = strconv.ParseFloat(c.Query("dest_lat"), 64)
+		destLng, _ = strconv.ParseFloat(c.Query("dest_lng"), 64)
+	}
+
 	mode := c.DefaultQuery("mode", "driving")
 
-	if originLat == 0 || destLat == 0 {
+	if originLat == 0 || originLng == 0 || destLat == 0 || destLng == 0 {
 		response.BadRequest(c, "HT-VAL-001", "Thiếu toạ độ origin/destination")
 		return
 	}
@@ -116,4 +125,23 @@ func (h *PlaceHandler) GetDirections(c *gin.Context) {
 	}
 
 	response.OK(c, gin.H{"directions": dir})
+}
+
+func parseCoordinatePair(raw string) (float64, float64) {
+	parts := strings.Split(strings.TrimSpace(raw), ",")
+	if len(parts) != 2 {
+		return 0, 0
+	}
+
+	lat, err := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64)
+	if err != nil {
+		return 0, 0
+	}
+
+	lng, err := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
+	if err != nil {
+		return 0, 0
+	}
+
+	return lat, lng
 }

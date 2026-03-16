@@ -276,7 +276,14 @@ func (c *Client) ReadPump() {
 				c.Hub.JoinRoom(wsMsg.RoomID, c.UserID)
 			case "leave":
 				c.Hub.LeaveRoom(wsMsg.RoomID, c.UserID)
-			case "message", "typing", "read":
+			case "message", "typing", "read", "reaction":
+				data, _ := json.Marshal(wsMsg)
+				c.Hub.broadcast <- data
+
+			// WebRTC Call Signaling
+			case "call_offer", "call_answer", "ice_candidate",
+				"call_ringing", "call_accepted", "call_declined",
+				"call_ended", "call_leave":
 				data, _ := json.Marshal(wsMsg)
 				c.Hub.broadcast <- data
 			}

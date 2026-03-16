@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -19,6 +20,7 @@ type SearchService struct {
 	meilisearchURL  string
 	masterKey       string
 	indexed         map[string][]SearchDocument
+	mu              sync.RWMutex
 	httpClient      *http.Client
 	fallbackEnabled bool
 }
@@ -148,6 +150,7 @@ func (s *SearchService) Search(ctx context.Context, query string, filters Search
 	var results []SearchDocument
 	queryLower := strings.ToLower(query)
 
+	s.mu.RLock()
 	for _, docs := range s.indexed {
 		for _, doc := range docs {
 			if s.matchesQuery(doc, queryLower) && s.matchesFilters(doc, filters) {
@@ -155,6 +158,7 @@ func (s *SearchService) Search(ctx context.Context, query string, filters Search
 			}
 		}
 	}
+	s.mu.RUnlock()
 
 	// Apply limit/offset
 	limit := filters.Limit
@@ -317,6 +321,7 @@ func (s *SearchService) buildFacets(query, queryLower string) map[string][]Facet
 	categories := make(map[string]int)
 	types := make(map[string]int)
 
+	s.mu.RLock()
 	for _, docs := range s.indexed {
 		for _, doc := range docs {
 			if s.matchesQuery(doc, queryLower) {
@@ -325,6 +330,7 @@ func (s *SearchService) buildFacets(query, queryLower string) map[string][]Facet
 			}
 		}
 	}
+	s.mu.RUnlock()
 
 	facets := map[string][]Facet{}
 	for k, v := range categories {
@@ -347,6 +353,7 @@ func (s *SearchService) Suggest(ctx context.Context, query string, limit int) []
 	queryLower := strings.ToLower(query)
 	suggestions := make(map[string]bool)
 
+	s.mu.RLock()
 	for _, docs := range s.indexed {
 		for _, doc := range docs {
 			if strings.Contains(strings.ToLower(doc.Title), queryLower) {
@@ -359,6 +366,7 @@ func (s *SearchService) Suggest(ctx context.Context, query string, limit int) []
 			}
 		}
 	}
+	s.mu.RUnlock()
 
 	var result []string
 	for sg := range suggestions {
@@ -394,7 +402,9 @@ func (s *SearchService) Trending() []string {
 func (s *SearchService) IndexDocument(docType string, doc SearchDocument) {
 	doc.Type = docType
 	doc.CreatedAt = time.Now()
+	s.mu.Lock()
 	s.indexed[docType] = append(s.indexed[docType], doc)
+	s.mu.Unlock()
 
 	// Also index to Meilisearch if configured
 	if s.IsConfigured() {
@@ -414,10 +424,12 @@ func (s *SearchService) IndexDocument(docType string, doc SearchDocument) {
 func (s *SearchService) GetStats() map[string]int {
 	stats := make(map[string]int)
 	total := 0
+	s.mu.RLock()
 	for k, v := range s.indexed {
 		stats[k] = len(v)
 		total += len(v)
 	}
+	s.mu.RUnlock()
 	stats["total"] = total
 	return stats
 }
@@ -491,7 +503,7 @@ func (s *SearchService) syncExperiencesFromDB(ctx context.Context, pool interfac
 }
 
 func (s *SearchService) syncPlacesFromDB(_ context.Context) {
-	// Places come from Google Maps, not DB — keep mock data as fallback
+	// Places come from Goong maps, not DB — keep mock data as fallback
 	// In production, this would sync from a places cache table
 }
 
@@ -504,7 +516,9 @@ func (s *SearchService) BulkIndex(docType string, docs []SearchDocument) {
 		}
 	}
 
+	s.mu.Lock()
 	s.indexed[docType] = docs
+	s.mu.Unlock()
 
 	// Also bulk-push to Meilisearch if configured
 	if s.IsConfigured() && len(docs) > 0 {

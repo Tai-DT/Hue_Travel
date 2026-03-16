@@ -64,11 +64,19 @@ func (r *UserRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.User
 }
 
 func (r *UserRepository) GetByPhone(ctx context.Context, phone string) (*model.User, error) {
+	candidates := phoneLookupCandidates(phone)
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+
 	user := &model.User{}
 	err := r.pool.QueryRow(ctx, `
 		SELECT id, phone, email, full_name, avatar_url, role, bio, languages,
 			   xp, level, is_verified, is_active, last_login_at, created_at, updated_at
-		FROM users WHERE phone = $1 AND is_active = TRUE`, phone,
+		FROM users
+		WHERE phone = ANY($1) AND is_active = TRUE
+		ORDER BY CASE WHEN phone = $2 THEN 0 ELSE 1 END
+		LIMIT 1`, candidates, candidates[0],
 	).Scan(
 		&user.ID, &user.Phone, &user.Email, &user.FullName, &user.AvatarURL,
 		&user.Role, &user.Bio, &user.Languages,

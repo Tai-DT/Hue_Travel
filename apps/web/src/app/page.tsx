@@ -12,6 +12,8 @@ const AnalyticsPage = lazy(() => import('./analytics/page'));
 const ReviewsPage = lazy(() => import('./reviews/page'));
 const ReportsPage = lazy(() => import('./reports/page'));
 const SupportPage = lazy(() => import('./support/page'));
+const GuideAppsPage = lazy(() => import('./guide-apps/page'));
+const ModerationPage = lazy(() => import('./moderation/page'));
 
 const PageFallback = () => (
   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 400, color: 'var(--text-muted)' }}>
@@ -42,7 +44,11 @@ const NAV_ITEMS: NavSection[] = [
     { icon: '🏛️', label: 'Trải nghiệm', key: 'experiences' },
     { icon: '📋', label: 'Bookings', key: 'bookings' },
     { icon: '⭐', label: 'Đánh giá', key: 'reviews' },
+    { icon: '🎓', label: 'Đơn đăng ký Guide', key: 'guide-apps' },
     { icon: '💬', label: 'Hỗ trợ', key: 'support' },
+  ]},
+  { section: 'Kiểm duyệt', items: [
+    { icon: '🛡️', label: 'Nội dung & Báo cáo', key: 'moderation' },
   ]},
   { section: 'Hệ thống', items: [
     { icon: '⚙️', label: 'Cài đặt', key: 'settings' },
@@ -298,6 +304,8 @@ export default function AdminDashboard() {
       case 'reviews': return '⭐ Đánh giá';
       case 'reports': return '💰 Doanh thu';
       case 'support': return '💬 Hỗ trợ';
+      case 'guide-apps': return '🎓 Đơn đăng ký Guide';
+      case 'moderation': return '🛡️ Kiểm duyệt nội dung';
       case 'settings': return '⚙️ Cài đặt';
       default: return '📊 Dashboard';
     }
@@ -380,6 +388,10 @@ export default function AdminDashboard() {
             <Suspense fallback={<PageFallback />}><ReportsPage /></Suspense>
           ) : activePage === 'support' ? (
             <Suspense fallback={<PageFallback />}><SupportPage /></Suspense>
+          ) : activePage === 'guide-apps' ? (
+            <Suspense fallback={<PageFallback />}><GuideAppsPage /></Suspense>
+          ) : activePage === 'moderation' ? (
+            <Suspense fallback={<PageFallback />}><ModerationPage /></Suspense>
           ) : (
             <DashboardContent />
           )}

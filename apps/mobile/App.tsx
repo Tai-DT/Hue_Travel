@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import {
+  Alert,
   View,
   Text,
   StyleSheet,
@@ -25,25 +26,27 @@ import SettingsScreen from './src/screens/SettingsScreen';
 import NotificationScreen from './src/screens/NotificationScreen';
 import ExperienceDetailScreen from './src/screens/ExperienceDetailScreen';
 import PaymentScreen from './src/screens/PaymentScreen';
+import SocialScreen from './src/screens/SocialScreen';
+import MoreScreen from './src/screens/MoreScreen';
 
 // ============================================
 // App State & Types
 // ============================================
 type AppScreen = 'welcome' | 'login' | 'main';
-type MainTab = 'home' | 'explore' | 'ai' | 'bookings' | 'profile';
+type MainTab = 'home' | 'social' | 'ai' | 'bookings' | 'more';
 
 const TAB_KEYS: Array<{
   key: MainTab;
   icon: string;
   activeIcon: string;
-  i18nKey: string;
+  label: string;
   badge?: number;
 }> = [
-  { key: 'home', icon: '🏠', activeIcon: '🏡', i18nKey: 'nav.home' },
-  { key: 'explore', icon: '🔍', activeIcon: '🗺️', i18nKey: 'nav.explore' },
-  { key: 'ai', icon: '🤖', activeIcon: '✨', i18nKey: 'nav.aiGuide' },
-  { key: 'bookings', icon: '📋', activeIcon: '📅', i18nKey: 'nav.bookings' },
-  { key: 'profile', icon: '👤', activeIcon: '😊', i18nKey: 'nav.profile' },
+  { key: 'home', icon: '🏠', activeIcon: '🏡', label: 'Trang chủ' },
+  { key: 'social', icon: '👥', activeIcon: '🌐', label: 'Cộng đồng' },
+  { key: 'ai', icon: '🤖', activeIcon: '✨', label: 'AI Guide' },
+  { key: 'bookings', icon: '📋', activeIcon: '📅', label: 'Đặt chỗ' },
+  { key: 'more', icon: '⚡', activeIcon: '🔥', label: 'Thêm' },
 ];
 
 export default function App() {
@@ -65,6 +68,7 @@ function AppContent() {
   const [showChat, setShowChat] = useState(false);
   const [showNotifs, setShowNotifs] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
   const [selectedExperience, setSelectedExperience] = useState<Experience | null>(null);
   const [paymentBooking, setPaymentBooking] = useState<Booking | null>(null);
   const [chatUnread, setChatUnread] = useState(0);
@@ -83,7 +87,10 @@ function AppContent() {
     setCurrentUser(user || null);
     const needsAttention = Boolean(isNewUser) || requiresProfileCompletion(user);
     setProfileNeedsAttention(needsAttention);
-    setActiveTab(needsAttention ? 'profile' : 'home');
+    if (needsAttention) {
+      setShowProfile(true);
+    }
+    setActiveTab('home');
   }, [requiresProfileCompletion]);
 
   const resetLoggedOutState = useCallback(async (nextScreen: AppScreen) => {
@@ -94,6 +101,7 @@ function AppContent() {
     setShowChat(false);
     setShowNotifs(false);
     setShowSettings(false);
+    setShowProfile(false);
     setSelectedExperience(null);
     setPaymentBooking(null);
     setChatUnread(0);
@@ -167,6 +175,16 @@ function AppContent() {
     setSelectedExperience(experience);
   }, []);
 
+  const handleOpenGuide = useCallback(async (guideId: string) => {
+    const result = await api.getDirectGuideExperience(guideId);
+    if (result.success && result.data) {
+      setSelectedExperience(result.data);
+      return;
+    }
+
+    Alert.alert('Không thể tải guide', result.error?.message || 'Vui lòng thử lại sau.');
+  }, []);
+
   const handleBookingCreated = useCallback((booking: Booking) => {
     setSelectedExperience(null);
     setPaymentBooking(booking);
@@ -213,7 +231,7 @@ function AppContent() {
         setShowChat(true);
         break;
       case 'profile':
-        setActiveTab('profile');
+        setShowProfile(true);
         break;
     }
   }, [screen]);
@@ -368,6 +386,30 @@ function AppContent() {
     );
   }
 
+  // Profile overlay
+  if (showProfile) {
+    return (
+      <>
+        <StatusBar barStyle="light-content" backgroundColor={Colors.background} />
+        <ProfileScreen
+          highlightIncompleteProfile={profileNeedsAttention}
+          onProfileUpdated={(user) => {
+            setCurrentUser(user);
+            setProfileNeedsAttention(requiresProfileCompletion(user));
+          }}
+          onOpenSettings={() => { setShowProfile(false); setShowSettings(true); }}
+          onLogout={handleLogout}
+        />
+        <TouchableOpacity
+          style={styles.chatBackBtn}
+          onPress={() => setShowProfile(false)}
+        >
+          <Text style={styles.chatBackText}>← {t('common.back')}</Text>
+        </TouchableOpacity>
+      </>
+    );
+  }
+
   // Main app with bottom tabs
   return (
     <View style={styles.container}>
@@ -377,31 +419,26 @@ function AppContent() {
       <View style={styles.content}>
         {activeTab === 'home' && (
           <HomeScreen
-            onOpenExplore={() => setActiveTab('explore')}
+            onOpenExplore={() => setActiveTab('social')}
             onOpenAI={() => setActiveTab('ai')}
             onSelectExperience={handleOpenExperience}
+            onSelectGuide={handleOpenGuide}
             userName={currentUser?.full_name}
           />
         )}
-        {activeTab === 'explore' && <MapScreen />}
+        {activeTab === 'social' && <SocialScreen />}
         {activeTab === 'ai' && <AIGuideScreen />}
         {activeTab === 'bookings' && (
           <BookingScreen onOpenPayment={setPaymentBooking} />
         )}
-        {activeTab === 'profile' && (
-          <ProfileScreen
-            highlightIncompleteProfile={profileNeedsAttention}
-            onProfileUpdated={(user) => {
-              setCurrentUser(user);
-              setProfileNeedsAttention(requiresProfileCompletion(user));
-            }}
-            onOpenSettings={() => setShowSettings(true)}
-            onLogout={handleLogout}
-          />
-        )}
+        {activeTab === 'more' && <MoreScreen />}
       </View>
 
       {/* Floating Buttons */}
+      <TouchableOpacity style={styles.floatingProfile} onPress={() => setShowProfile(true)}>
+        <Text style={styles.floatingNotifIcon}>👤</Text>
+      </TouchableOpacity>
+
       <TouchableOpacity style={styles.floatingNotif} onPress={() => setShowNotifs(true)}>
         <Text style={styles.floatingNotifIcon}>🔔</Text>
         {notifUnread > 0 ? (
@@ -426,7 +463,7 @@ function AppContent() {
           <TabItem
             key={tab.key}
             icon={activeTab === tab.key ? tab.activeIcon : tab.icon}
-            label={t(tab.i18nKey)}
+            label={tab.label}
             tab={tab.key}
             active={activeTab === tab.key}
             onPress={setActiveTab}
@@ -619,6 +656,27 @@ const styles = StyleSheet.create({
   },
   floatingChatIcon: {
     fontSize: 24,
+  },
+
+  // Floating Profile
+  floatingProfile: {
+    position: 'absolute',
+    right: 20,
+    bottom: 228,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: Colors.surface,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: Colors.border,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 5,
+    zIndex: 100,
   },
 
   // Floating Notification

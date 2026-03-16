@@ -20,6 +20,7 @@ const CARD_WIDTH = width * 0.7;
 
 type Props = {
   onSelectExperience: (experience: Experience) => void;
+  onSelectGuide: (guideId: string) => Promise<void> | void;
   onOpenExplore: () => void;
   onOpenAI: () => void;
   userName?: string;
@@ -59,7 +60,7 @@ function formatGuideBadge(level?: string) {
 
 function toGuideCard(guide: Guide, defaultName: string): GuideCardItem {
   return {
-    id: guide.id,
+    id: guide.user_id,
     name: guide.user?.full_name || defaultName,
     rating: (guide.avg_rating || 0).toFixed(1),
     badge: formatGuideBadge(guide.badge_level),
@@ -71,7 +72,7 @@ function getGreetingName(userName: string | undefined, defaultUser: string, defa
   return userName.trim().split(' ').slice(-1)[0];
 }
 
-export default function HomeScreen({ onSelectExperience, onOpenExplore, onOpenAI, userName }: Props) {
+export default function HomeScreen({ onSelectExperience, onSelectGuide, onOpenExplore, onOpenAI, userName }: Props) {
   const { t } = useTranslation();
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [experiences, setExperiences] = useState<Experience[]>([]);
@@ -79,6 +80,7 @@ export default function HomeScreen({ onSelectExperience, onOpenExplore, onOpenAI
   const [refreshing, setRefreshing] = useState(false);
   const [experiencesError, setExperiencesError] = useState('');
   const [guidesError, setGuidesError] = useState('');
+  const [loadingGuideId, setLoadingGuideId] = useState<string | null>(null);
 
   const categories = useMemo(() => CATEGORY_KEYS.map((c) => ({ ...c, label: t(c.i18nKey) })), [t]);
 
@@ -227,7 +229,20 @@ export default function HomeScreen({ onSelectExperience, onOpenExplore, onOpenAI
             contentContainerStyle={styles.guidesContainer}
           >
             {guides.map((guide) => (
-              <TouchableOpacity key={guide.id} style={styles.guideCard} activeOpacity={0.7}>
+              <TouchableOpacity
+                key={guide.id}
+                style={styles.guideCard}
+                activeOpacity={0.7}
+                disabled={loadingGuideId === guide.id}
+                onPress={async () => {
+                  setLoadingGuideId(guide.id);
+                  try {
+                    await onSelectGuide(guide.id);
+                  } finally {
+                    setLoadingGuideId((current) => (current === guide.id ? null : current));
+                  }
+                }}
+              >
                 <View style={styles.guideAvatar}>
                   <Text style={styles.guideAvatarText}>{guide.name[0]}</Text>
                 </View>
@@ -237,6 +252,11 @@ export default function HomeScreen({ onSelectExperience, onOpenExplore, onOpenAI
                   <Text style={styles.guideRatingText}>{guide.rating}</Text>
                 </View>
                 <Text style={styles.guideBadge}>{guide.badge}</Text>
+                {loadingGuideId === guide.id ? (
+                  <ActivityIndicator size="small" color={Colors.primary} style={styles.guideLoading} />
+                ) : (
+                  <Text style={styles.guideAction}>Đặt guide riêng</Text>
+                )}
               </TouchableOpacity>
             ))}
           </ScrollView>
@@ -661,7 +681,7 @@ const styles = StyleSheet.create({
   },
   guideCard: {
     alignItems: 'center',
-    width: 80,
+    width: 108,
     gap: Spacing.xs,
   },
   guideAvatar: {
@@ -701,5 +721,15 @@ const styles = StyleSheet.create({
   guideBadge: {
     fontSize: Fonts.sizes.xs,
     color: Colors.primaryLight,
+    textAlign: 'center',
+  },
+  guideAction: {
+    fontSize: Fonts.sizes.xs,
+    color: Colors.primary,
+    fontWeight: Fonts.weights.bold,
+    textAlign: 'center',
+  },
+  guideLoading: {
+    marginTop: 2,
   },
 });

@@ -65,7 +65,7 @@ APP_URL=https://api.huetravel.vn
 CORS_ORIGINS=https://admin.huetravel.vn,https://provider.huetravel.vn
 
 # API Keys (required for full functionality)
-GOOGLE_MAPS_API_KEY=<your-key>
+GOONG_API_KEY=<your-key>
 GEMINI_API_KEY=<your-key>
 VNPAY_TMN_CODE=<your-code>
 VNPAY_HASH_SECRET=<your-secret>

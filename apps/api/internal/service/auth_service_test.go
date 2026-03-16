@@ -77,10 +77,13 @@ func TestAuthServiceGoogleLoginLinksExistingUserByEmail(t *testing.T) {
 func TestGoogleClientIDsFromEnv(t *testing.T) {
 	t.Setenv("GOOGLE_CLIENT_IDS", "web-client, mobile-client , web-client")
 	t.Setenv("GOOGLE_CLIENT_ID", "fallback-client")
+	t.Setenv("EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID", "")
+	t.Setenv("EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID", "")
+	t.Setenv("EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID", "")
 
 	clientIDs := googleClientIDsFromEnv()
 	if len(clientIDs) != 2 {
-		t.Fatalf("expected 2 unique client IDs, got %d", len(clientIDs))
+		t.Fatalf("expected 2 unique client IDs, got %d: %v", len(clientIDs), clientIDs)
 	}
 	if clientIDs[0] != "web-client" || clientIDs[1] != "mobile-client" {
 		t.Fatalf("unexpected client IDs: %#v", clientIDs)
@@ -90,6 +93,9 @@ func TestGoogleClientIDsFromEnv(t *testing.T) {
 func TestIsAllowedGoogleAudienceFallback(t *testing.T) {
 	t.Setenv("GOOGLE_CLIENT_IDS", "")
 	t.Setenv("GOOGLE_CLIENT_ID", "single-client")
+	t.Setenv("EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID", "")
+	t.Setenv("EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID", "")
+	t.Setenv("EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID", "")
 
 	if !isAllowedGoogleAudience("single-client") {
 		t.Fatal("expected fallback GOOGLE_CLIENT_ID to be allowed")

@@ -25,9 +25,6 @@
         "NSCameraUsageDescription": "Để chụp ảnh avatar và đánh giá tour",
         "NSPhotoLibraryUsageDescription": "Để chọn ảnh avatar và đánh giá tour"
       },
-      "config": {
-        "googleMapsApiKey": ""
-      },
       "associatedDomains": [
         "applinks:huetravel.vn"
       ]
@@ -60,11 +57,6 @@
           "category": ["BROWSABLE", "DEFAULT"]
         }
       ],
-      "config": {
-        "googleMaps": {
-          "apiKey": ""
-        }
-      },
       "permissions": [
         "CAMERA",
         "READ_EXTERNAL_STORAGE",

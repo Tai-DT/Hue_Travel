@@ -162,7 +162,7 @@ class AdminApi {
 
   async request<T>(endpoint: string, options: {
     method?: string;
-    body?: object;
+    body?: object | string;
     retryOnAuthFailure?: boolean;
   } = {}): Promise<ApiResponse<T>> {
     const { method = 'GET', body, retryOnAuthFailure = true } = options;

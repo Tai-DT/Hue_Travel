@@ -476,3 +476,51 @@ func (r *GuideProfileRepository) CreateOrUpdate(ctx context.Context, gp *model.G
 	)
 	return err
 }
+
+// SearchAvailableGuides — tìm hướng dẫn viên khả dụng
+func (r *GuideProfileRepository) SearchAvailableGuides(ctx context.Context, specialty string) ([]model.GuideProfile, error) {
+	query := `
+		SELECT g.id, g.user_id, g.badge_level, g.specialties, g.total_tours,
+		       g.total_reviews, g.avg_rating, g.response_time_mins,
+		       g.is_available,
+		       u.full_name, u.avatar_url, u.bio
+		FROM guide_profiles g
+		JOIN users u ON g.user_id = u.id
+		WHERE g.is_approved = TRUE AND g.is_available = TRUE
+	`
+	args := []interface{}{}
+
+	if specialty != "" {
+		query += ` AND $1 = ANY(g.specialties)`
+		args = append(args, specialty)
+	}
+
+	query += ` ORDER BY g.avg_rating DESC, g.total_tours DESC LIMIT 20`
+
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var guides []model.GuideProfile
+	for rows.Next() {
+		var gp model.GuideProfile
+		var user model.User
+		var isAvailable bool
+		err := rows.Scan(
+			&gp.ID, &gp.UserID, &gp.BadgeLevel, &gp.Specialties,
+			&gp.TotalTours, &gp.TotalReviews, &gp.AvgRating, &gp.ResponseTimeMins,
+			&isAvailable,
+			&user.FullName, &user.AvatarURL, &user.Bio,
+		)
+		if err != nil {
+			continue
+		}
+		gp.User = &user
+		gp.IsAvailable = isAvailable
+		guides = append(guides, gp)
+	}
+	return guides, nil
+}
+

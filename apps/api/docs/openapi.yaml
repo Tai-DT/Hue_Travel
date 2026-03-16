@@ -38,7 +38,7 @@ tags:
   - name: Bookings
     description: Đặt chỗ trải nghiệm
   - name: Places
-    description: Tìm kiếm địa điểm (Google Maps)
+    description: Tìm kiếm địa điểm (Goong Maps)
   - name: AI
     description: AI Trip Planner (Gemini)
   - name: Payment
@@ -627,7 +627,7 @@ paths:
           description: Completed
 
   # ============================================
-  # Places (Google Maps)
+  # Places (Goong Maps)
   # ============================================
   /api/v1/places/search:
     get:
@@ -677,11 +677,18 @@ paths:
           required: true
           schema:
             type: string
+            example: "16.4637,107.5909"
         - name: destination
           in: query
           required: true
           schema:
             type: string
+            example: "16.4696,107.5772"
+        - name: mode
+          in: query
+          schema:
+            type: string
+            example: "driving"
       responses:
         '200':
           description: Directions

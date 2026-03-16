@@ -196,6 +196,7 @@ type GuideProfile struct {
 	ResponseTimeMins int      `json:"response_time_mins" db:"response_time_mins"`
 	AcceptanceRate  float64   `json:"acceptance_rate" db:"acceptance_rate"`
 	IsApproved      bool      `json:"is_approved" db:"is_approved"`
+	IsAvailable     bool      `json:"is_available" db:"is_available"`
 	CreatedAt       time.Time `json:"created_at" db:"created_at"`
 
 	User *User `json:"user,omitempty" db:"-"`

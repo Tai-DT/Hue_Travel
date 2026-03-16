@@ -249,3 +249,31 @@ func (r *ChatRepository) MarkAsRead(ctx context.Context, roomID, userID uuid.UUI
 	)
 	return err
 }
+
+// CreateGroupRoom — tạo phòng chat nhóm cho trip
+func (r *ChatRepository) CreateGroupRoom(ctx context.Context, creatorID uuid.UUID, name string) (*ChatRoom, error) {
+	return r.CreateRoom(ctx, "group", []uuid.UUID{creatorID}, nil)
+}
+
+// AddParticipant — thêm thành viên vào phòng chat
+func (r *ChatRepository) AddParticipant(ctx context.Context, roomID, userID uuid.UUID) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE chat_rooms 
+		SET participants = array_append(participants, $2::uuid),
+		    updated_at = NOW()
+		WHERE id = $1 AND NOT ($2::uuid = ANY(participants))
+	`, roomID, userID)
+	return err
+}
+
+// RemoveParticipant — xoá thành viên khỏi phòng chat
+func (r *ChatRepository) RemoveParticipant(ctx context.Context, roomID, userID uuid.UUID) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE chat_rooms 
+		SET participants = array_remove(participants, $2::uuid),
+		    updated_at = NOW()
+		WHERE id = $1
+	`, roomID, userID)
+	return err
+}
+

@@ -399,7 +399,11 @@ class ApiService {
     if (perPage) params.set('per_page', String(perPage));
 
     const query = params.toString();
-    return this.request<Booking[]>(`/bookings${query ? `?${query}` : ''}`);
+    const res = await this.request<Booking[] | null>(`/bookings${query ? `?${query}` : ''}`);
+    if (res.success && !Array.isArray(res.data)) {
+      return { ...res, data: [] as Booking[] };
+    }
+    return res as APIResponse<Booking[]>;
   }
 
   async getBooking(id: string) {
@@ -487,10 +491,8 @@ class ApiService {
     mode?: string;
   }) {
     const searchParams = new URLSearchParams({
-      origin_lat: String(params.originLat),
-      origin_lng: String(params.originLng),
-      dest_lat: String(params.destLat),
-      dest_lng: String(params.destLng),
+      origin: `${params.originLat},${params.originLng}`,
+      destination: `${params.destLat},${params.destLng}`,
     });
     if (params.mode) searchParams.set('mode', params.mode);
 
@@ -578,6 +580,14 @@ class ApiService {
 
   async getGuide(id: string) {
     return this.request<Guide>(`/guides/${id}`);
+  }
+
+  async getDirectGuideExperience(guideId: string) {
+    const res = await this.request<{ experience: Experience }>(`/guides/${guideId}/direct-booking`);
+    if (res.success && res.data?.experience) {
+      return { ...res, data: res.data.experience };
+    }
+    return res as unknown as APIResponse<Experience>;
   }
 
   // ---- Reviews ----
@@ -674,6 +684,356 @@ class ApiService {
 
   async getTrending() {
     return this.request<string[]>('/search/trending');
+  }
+
+  // ---- Friends ----
+  async sendFriendRequest(userId: string) {
+    return this.request<{ friendship: Friendship }>('/friends/request', {
+      method: 'POST',
+      body: { user_id: userId },
+    });
+  }
+
+  async acceptFriendRequest(id: string) {
+    return this.request<{ message: string }>(`/friends/${id}/accept`, { method: 'POST' });
+  }
+
+  async declineFriendRequest(id: string) {
+    return this.request<{ message: string }>(`/friends/${id}/decline`, { method: 'POST' });
+  }
+
+  async unfriend(id: string) {
+    return this.request<{ message: string }>(`/friends/${id}`, { method: 'DELETE' });
+  }
+
+  async getFriends() {
+    return this.request<{ friends: FriendInfo[]; total: number }>('/friends');
+  }
+
+  async getPendingFriendRequests() {
+    return this.request<{ requests: FriendInfo[]; total: number }>('/friends/pending');
+  }
+
+  async getFriendStatus(userId: string) {
+    return this.request<{ status: string; friendship?: Friendship }>(`/friends/status/${userId}`);
+  }
+
+  // ---- Trips (Group Travel) ----
+  async createTrip(data: { title: string; description?: string; start_date: string; end_date: string; is_public?: boolean }) {
+    return this.request<{ trip: Trip }>('/trips', { method: 'POST', body: data });
+  }
+
+  async getMyTrips() {
+    return this.request<{ trips: Trip[] }>('/trips');
+  }
+
+  async getTrip(id: string) {
+    return this.request<{ trip: Trip }>(`/trips/${id}`);
+  }
+
+  async discoverTrips() {
+    return this.request<{ trips: Trip[] }>('/trips/discover');
+  }
+
+  async inviteTripMember(tripId: string, userId: string) {
+    return this.request(`/trips/${tripId}/invite`, { method: 'POST', body: { user_id: userId } });
+  }
+
+  async inviteTripGuide(tripId: string, guideId: string) {
+    return this.request(`/trips/${tripId}/invite-guide`, { method: 'POST', body: { guide_id: guideId } });
+  }
+
+  async acceptTripInvite(tripId: string) {
+    return this.request(`/trips/${tripId}/accept`, { method: 'POST' });
+  }
+
+  async declineTripInvite(tripId: string) {
+    return this.request(`/trips/${tripId}/decline`, { method: 'POST' });
+  }
+
+  async joinPublicTrip(tripId: string) {
+    return this.request(`/trips/${tripId}/join`, { method: 'POST' });
+  }
+
+  async leaveTrip(tripId: string) {
+    return this.request(`/trips/${tripId}/leave`, { method: 'POST' });
+  }
+
+  async getTripInvitations() {
+    return this.request<{ invitations: TripInvitation[] }>('/trips/invitations');
+  }
+
+  async searchGuidesForTrip(tripId: string) {
+    return this.request(`/trips/${tripId}/guides`);
+  }
+
+  // ---- Stories / Feed ----
+  async createStory(data: { content: string; image_urls?: string[]; location?: string }) {
+    return this.request<{ story: Story }>('/feed', { method: 'POST', body: data });
+  }
+
+  async getFeed(page?: number) {
+    const query = page ? `?page=${page}` : '';
+    return this.request<{ stories: Story[] }>(`/feed${query}`);
+  }
+
+  async likeStory(id: string) {
+    return this.request<{ is_liked: boolean }>(`/feed/${id}/like`, { method: 'POST' });
+  }
+
+  async commentStory(id: string, content: string) {
+    return this.request<{ comment: StoryComment }>(`/feed/${id}/comment`, {
+      method: 'POST',
+      body: { content },
+    });
+  }
+
+  async getStoryComments(id: string) {
+    return this.request<{ comments: StoryComment[] }>(`/feed/${id}/comments`);
+  }
+
+  async deleteStory(id: string) {
+    return this.request(`/feed/${id}`, { method: 'DELETE' });
+  }
+
+  // ---- Blog ----
+  async getBlogPosts(page?: number, category?: string) {
+    const params = new URLSearchParams();
+    if (page) params.set('page', String(page));
+    if (category) params.set('category', category);
+    const query = params.toString();
+    return this.request<{ posts: BlogPost[] }>(`/blog/posts${query ? `?${query}` : ''}`);
+  }
+
+  async getBlogPost(slug: string) {
+    return this.request<{ post: BlogPost }>(`/blog/posts/${slug}`);
+  }
+
+  async getBlogTrending() {
+    return this.request<{ posts: BlogPost[] }>('/blog/trending');
+  }
+
+  async createBlogPost(data: { title: string; content: string; category?: string; cover_url?: string; tags?: string[] }) {
+    return this.request<{ post: BlogPost }>('/blog/posts', { method: 'POST', body: data });
+  }
+
+  async toggleBlogLike(postId: string) {
+    return this.request<{ is_liked: boolean }>(`/blog-posts/${postId}/like`, { method: 'POST' });
+  }
+
+  async addBlogComment(postId: string, content: string) {
+    return this.request(`/blog-posts/${postId}/comments`, { method: 'POST', body: { content } });
+  }
+
+  async getBlogComments(postId: string) {
+    return this.request<{ comments: BlogComment[] }>(`/blog-posts/${postId}/comments`);
+  }
+
+  // ---- Diary ----
+  async createDiaryEntry(data: { title: string; content: string; mood?: string; is_public?: boolean; photo_urls?: string[]; location?: string }) {
+    return this.request<{ entry: DiaryEntry }>('/diary/entries', { method: 'POST', body: data });
+  }
+
+  async getMyDiary() {
+    return this.request<{ entries: DiaryEntry[] }>('/diary/entries');
+  }
+
+  async getPublicDiary() {
+    return this.request<{ entries: DiaryEntry[] }>('/diary/public');
+  }
+
+  // ---- Events ----
+  async getEvents() {
+    return this.request<{ events: HueEvent[] }>('/events');
+  }
+
+  async getEvent(id: string) {
+    return this.request<{ event: HueEvent }>(`/events/${id}`);
+  }
+
+  async rsvpEvent(id: string, status: 'going' | 'interested' | 'not_going') {
+    return this.request(`/events/${id}/rsvp`, { method: 'POST', body: { status } });
+  }
+
+  // ---- SOS / Emergency ----
+  async sendSOS(data: { lat: number; lng: number; message?: string }) {
+    return this.request<{ alert: SOSAlert }>('/emergency/sos', { method: 'POST', body: data });
+  }
+
+  async cancelSOS(id: string) {
+    return this.request(`/emergency/sos/${id}/cancel`, { method: 'POST' });
+  }
+
+  async getEmergencyContacts() {
+    return this.request<{ contacts: EmergencyContact[] }>('/emergency/contacts');
+  }
+
+  async getNearbyHospitals() {
+    return this.request<{ hospitals: NearbyHospital[] }>('/emergency/hospitals');
+  }
+
+  // ---- Calls ----
+  async initiateCall(roomId: string, callType: 'audio' | 'video') {
+    return this.request(`/calls/rooms/${roomId}/call`, { method: 'POST', body: { call_type: callType } });
+  }
+
+  async getActiveCall(roomId: string) {
+    return this.request(`/calls/rooms/${roomId}/active`);
+  }
+
+  async answerCall(callId: string) {
+    return this.request(`/calls/${callId}/answer`, { method: 'POST' });
+  }
+
+  async declineCall(callId: string) {
+    return this.request(`/calls/${callId}/decline`, { method: 'POST' });
+  }
+
+  async endCall(callId: string) {
+    return this.request(`/calls/${callId}/end`, { method: 'POST' });
+  }
+
+  async getCallHistory() {
+    return this.request('/calls/history');
+  }
+
+  // ---- Reactions ----
+  async toggleReaction(messageId: string, emoji: string) {
+    return this.request(`/messages/${messageId}/reactions`, { method: 'POST', body: { emoji } });
+  }
+
+  async getReactions(messageId: string) {
+    return this.request(`/messages/${messageId}/reactions`);
+  }
+
+  // ---- Gamification ----
+  async getAchievements() {
+    return this.request<{ achievements: Achievement[] }>('/achievements');
+  }
+
+  async getMyAchievements() {
+    return this.request<{ achievements: Achievement[] }>('/achievements/my');
+  }
+
+  async getLeaderboard() {
+    return this.request<{ users: LeaderboardEntry[] }>('/leaderboard');
+  }
+
+  async dailyCheckIn() {
+    return this.request<{ message: string; xp_earned: number; streak: number }>('/checkin', { method: 'POST' });
+  }
+
+  async getCheckIns() {
+    return this.request<{ checkins: CheckIn[] }>('/checkins');
+  }
+
+  async getGamificationStats() {
+    return this.request<GamificationStats>('/gamification/stats');
+  }
+
+  // ---- Promotions ----
+  async getActivePromotions() {
+    return this.request<{ promotions: Promotion[] }>('/promotions/active');
+  }
+
+  async applyPromoCode(code: string, bookingId?: string) {
+    return this.request<{ discount: number; message: string }>('/promotions/apply', {
+      method: 'POST',
+      body: { code, booking_id: bookingId },
+    });
+  }
+
+  async getMyCoupons() {
+    return this.request<{ coupons: Coupon[] }>('/promotions/my-coupons');
+  }
+
+  // ---- Weather ----
+  async getCurrentWeather() {
+    return this.request<WeatherCurrent>('/weather/current');
+  }
+
+  async getWeatherForecast() {
+    return this.request<{ forecast: WeatherDay[] }>('/weather/forecast');
+  }
+
+  async getBestTimeToVisit() {
+    return this.request<{ best_months: BestMonth[]; current_recommendation: string }>('/weather/best-time');
+  }
+
+  // ---- Translate ----
+  async translateText(text: string, targetLang: string, sourceLang?: string) {
+    return this.request<{ translated: string; source_lang: string; target_lang: string }>('/translate', {
+      method: 'POST',
+      body: { text, target_lang: targetLang, source_lang: sourceLang },
+    });
+  }
+
+  async detectLanguage(text: string) {
+    return this.request<{ language: string; confidence: number }>('/translate/detect', {
+      method: 'POST',
+      body: { text },
+    });
+  }
+
+  async getPhrasebook() {
+    return this.request<{ categories: PhrasebookCategory[] }>('/phrasebook');
+  }
+
+  // ---- Collections / Bookmarks ----
+  async createCollection(name: string, description?: string) {
+    return this.request<{ collection: Collection }>('/collections', {
+      method: 'POST',
+      body: { name, description },
+    });
+  }
+
+  async getCollections() {
+    return this.request<{ collections: Collection[] }>('/collections');
+  }
+
+  async addToCollection(collectionId: string, itemId: string, itemType: string) {
+    return this.request(`/collections/${collectionId}/items`, {
+      method: 'POST',
+      body: { item_id: itemId, item_type: itemType },
+    });
+  }
+
+  async getCollectionItems(collectionId: string) {
+    return this.request(`/collections/${collectionId}/items`);
+  }
+
+  async removeFromCollection(collectionId: string, itemId: string) {
+    return this.request(`/collections/${collectionId}/items/${itemId}`, { method: 'DELETE' });
+  }
+
+  async deleteCollection(collectionId: string) {
+    return this.request(`/collections/${collectionId}`, { method: 'DELETE' });
+  }
+
+  // ---- Report & Block ----
+  async reportContent(data: { target_type: string; target_id: string; reason: string; details?: string }) {
+    return this.request('/reports', { method: 'POST', body: data });
+  }
+
+  async blockUser(targetId: string) {
+    return this.request('/block', { method: 'POST', body: { target_id: targetId } });
+  }
+
+  async unblockUser(id: string) {
+    return this.request(`/block/${id}`, { method: 'DELETE' });
+  }
+
+  async getBlockedUsers() {
+    return this.request<{ blocked: BlockedUser[] }>('/block');
+  }
+
+  // ---- Guide Application ----
+  async applyAsGuide(data: { specialties: string[]; experience_years: number; languages: string[]; motivation: string }) {
+    return this.request('/guide-apply', { method: 'POST', body: data });
+  }
+
+  async getMyGuideApplication() {
+    return this.request<{ application: GuideApplication }>('/guide-apply/my');
   }
 }
 
@@ -910,6 +1270,273 @@ export type Guide = {
     bio?: string;
     languages?: string[];
   };
+};
+
+// ---- New Feature Types ----
+
+export type Friendship = {
+  id: string;
+  requester_id: string;
+  addressee_id: string;
+  status: 'pending' | 'accepted' | 'declined';
+  created_at: string;
+};
+
+export type FriendInfo = {
+  user_id: string;
+  full_name: string;
+  avatar_url?: string;
+  level?: string;
+  friendship_id: string;
+  since?: string;
+};
+
+export type Trip = {
+  id: string;
+  title: string;
+  description?: string;
+  start_date: string;
+  end_date: string;
+  is_public: boolean;
+  owner_id: string;
+  member_count: number;
+  status: string;
+  created_at: string;
+  owner?: { full_name: string; avatar_url?: string };
+  members?: TripMember[];
+};
+
+export type TripMember = {
+  user_id: string;
+  full_name: string;
+  avatar_url?: string;
+  role: string;
+  status: string;
+};
+
+export type TripInvitation = {
+  trip_id: string;
+  trip_title: string;
+  inviter_name: string;
+  created_at: string;
+};
+
+export type Story = {
+  id: string;
+  user_id: string;
+  content: string;
+  image_urls?: string[];
+  location?: string;
+  like_count: number;
+  comment_count: number;
+  is_liked: boolean;
+  created_at: string;
+  user?: { full_name: string; avatar_url?: string };
+};
+
+export type StoryComment = {
+  id: string;
+  story_id: string;
+  user_id: string;
+  content: string;
+  created_at: string;
+  user?: { full_name: string; avatar_url?: string };
+};
+
+export type BlogPost = {
+  id: string;
+  slug: string;
+  title: string;
+  content: string;
+  excerpt?: string;
+  cover_url?: string;
+  category?: string;
+  tags?: string[];
+  author_id: string;
+  like_count: number;
+  comment_count: number;
+  view_count: number;
+  is_liked?: boolean;
+  created_at: string;
+  author?: { full_name: string; avatar_url?: string };
+};
+
+export type BlogComment = {
+  id: string;
+  post_id: string;
+  user_id: string;
+  content: string;
+  created_at: string;
+  user?: { full_name: string; avatar_url?: string };
+};
+
+export type DiaryEntry = {
+  id: string;
+  title: string;
+  content: string;
+  mood?: string;
+  is_public: boolean;
+  photo_urls?: string[];
+  location?: string;
+  created_at: string;
+};
+
+export type HueEvent = {
+  id: string;
+  title: string;
+  description: string;
+  start_date: string;
+  end_date?: string;
+  location: string;
+  category: string;
+  image_url?: string;
+  organizer?: string;
+  attendee_count: number;
+  my_rsvp?: string;
+};
+
+export type SOSAlert = {
+  id: string;
+  user_id: string;
+  lat: number;
+  lng: number;
+  message?: string;
+  status: 'active' | 'cancelled' | 'resolved';
+  created_at: string;
+};
+
+export type EmergencyContact = {
+  name: string;
+  phone: string;
+  type: string;
+  description?: string;
+};
+
+export type NearbyHospital = {
+  name: string;
+  address: string;
+  phone?: string;
+  lat: number;
+  lng: number;
+  distance_km?: number;
+};
+
+export type Achievement = {
+  id: string;
+  title: string;
+  description: string;
+  icon: string;
+  xp_reward: number;
+  is_unlocked?: boolean;
+  unlocked_at?: string;
+  progress?: number;
+  target?: number;
+};
+
+export type LeaderboardEntry = {
+  rank: number;
+  user_id: string;
+  full_name: string;
+  avatar_url?: string;
+  xp: number;
+  level: string;
+};
+
+export type CheckIn = {
+  id: string;
+  date: string;
+  xp_earned: number;
+};
+
+export type GamificationStats = {
+  xp: number;
+  level: string;
+  next_level_xp: number;
+  streak: number;
+  total_checkins: number;
+  achievements_unlocked: number;
+  rank?: number;
+};
+
+export type Promotion = {
+  id: string;
+  code: string;
+  title: string;
+  description: string;
+  discount_type: 'percentage' | 'fixed';
+  discount_value: number;
+  min_order?: number;
+  expires_at: string;
+  is_active: boolean;
+};
+
+export type Coupon = {
+  id: string;
+  code: string;
+  title: string;
+  discount_type: 'percentage' | 'fixed';
+  discount_value: number;
+  is_used: boolean;
+  expires_at: string;
+};
+
+export type WeatherCurrent = {
+  temperature: number;
+  feels_like: number;
+  humidity: number;
+  wind_speed: number;
+  description: string;
+  icon: string;
+  uv_index?: number;
+};
+
+export type WeatherDay = {
+  date: string;
+  temp_high: number;
+  temp_low: number;
+  description: string;
+  icon: string;
+  rain_chance: number;
+};
+
+export type BestMonth = {
+  month: number;
+  month_name: string;
+  rating: number;
+  description: string;
+};
+
+export type PhrasebookCategory = {
+  category: string;
+  phrases: Array<{ vi: string; en: string; ko?: string; ja?: string; zh?: string; phonetic?: string }>;
+};
+
+export type Collection = {
+  id: string;
+  name: string;
+  description?: string;
+  item_count: number;
+  created_at: string;
+};
+
+export type BlockedUser = {
+  id: string;
+  target_id: string;
+  target_name: string;
+  target_avatar?: string;
+  created_at: string;
+};
+
+export type GuideApplication = {
+  id: string;
+  user_id: string;
+  status: 'pending' | 'approved' | 'rejected';
+  specialties: string[];
+  experience_years: number;
+  languages: string[];
+  motivation: string;
+  created_at: string;
+  reviewed_at?: string;
 };
 
 export const api = new ApiService();

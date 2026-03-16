@@ -11,25 +11,33 @@
 import { Alert, Platform, Vibration } from 'react-native';
 import api from './api';
 
-// expo-notifications is optional — graceful fallback if not installed
+// expo-notifications is optional — graceful fallback if not installed or on Expo Go
 let Notifications: typeof import('expo-notifications') | null = null;
 let Device: typeof import('expo-device') | null = null;
 let Constants: typeof import('expo-constants') | null = null;
 
+// Load Constants first to check if we're in Expo Go
 try {
-  Notifications = require('expo-notifications');
-} catch {
-  console.log('[Push] expo-notifications not installed — using mock mode');
-}
-
-try {
-  Device = require('expo-device');
+  Constants = require('expo-constants');
 } catch {
   // optional
 }
 
+// Check if running in Expo Go (where push notifications are not supported in SDK 53+)
+const isExpoGo = Constants?.default?.appOwnership === 'expo' || Constants?.default?.executionEnvironment === 'storeClient';
+
 try {
-  Constants = require('expo-constants');
+  if (!isExpoGo) {
+    Notifications = require('expo-notifications');
+  } else {
+    console.log('[Push] Running in Expo Go — push notifications disabled (SDK 53+)');
+  }
+} catch {
+  console.log('[Push] expo-notifications not available — using mock mode');
+}
+
+try {
+  Device = require('expo-device');
 } catch {
   // optional
 }
