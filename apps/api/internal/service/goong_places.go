@@ -137,9 +137,15 @@ func (s *GoongPlacesService) GetDirections(ctx context.Context, originLat, origi
 	}
 
 	if result.Status != "" && result.Status != "OK" {
+		if !s.fallbackEnabled {
+			return nil, fmt.Errorf("%w: Goong directions returned status %s", ErrServiceUnavailable, result.Status)
+		}
 		return nil, fmt.Errorf("goong directions returned status %s: %s", result.Status, result.ErrorMessage)
 	}
 	if len(result.Routes) == 0 || len(result.Routes[0].Legs) == 0 {
+		if !s.fallbackEnabled {
+			return nil, fmt.Errorf("%w: Goong directions returned no route", ErrServiceUnavailable)
+		}
 		return nil, fmt.Errorf("goong directions returned no route")
 	}
 
@@ -251,7 +257,6 @@ func (s *GoongPlacesService) searchPlaces(ctx context.Context, query string, lat
 
 	return places, nil
 }
-
 
 func (s *GoongPlacesService) autoComplete(ctx context.Context, input string, lat, lng float64, radiusKm int) ([]goongPrediction, error) {
 	params := url.Values{}
@@ -446,7 +451,6 @@ func isPredictionRelevant(prediction goongPrediction, keywords []string) bool {
 	return false
 }
 
-
 func goongVehicle(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "bicycling", "bike", "motorbike":
@@ -524,7 +528,6 @@ func (s *GoongPlacesService) mockSearchResults(query string) []PlaceResult {
 		{PlaceID: "heritage_6", Name: "Lăng Minh Mạng", Address: "Hương Thọ, Huế", Lat: 16.4267, Lng: 107.5518, Rating: 4.5, RatingCount: 489, Types: []string{"tourist_attraction"}},
 	}
 }
-
 
 func (s *GoongPlacesService) mockDirection() *DirectionResult {
 	return &DirectionResult{

@@ -23,6 +23,13 @@ Tài liệu này tách rõ 3 lớp:
 - `[x]` Provider portal build pass
 - `[x]` Mobile web export pass
 - `[x]` Đăng nhập không qua bên thứ ba đã được dọn khỏi mobile/web/provider
+- `[x]` Weather production path đã fail-fast, không còn silent mock
+- `[x]` Push config production đã fail-fast qua `FCM_SERVER_KEY` strict validation
+- `[x]` Notification handler production không còn mock fallback khi `ALLOW_MOCK_SERVICES=false`
+- `[x]` AI Quick Suggest production path đã fail-fast, không còn static fallback khi `ALLOW_MOCK_SERVICES=false`
+- `[x]` Search production path đã dùng Meilisearch thật cho `search/suggest/trending/stats` và sync experiences từ DB lúc startup
+- `[x]` Upload production path không còn mock khi `ALLOW_MOCK_SERVICES=false`, local upload MinIO đã pass
+- `[x]` Places / maps production path đã fail-fast khi strict mode tắt fallback; local upstream calls cho search/nearby/directions đã pass
 
 ## 2. Cần Test Thêm
 
@@ -80,39 +87,37 @@ Tài liệu này tách rõ 3 lớp:
   - File liên quan: `apps/api/internal/service/weather.go`
   - Đã thêm strict validation cho `OPENWEATHER_API_KEY`
 
-- `[ ]` Push notification: chốt policy và enforce trong strict mode hoặc degraded health
+- `[x]` Push notification: đã chốt theo hướng required trong strict mode
   - File liên quan: `apps/api/internal/service/notification.go`
-  - Cần quyết định `FCM_SERVER_KEY` là required hay optional
+  - `FCM_SERVER_KEY` hiện là required trong strict mode
 
-- `[ ]` VNPay production: thay mock payment bằng credentials thật và test callback thật
+- `[ ]` VNPay production: thay mock payment bằng credentials thật, callback URL thật và test callback thật
   - File liên quan: `apps/api/internal/service/vnpay.go`
 
 ### P1
 
-- `[ ]` Notification API: bỏ mock fallback khi DB query lỗi trong production
+- `[x]` Notification API: đã bỏ mock fallback khi DB query lỗi trong production path
   - File liên quan: `apps/api/internal/handler/notification.go`
 
-- `[ ]` AI Quick Suggest: chốt có cho phép static fallback hay không
+- `[x]` AI Quick Suggest: production chỉ fallback static khi `ALLOW_MOCK_SERVICES=true`
   - File liên quan: `apps/api/internal/handler/ai.go`
 
-- `[ ]` Search: xác nhận không dùng fallback in-memory trong production
+- `[x]` Search: production không còn dùng fallback in-memory cho `search/suggest/trending/stats`
   - File liên quan: `apps/api/internal/service/search.go`
 
-- `[ ]` Upload: xác nhận object storage thật và bỏ mock path trong production
+- `[x]` Upload: production không còn mock path và local MinIO upload đã xác nhận hoạt động
   - File liên quan: `apps/api/internal/service/file_upload.go`
 
-- `[ ]` Places / maps: xác nhận API key thật và bỏ fallback dev trong production
+- `[x]` Places / maps: local upstream calls đã pass và production path không còn fallback dev khi strict mode bật
   - File liên quan: `apps/api/internal/service/goong_places.go`
   - File liên quan: `apps/api/internal/service/google_places.go`
 
-- `[ ]` AI trip planner / AI chat: xác nhận Gemini key thật và test degraded behavior
+- `[ ]` AI trip planner / AI chat: xác nhận Gemini key thật và test degraded behavior với upstream thật
   - File liên quan: `apps/api/internal/service/ai_trip_planner.go`
 
 ## 4. Thứ Tự Làm Nên Ưu Tiên
 
 1. Khoá production path:
-   - push notification
-   - notification fallback
    - VNPay thật
 
 2. Viết smoke/UAT theo vai trò:

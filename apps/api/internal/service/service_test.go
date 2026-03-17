@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -114,7 +116,10 @@ func TestSearchService_Suggest(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			suggestions := svc.Suggest(context.Background(), tt.query, 5)
+			suggestions, err := svc.Suggest(context.Background(), tt.query, 5)
+			if err != nil {
+				t.Fatalf("Suggest() unexpected error: %v", err)
+			}
 			if len(suggestions) < tt.wantMin {
 				t.Errorf("expected at least %d suggestions, got %d", tt.wantMin, len(suggestions))
 			}
@@ -125,7 +130,10 @@ func TestSearchService_Suggest(t *testing.T) {
 func TestSearchService_Trending(t *testing.T) {
 	svc := NewSearchService("", "")
 
-	trending := svc.Trending()
+	trending, err := svc.Trending(context.Background())
+	if err != nil {
+		t.Fatalf("Trending() unexpected error: %v", err)
+	}
 	if len(trending) == 0 {
 		t.Error("expected non-empty trending list")
 	}
@@ -145,7 +153,10 @@ func TestSearchService_Trending(t *testing.T) {
 func TestSearchService_IndexStats(t *testing.T) {
 	svc := NewSearchService("", "")
 
-	stats := svc.GetStats()
+	stats, err := svc.GetStats(context.Background())
+	if err != nil {
+		t.Fatalf("GetStats() unexpected error: %v", err)
+	}
 	if stats["total"] == 0 {
 		t.Error("expected non-zero total documents")
 	}
@@ -174,6 +185,38 @@ func TestSearchService_Facets(t *testing.T) {
 
 	if len(result.Facets["category"]) == 0 {
 		t.Error("expected category facets")
+	}
+}
+
+func TestSearchService_StrictSearchHelpersFailWithoutMeilisearch(t *testing.T) {
+	svc := NewSearchServiceWithFallback("", "", false)
+
+	if _, err := svc.Suggest(context.Background(), "Huế", 5); !errors.Is(err, ErrServiceNotConfigured) {
+		t.Fatalf("expected ErrServiceNotConfigured from Suggest, got %v", err)
+	}
+
+	if _, err := svc.Trending(context.Background()); !errors.Is(err, ErrServiceNotConfigured) {
+		t.Fatalf("expected ErrServiceNotConfigured from Trending, got %v", err)
+	}
+
+	if _, err := svc.GetStats(context.Background()); !errors.Is(err, ErrServiceNotConfigured) {
+		t.Fatalf("expected ErrServiceNotConfigured from GetStats, got %v", err)
+	}
+}
+
+func TestGoongPlacesService_StrictModeRequiresAPIKey(t *testing.T) {
+	svc := NewGoongPlacesServiceWithFallback("", false)
+
+	if _, err := svc.TextSearch(context.Background(), "Đại Nội", 16.4637, 107.5909); !errors.Is(err, ErrServiceNotConfigured) {
+		t.Fatalf("expected ErrServiceNotConfigured from TextSearch, got %v", err)
+	}
+
+	if _, err := svc.NearbySearch(context.Background(), 16.4637, 107.5909, 2000, "restaurant"); !errors.Is(err, ErrServiceNotConfigured) {
+		t.Fatalf("expected ErrServiceNotConfigured from NearbySearch, got %v", err)
+	}
+
+	if _, err := svc.GetDirections(context.Background(), 16.4637, 107.5909, 16.4698, 107.5786, "driving"); !errors.Is(err, ErrServiceNotConfigured) {
+		t.Fatalf("expected ErrServiceNotConfigured from GetDirections, got %v", err)
 	}
 }
 
@@ -344,6 +387,18 @@ func TestFileUploadService_MockUpload(t *testing.T) {
 	}
 	if result.MimeType != "image/jpeg" {
 		t.Errorf("expected mime=image/jpeg, got %s", result.MimeType)
+	}
+}
+
+func TestFileUploadService_StrictModeReturnsNotConfiguredWithoutStorage(t *testing.T) {
+	svc := NewFileUploadServiceWithFallback("", "", "", "", false, false)
+
+	if _, err := svc.Upload(context.Background(), "test", "photo.jpg", strings.NewReader("data"), 4); !errors.Is(err, ErrServiceNotConfigured) {
+		t.Fatalf("expected ErrServiceNotConfigured from Upload, got %v", err)
+	}
+
+	if err := svc.Delete(context.Background(), "avatars/test.jpg"); !errors.Is(err, ErrServiceNotConfigured) {
+		t.Fatalf("expected ErrServiceNotConfigured from Delete, got %v", err)
 	}
 }
 

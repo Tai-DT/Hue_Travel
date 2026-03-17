@@ -15,12 +15,17 @@ import (
 // ============================================
 
 type NotificationHandler struct {
-	notifService *service.NotificationService
-	pool         *pgxpool.Pool
+	notifService      *service.NotificationService
+	pool              *pgxpool.Pool
+	allowMockFallback bool
 }
 
-func NewNotificationHandler(notifService *service.NotificationService, pool *pgxpool.Pool) *NotificationHandler {
-	return &NotificationHandler{notifService: notifService, pool: pool}
+func NewNotificationHandler(notifService *service.NotificationService, pool *pgxpool.Pool, allowMockFallback bool) *NotificationHandler {
+	return &NotificationHandler{
+		notifService:      notifService,
+		pool:              pool,
+		allowMockFallback: allowMockFallback,
+	}
 }
 
 // GetNotifications — lấy danh sách thông báo từ DB
@@ -69,7 +74,16 @@ func (h *NotificationHandler) GetNotifications(c *gin.Context) {
 			})
 			return
 		}
-		// If query fails (e.g. table doesn't exist), fall through to mock
+
+		if !h.allowMockFallback {
+			response.ServiceUnavailable(c, "HT-NOTIF-001", "Dịch vụ thông báo hiện chưa sẵn sàng")
+			return
+		}
+	}
+
+	if !h.allowMockFallback {
+		response.ServiceUnavailable(c, "HT-NOTIF-001", "Dịch vụ thông báo hiện chưa sẵn sàng")
+		return
 	}
 
 	// Fallback to mock
@@ -134,6 +148,11 @@ func (h *NotificationHandler) MarkRead(c *gin.Context) {
 		return
 	}
 
+	if !h.allowMockFallback {
+		response.ServiceUnavailable(c, "HT-NOTIF-002", "Dịch vụ thông báo hiện chưa sẵn sàng")
+		return
+	}
+
 	// Mock fallback
 	if notifID == "all" {
 		response.OK(c, gin.H{"message": "Đã đánh dấu tất cả đã đọc", "count": 0})
@@ -173,9 +192,22 @@ func (h *NotificationHandler) RegisterDevice(c *gin.Context) {
 			ON CONFLICT (user_id, fcm_token) DO UPDATE SET updated_at = NOW()`,
 			uuid.New(), uid, req.FCMToken, req.Platform)
 		if err != nil {
-			// Table might not exist yet — log and still return success
-			_ = err
+			if !h.allowMockFallback {
+				response.ServiceUnavailable(c, "HT-NOTIF-003", "Không thể đăng ký thiết bị lúc này")
+				return
+			}
 		}
+
+		response.OK(c, gin.H{
+			"message":  "Đã đăng ký thiết bị",
+			"platform": req.Platform,
+		})
+		return
+	}
+
+	if !h.allowMockFallback {
+		response.ServiceUnavailable(c, "HT-NOTIF-003", "Không thể đăng ký thiết bị lúc này")
+		return
 	}
 
 	response.OK(c, gin.H{
@@ -201,7 +233,16 @@ func (h *NotificationHandler) UnreadCount(c *gin.Context) {
 			response.OK(c, gin.H{"unread_count": count})
 			return
 		}
-		// Fall through on error (table might not exist)
+
+		if !h.allowMockFallback {
+			response.ServiceUnavailable(c, "HT-NOTIF-004", "Dịch vụ thông báo hiện chưa sẵn sàng")
+			return
+		}
+	}
+
+	if !h.allowMockFallback {
+		response.ServiceUnavailable(c, "HT-NOTIF-004", "Dịch vụ thông báo hiện chưa sẵn sàng")
+		return
 	}
 
 	response.OK(c, gin.H{"unread_count": 0})

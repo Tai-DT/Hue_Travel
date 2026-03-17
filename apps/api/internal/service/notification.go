@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,7 +29,7 @@ func NewNotificationService(fcmServerKey string, pool *pgxpool.Pool) *Notificati
 }
 
 func (s *NotificationService) IsConfigured() bool {
-	return s.fcmServerKey != ""
+	return strings.TrimSpace(s.fcmServerKey) != ""
 }
 
 // Notification represents a push notification
@@ -46,16 +47,16 @@ type Notification struct {
 type NotificationType string
 
 const (
-	NotifBookingConfirmed  NotificationType = "booking_confirmed"
-	NotifBookingCancelled  NotificationType = "booking_cancelled"
-	NotifBookingReminder   NotificationType = "booking_reminder"
-	NotifNewMessage        NotificationType = "new_message"
-	NotifNewReview         NotificationType = "new_review"
-	NotifPaymentSuccess    NotificationType = "payment_success"
-	NotifPaymentFailed     NotificationType = "payment_failed"
-	NotifGuideAccepted     NotificationType = "guide_accepted"
-	NotifLevelUp           NotificationType = "level_up"
-	NotifPromotion         NotificationType = "promotion"
+	NotifBookingConfirmed NotificationType = "booking_confirmed"
+	NotifBookingCancelled NotificationType = "booking_cancelled"
+	NotifBookingReminder  NotificationType = "booking_reminder"
+	NotifNewMessage       NotificationType = "new_message"
+	NotifNewReview        NotificationType = "new_review"
+	NotifPaymentSuccess   NotificationType = "payment_success"
+	NotifPaymentFailed    NotificationType = "payment_failed"
+	NotifGuideAccepted    NotificationType = "guide_accepted"
+	NotifLevelUp          NotificationType = "level_up"
+	NotifPromotion        NotificationType = "promotion"
 )
 
 // ============================================
@@ -152,7 +153,7 @@ func (s *NotificationService) send(ctx context.Context, notif Notification) {
 	}
 
 	if !s.IsConfigured() {
-		log.Printf("📣 [NOTIF] To=%s | %s: %s — %s",
+		log.Printf("📣 [NOTIF] FCM not configured, saved to DB/log only. To=%s | %s: %s — %s",
 			notif.UserID.String()[:8], notif.Type, notif.Title, notif.Body)
 		return
 	}
@@ -238,26 +239,26 @@ func (s *NotificationService) GetMockNotifications(userID uuid.UUID) []Notificat
 	return []Notification{
 		{
 			ID: uuid.New(), UserID: userID, Type: NotifBookingConfirmed,
-			Title: "✅ Booking đã xác nhận!",
-			Body:  "Booking HT-A1B2C3 cho \"Khám phá Đại Nội Huế\" đã được xác nhận.",
+			Title:  "✅ Booking đã xác nhận!",
+			Body:   "Booking HT-A1B2C3 cho \"Khám phá Đại Nội Huế\" đã được xác nhận.",
 			IsRead: false, CreatedAt: now.Add(-30 * time.Minute),
 		},
 		{
 			ID: uuid.New(), UserID: userID, Type: NotifNewMessage,
-			Title: "💬 Nguyễn Văn Minh",
-			Body:  "Chào bạn! Mình sẽ đón bạn lúc 9h sáng nhé 🙌",
+			Title:  "💬 Nguyễn Văn Minh",
+			Body:   "Chào bạn! Mình sẽ đón bạn lúc 9h sáng nhé 🙌",
 			IsRead: false, CreatedAt: now.Add(-2 * time.Hour),
 		},
 		{
 			ID: uuid.New(), UserID: userID, Type: NotifPaymentSuccess,
-			Title: "💳 Thanh toán thành công!",
-			Body:  "Bạn đã thanh toán 750,000₫ cho booking HT-A1B2C3.",
+			Title:  "💳 Thanh toán thành công!",
+			Body:   "Bạn đã thanh toán 750,000₫ cho booking HT-A1B2C3.",
 			IsRead: true, CreatedAt: now.Add(-4 * time.Hour),
 		},
 		{
 			ID: uuid.New(), UserID: userID, Type: NotifLevelUp,
-			Title: "🎉 Lên cấp!",
-			Body:  "Chúc mừng! Bạn đã đạt cấp \"Adventurer\" với 150 XP!",
+			Title:  "🎉 Lên cấp!",
+			Body:   "Chúc mừng! Bạn đã đạt cấp \"Adventurer\" với 150 XP!",
 			IsRead: true, CreatedAt: now.Add(-24 * time.Hour),
 		},
 	}

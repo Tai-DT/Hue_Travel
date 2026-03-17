@@ -149,7 +149,7 @@ func (s *FileUploadService) Upload(ctx context.Context, folder string, filename 
 			ContentType: mimeType,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("MinIO upload failed: %w", err)
+			return nil, fmt.Errorf("%w: MinIO upload failed: %v", ErrServiceUnavailable, err)
 		}
 
 		log.Printf("📁 [MinIO] Uploaded: %s (%d bytes)", key, size)
@@ -183,7 +183,10 @@ func (s *FileUploadService) Upload(ctx context.Context, folder string, filename 
 // Delete removes a file from MinIO
 func (s *FileUploadService) Delete(ctx context.Context, key string) error {
 	if s.client != nil {
-		return s.client.RemoveObject(ctx, s.bucket, key, minio.RemoveObjectOptions{})
+		if err := s.client.RemoveObject(ctx, s.bucket, key, minio.RemoveObjectOptions{}); err != nil {
+			return fmt.Errorf("%w: MinIO delete failed: %v", ErrServiceUnavailable, err)
+		}
+		return nil
 	}
 	if !s.fallbackEnabled {
 		return fmt.Errorf("%w: object storage is not configured", ErrServiceNotConfigured)

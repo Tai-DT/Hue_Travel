@@ -103,7 +103,7 @@ func NewContainer(ctx context.Context, cfg *config.Config) *Container {
 	c := &Container{Config: cfg}
 	c.initInfra(ctx)
 	c.initRepositories()
-	c.initServices()
+	c.initServices(ctx)
 	c.initHandlers()
 	c.initBackground()
 	return c
@@ -171,7 +171,7 @@ func (c *Container) initRepositories() {
 	slog.Info("All repositories initialized")
 }
 
-func (c *Container) initServices() {
+func (c *Container) initServices(ctx context.Context) {
 	cfg := c.Config
 
 	// Auth service (requires DB)
@@ -206,6 +206,9 @@ func (c *Container) initServices() {
 		cfg.Meilisearch.MasterKey,
 		cfg.App.AllowMockServices,
 	)
+	if c.Pool != nil {
+		c.SearchSvc.SyncFromDB(ctx, c.Pool)
+	}
 	c.UploadSvc = service.NewFileUploadServiceWithFallback(
 		cfg.MinIO.Endpoint, cfg.MinIO.User, cfg.MinIO.Password,
 		cfg.MinIO.Bucket, cfg.MinIO.UseSSL,
@@ -221,7 +224,7 @@ func (c *Container) initHandlers() {
 	c.HealthH = handler.NewHealthHandler(c.Pool, c.Redis)
 	c.PlaceH = handler.NewPlaceHandler(c.PlacesSvc)
 	c.AIH = handler.NewAIHandler(c.AISvc)
-	c.NotifH = handler.NewNotificationHandler(c.NotifSvc, c.Pool)
+	c.NotifH = handler.NewNotificationHandler(c.NotifSvc, c.Pool, c.Config.App.AllowMockServices)
 	c.AdminH = handler.NewAdminHandler(c.Pool)
 	c.SearchH = handler.NewSearchHandler(c.SearchSvc)
 	c.DocsH = handler.NewDocsHandler()

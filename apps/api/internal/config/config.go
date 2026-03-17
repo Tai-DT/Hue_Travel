@@ -175,6 +175,7 @@ func (c *Config) Validate() error {
 		required := map[string]string{
 			"GOONG_API_KEY":          c.Goong.APIKey,
 			"GEMINI_API_KEY":         c.AI.GeminiAPIKey,
+			"FCM_SERVER_KEY":         c.FCM.ServerKey,
 			"VNPAY_TMN_CODE":         c.VNPay.TmnCode,
 			"VNPAY_HASH_SECRET":      c.VNPay.HashSecret,
 			"OPENWEATHER_API_KEY":    c.OpenWeather.APIKey,
@@ -189,6 +190,9 @@ func (c *Config) Validate() error {
 			if strings.TrimSpace(value) == "" {
 				missing = append(missing, key)
 			}
+		}
+		if isDefaultVNPayReturnURL(c.VNPay.ReturnURL) {
+			missing = append(missing, "VNPAY_RETURN_URL")
 		}
 	}
 
@@ -231,6 +235,20 @@ func isDefaultSecret(secret string) bool {
 	defaults := map[string]bool{
 		"change-me-in-production":                        true,
 		"your-super-secret-jwt-key-change-in-production": true,
+	}
+
+	return defaults[trimmed]
+}
+
+func isDefaultVNPayReturnURL(returnURL string) bool {
+	trimmed := strings.TrimSpace(returnURL)
+	if trimmed == "" {
+		return true
+	}
+
+	defaults := map[string]bool{
+		"http://localhost:8080/api/v1/payment/callback": true,
+		"http://127.0.0.1:8080/api/v1/payment/callback": true,
 	}
 
 	return defaults[trimmed]

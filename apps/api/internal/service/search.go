@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // ============================================
@@ -346,10 +348,31 @@ func (s *SearchService) buildFacets(query, queryLower string) map[string][]Facet
 // Suggest — auto-complete
 // ============================================
 
-func (s *SearchService) Suggest(ctx context.Context, query string, limit int) []string {
+func (s *SearchService) Suggest(ctx context.Context, query string, limit int) ([]string, error) {
+	if query == "" {
+		return []string{}, nil
+	}
 	if limit == 0 {
 		limit = 5
 	}
+
+	if s.IsConfigured() {
+		suggestions, err := s.suggestMeilisearch(ctx, query, limit)
+		if err == nil {
+			return suggestions, nil
+		}
+		if !s.fallbackEnabled {
+			return nil, fmt.Errorf("%w: Meilisearch suggest failed: %v", ErrServiceUnavailable, err)
+		}
+		log.Printf("⚠️ Meilisearch suggest failed: %v — falling back to in-memory", err)
+	} else if !s.fallbackEnabled {
+		return nil, fmt.Errorf("%w: Meilisearch is not configured", ErrServiceNotConfigured)
+	}
+
+	return s.suggestFromIndexed(query, limit), nil
+}
+
+func (s *SearchService) suggestFromIndexed(query string, limit int) []string {
 	queryLower := strings.ToLower(query)
 	suggestions := make(map[string]bool)
 
@@ -382,7 +405,88 @@ func (s *SearchService) Suggest(ctx context.Context, query string, limit int) []
 // Trending — popular searches
 // ============================================
 
-func (s *SearchService) Trending() []string {
+func (s *SearchService) Trending(ctx context.Context) ([]string, error) {
+	if s.IsConfigured() {
+		trending, err := s.topTitlesMeilisearch(ctx, 8)
+		if err == nil {
+			return trending, nil
+		}
+		if !s.fallbackEnabled {
+			return nil, fmt.Errorf("%w: Meilisearch trending query failed: %v", ErrServiceUnavailable, err)
+		}
+		log.Printf("⚠️ Meilisearch trending failed: %v — falling back to static list", err)
+	} else if !s.fallbackEnabled {
+		return nil, fmt.Errorf("%w: Meilisearch is not configured", ErrServiceNotConfigured)
+	}
+
+	return []string{
+		"Đại Nội Huế",
+		"Tour ẩm thực",
+		"Sông Hương",
+		"Chùa Thiên Mụ",
+		"Lăng Khải Định",
+		"Bún bò Huế",
+		"Workshop nón Huế",
+		"Cầu Trường Tiền",
+	}, nil
+}
+
+func (s *SearchService) suggestMeilisearch(ctx context.Context, query string, limit int) ([]string, error) {
+	result, err := s.searchMeilisearch(ctx, query, SearchFilters{Limit: limit})
+	if err != nil {
+		return nil, err
+	}
+
+	seen := make(map[string]bool)
+	suggestions := make([]string, 0, limit)
+	queryLower := strings.ToLower(query)
+	for _, doc := range result.Documents {
+		if doc.Title != "" && strings.Contains(strings.ToLower(doc.Title), queryLower) && !seen[doc.Title] {
+			seen[doc.Title] = true
+			suggestions = append(suggestions, doc.Title)
+		}
+		for _, tag := range doc.Tags {
+			if len(suggestions) >= limit {
+				break
+			}
+			if tag != "" && strings.Contains(strings.ToLower(tag), queryLower) && !seen[tag] {
+				seen[tag] = true
+				suggestions = append(suggestions, tag)
+			}
+		}
+		if len(suggestions) >= limit {
+			break
+		}
+	}
+	return suggestions, nil
+}
+
+func (s *SearchService) topTitlesMeilisearch(ctx context.Context, limit int) ([]string, error) {
+	result, err := s.searchMeilisearch(ctx, "", SearchFilters{Limit: limit})
+	if err != nil {
+		return nil, err
+	}
+
+	seen := make(map[string]bool)
+	titles := make([]string, 0, limit)
+	for _, doc := range result.Documents {
+		if doc.Title == "" || seen[doc.Title] {
+			continue
+		}
+		seen[doc.Title] = true
+		titles = append(titles, doc.Title)
+		if len(titles) >= limit {
+			break
+		}
+	}
+	return titles, nil
+}
+
+// ============================================
+// Index management
+// ============================================
+
+func (s *SearchService) TrendingStatic() []string {
 	return []string{
 		"Đại Nội Huế",
 		"Tour ẩm thực",
@@ -394,10 +498,6 @@ func (s *SearchService) Trending() []string {
 		"Cầu Trường Tiền",
 	}
 }
-
-// ============================================
-// Index management
-// ============================================
 
 func (s *SearchService) IndexDocument(docType string, doc SearchDocument) {
 	doc.Type = docType
@@ -421,7 +521,24 @@ func (s *SearchService) IndexDocument(docType string, doc SearchDocument) {
 	}
 }
 
-func (s *SearchService) GetStats() map[string]int {
+func (s *SearchService) GetStats(ctx context.Context) (map[string]int, error) {
+	if s.IsConfigured() {
+		stats, err := s.statsMeilisearch(ctx)
+		if err == nil {
+			return stats, nil
+		}
+		if !s.fallbackEnabled {
+			return nil, fmt.Errorf("%w: Meilisearch stats query failed: %v", ErrServiceUnavailable, err)
+		}
+		log.Printf("⚠️ Meilisearch stats failed: %v — falling back to in-memory", err)
+	} else if !s.fallbackEnabled {
+		return nil, fmt.Errorf("%w: Meilisearch is not configured", ErrServiceNotConfigured)
+	}
+
+	return s.statsFromIndexed(), nil
+}
+
+func (s *SearchService) statsFromIndexed() map[string]int {
 	stats := make(map[string]int)
 	total := 0
 	s.mu.RLock()
@@ -434,6 +551,21 @@ func (s *SearchService) GetStats() map[string]int {
 	return stats
 }
 
+func (s *SearchService) statsMeilisearch(ctx context.Context) (map[string]int, error) {
+	result, err := s.searchMeilisearch(ctx, "", SearchFilters{Limit: 1})
+	if err != nil {
+		return nil, err
+	}
+
+	stats := map[string]int{
+		"total": result.TotalCount,
+	}
+	for _, facet := range result.Facets["type"] {
+		stats[facet.Value] = facet.Count
+	}
+	return stats, nil
+}
+
 // ============================================
 // Sync from PostgreSQL Database
 // ============================================
@@ -441,7 +573,7 @@ func (s *SearchService) GetStats() map[string]int {
 // SyncFromDB indexes all experiences from the database into search.
 // Called on startup when DB is available.
 func (s *SearchService) SyncFromDB(ctx context.Context, pool interface {
-	Query(ctx context.Context, sql string, args ...interface{}) (interface{ Next() bool; Scan(dest ...interface{}) error; Close() }, error)
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }) {
 	if pool == nil {
 		log.Println("⚠️ [Search] No DB pool — skipping sync")
@@ -455,26 +587,25 @@ func (s *SearchService) SyncFromDB(ctx context.Context, pool interface {
 	s.syncExperiencesFromDB(ctx, pool)
 	s.syncPlacesFromDB(ctx)
 
-	log.Printf("✅ [Search] Sync complete — %d documents indexed", s.GetStats()["total"])
+	log.Printf("✅ [Search] Sync complete — %d documents indexed", s.statsFromIndexed()["total"])
 }
 
 // SyncExperiencesFromPool syncs experiences from a pgxpool.Pool
-func (s *SearchService) SyncExperiencesFromPool(ctx context.Context, pool interface{}) {
-	// Type-assert to pgxpool.Pool
-	type querier interface {
-		Query(ctx context.Context, sql string, args ...interface{}) (interface{ Next() bool; Scan(dest ...interface{}) error; Close() }, error)
+func (s *SearchService) SyncExperiencesFromPool(ctx context.Context, pool interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}) {
+	if pool == nil {
+		return
 	}
-	if q, ok := pool.(querier); ok {
-		s.syncExperiencesFromDB(ctx, q)
-	}
+	s.syncExperiencesFromDB(ctx, pool)
 }
 
 func (s *SearchService) syncExperiencesFromDB(ctx context.Context, pool interface {
-	Query(ctx context.Context, sql string, args ...interface{}) (interface{ Next() bool; Scan(dest ...interface{}) error; Close() }, error)
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }) {
 	rows, err := pool.Query(ctx, `
-		SELECT id, title, COALESCE(description, ''), COALESCE(category, ''),
-			   COALESCE(price, 0), COALESCE(rating, 0), COALESCE(location, '')
+		SELECT id, title, COALESCE(description, ''), COALESCE(category::text, ''),
+			   COALESCE(price, 0), COALESCE(rating, 0), COALESCE(meeting_point, '')
 		FROM experiences WHERE is_active = TRUE`)
 	if err != nil {
 		log.Printf("⚠️ [Search] Failed to query experiences: %v", err)

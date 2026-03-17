@@ -62,12 +62,15 @@ func (h *SearchHandler) Suggest(c *gin.Context) {
 		response.OK(c, []string{})
 		return
 	}
-	if !h.searchService.IsReady() {
-		response.ServiceUnavailable(c, "HT-SEARCH-002", "Search suggest hiện chưa sẵn sàng")
+	suggestions, err := h.searchService.Suggest(c.Request.Context(), query, 8)
+	if err != nil {
+		if errors.Is(err, service.ErrServiceNotConfigured) || errors.Is(err, service.ErrServiceUnavailable) {
+			response.ServiceUnavailable(c, "HT-SEARCH-002", "Search suggest hiện chưa sẵn sàng")
+			return
+		}
+		response.InternalError(c, "Không thể lấy gợi ý tìm kiếm")
 		return
 	}
-
-	suggestions := h.searchService.Suggest(c.Request.Context(), query, 8)
 	response.OK(c, gin.H{
 		"suggestions": suggestions,
 		"query":       query,
@@ -76,11 +79,15 @@ func (h *SearchHandler) Suggest(c *gin.Context) {
 
 // Trending — tìm kiếm phổ biến
 func (h *SearchHandler) Trending(c *gin.Context) {
-	if !h.searchService.IsReady() {
-		response.ServiceUnavailable(c, "HT-SEARCH-003", "Search trending hiện chưa sẵn sàng")
+	trending, err := h.searchService.Trending(c.Request.Context())
+	if err != nil {
+		if errors.Is(err, service.ErrServiceNotConfigured) || errors.Is(err, service.ErrServiceUnavailable) {
+			response.ServiceUnavailable(c, "HT-SEARCH-003", "Search trending hiện chưa sẵn sàng")
+			return
+		}
+		response.InternalError(c, "Không thể lấy trending search")
 		return
 	}
-	trending := h.searchService.Trending()
 	response.OK(c, gin.H{
 		"trending": trending,
 	})
@@ -88,11 +95,15 @@ func (h *SearchHandler) Trending(c *gin.Context) {
 
 // Stats — search index stats
 func (h *SearchHandler) IndexStats(c *gin.Context) {
-	if !h.searchService.IsReady() {
-		response.ServiceUnavailable(c, "HT-SEARCH-004", "Search index hiện chưa sẵn sàng")
+	stats, err := h.searchService.GetStats(c.Request.Context())
+	if err != nil {
+		if errors.Is(err, service.ErrServiceNotConfigured) || errors.Is(err, service.ErrServiceUnavailable) {
+			response.ServiceUnavailable(c, "HT-SEARCH-004", "Search index hiện chưa sẵn sàng")
+			return
+		}
+		response.InternalError(c, "Không thể lấy thống kê search")
 		return
 	}
-	stats := h.searchService.GetStats()
 	response.OK(c, gin.H{
 		"index_stats": stats,
 	})

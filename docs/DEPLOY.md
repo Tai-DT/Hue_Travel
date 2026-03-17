@@ -70,6 +70,7 @@ GEMINI_API_KEY=<your-key>
 OPENWEATHER_API_KEY=<your-key>
 VNPAY_TMN_CODE=<your-code>
 VNPAY_HASH_SECRET=<your-secret>
+VNPAY_RETURN_URL=https://api.huetravel.vn/api/v1/payment/callback
 FCM_SERVER_KEY=<your-key>
 ```
 

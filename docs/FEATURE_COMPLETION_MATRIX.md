@@ -40,11 +40,11 @@ Ngày cập nhật: 2026-03-17
 | Reviews và favorites | Present | Partial | Route `/reviews`, `/favorites`; màn detail/profile tồn tại | Chưa có smoke/UAT riêng |
 | Guide profile và direct booking | Present | Partial | Route `/guides`, mobile detail/profile | Chưa test role guide end-to-end hôm nay |
 | Chat room, messages, read, WebSocket | Present | Partial | Route `/chat`, `/ws`; mobile `ChatScreen` | Chưa có smoke realtime riêng |
-| Search, suggest, trending | Present | Blocked | Route `/search`, search service đã nối trong app | Production còn fallback search/in-memory trong một số path |
-| Notifications và register device | Present | Blocked | Route `/notifications`, mobile `NotificationScreen` | Push và notification handler còn blocker production |
-| Upload file/avatar | Present | Blocked | Route `/upload` tồn tại | Production còn mock/fallback nếu storage không sẵn sàng |
-| AI trip planner, AI chat, quick suggest | Present | Blocked | Route `/ai`, mobile `AIGuideScreen` | AI fallback vẫn tồn tại khi thiếu key hoặc parse lỗi |
-| Maps, nearby places, directions | Present | Blocked | Route `/places`, mobile `MapScreen` | Places/maps còn fallback khi thiếu API key |
+| Search, suggest, trending | Verified | Partial | Route `/search`, local API trả dữ liệu thật từ Meilisearch | Production path đã dùng Meilisearch thật và sync experiences từ DB lúc startup; vẫn cần UAT relevance/ranking |
+| Notifications và register device | Present | Partial | Route `/notifications`, mobile `NotificationScreen` | Production đã fail-fast; vẫn cần UAT với FCM thật và DB/device tokens thật |
+| Upload file/avatar | Verified | Partial | Route `/upload`, local upload MinIO đã pass | Production path không còn mock khi strict mode tắt fallback; vẫn cần UAT theo UI traveller/guide |
+| AI trip planner, AI chat, quick suggest | Present | Partial | Route `/ai`, mobile `AIGuideScreen` | Production path đã fail-fast; vẫn cần `GEMINI_API_KEY` thật và UAT upstream |
+| Maps, nearby places, directions | Verified | Partial | Route `/places`, local API trả dữ liệu thật từ upstream | Production path đã fail-fast khi thiếu key/upstream lỗi; vẫn cần UAT mobile map flow |
 | Social: friends, trips, reactions, calls | Present | Partial | Route đã đăng ký trong API | Chưa có smoke/UAT riêng cho các flow xã hội |
 | Feed / stories | Present | Partial | Route `/feed`, mobile `SocialScreen` | Có code + UI; chưa test sâu |
 | Blog, diary, events | Present | Partial | Route `/blog`, `/diary`, `/events`; mobile `MoreScreen` | Có API và UI entry point |
@@ -72,11 +72,7 @@ Ngày cập nhật: 2026-03-17
 - Phần lớn chức năng còn lại đã có code thật và điểm vào UI/API, nhưng hiện mới ở mức `Present`, chưa đủ bằng chứng để gọi là “hoàn thiện xong”.
 - Các nhóm đang bị chặn cho production chủ yếu là:
   - payment
-  - AI
-  - maps/places
-  - search
-  - upload
-  - notifications/push
+  - phần integration ngoài của AI
 
 ## Nên Làm Tiếp
 
@@ -87,10 +83,8 @@ Ngày cập nhật: 2026-03-17
    - provider role
 
 2. Xử lý blocker production:
-   - push notification
-   - notification fallback
-   - AI fallback
    - VNPay thật
+   - AI upstream key + UAT
 
 3. Chốt release checklist theo vai trò:
    - traveler

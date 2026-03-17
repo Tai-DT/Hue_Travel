@@ -39,6 +39,10 @@ func (s *AITripPlannerService) HasAPIKey() bool {
 	return s.apiKey != "" && s.apiKey != "your_gemini_api_key"
 }
 
+func (s *AITripPlannerService) FallbackEnabled() bool {
+	return s.fallbackEnabled
+}
+
 // ============================================
 // Trip Plan Types
 // ============================================

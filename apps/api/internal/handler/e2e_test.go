@@ -335,7 +335,7 @@ func TestE2E_PanicRecovery(t *testing.T) {
 func TestE2E_NotificationEndpoints(t *testing.T) {
 	r := setupTestRouter()
 	notifSvc := service.NewNotificationService("", nil)
-	notifH := NewNotificationHandler(notifSvc, nil)
+	notifH := NewNotificationHandler(notifSvc, nil, true)
 
 	// Simulate authenticated user via middleware on the engine
 	authRouter := setupTestRouter()

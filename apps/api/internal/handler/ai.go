@@ -80,9 +80,15 @@ func (h *AIHandler) Chat(c *gin.Context) {
 	})
 }
 
-// QuickSuggest — gợi ý nhanh theo context (Gemini khi có API key, static fallback)
+// QuickSuggest — gợi ý nhanh theo context (Gemini khi có API key; static chỉ dùng khi mock/fallback được bật)
 func (h *AIHandler) QuickSuggest(c *gin.Context) {
 	suggestType := c.DefaultQuery("type", "general")
+	canFallback := h.aiService.FallbackEnabled()
+
+	if !h.aiService.HasAPIKey() && !canFallback {
+		response.ServiceUnavailable(c, "HT-AI-003", "AI gợi ý nhanh hiện chưa sẵn sàng")
+		return
+	}
 
 	// Try Gemini-powered dynamic suggestions
 	if h.aiService.HasAPIKey() {
@@ -98,6 +104,19 @@ func (h *AIHandler) QuickSuggest(c *gin.Context) {
 				response.OK(c, gin.H{"suggestions": dynamic, "source": "ai"})
 				return
 			}
+			if !canFallback {
+				response.ServiceUnavailable(c, "HT-AI-003", "AI gợi ý nhanh hiện chưa sẵn sàng")
+				return
+			}
+		}
+
+		if err != nil && !canFallback {
+			if errors.Is(err, service.ErrServiceNotConfigured) || errors.Is(err, service.ErrServiceUnavailable) {
+				response.ServiceUnavailable(c, "HT-AI-003", "AI gợi ý nhanh hiện chưa sẵn sàng")
+				return
+			}
+			response.InternalError(c, "Không thể lấy gợi ý nhanh từ AI")
+			return
 		}
 	}
 
