@@ -191,13 +191,12 @@ func TestE2E_AuthValidation(t *testing.T) {
 	r := setupTestRouter()
 	authH := &AuthHandler{}
 
-	r.POST("/api/v1/auth/otp/send", authH.SendOTP)
-	r.POST("/api/v1/auth/otp/verify", authH.VerifyOTP)
-	r.POST("/api/v1/auth/google", authH.GoogleLogin)
+	r.POST("/api/v1/auth/register", authH.Register)
+	r.POST("/api/v1/auth/login", authH.LoginWithPassword)
 
-	t.Run("send OTP without body", func(t *testing.T) {
+	t.Run("register without body", func(t *testing.T) {
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest("POST", "/api/v1/auth/otp/send", nil)
+		req, _ := http.NewRequest("POST", "/api/v1/auth/register", nil)
 		req.Header.Set("Content-Type", "application/json")
 		r.ServeHTTP(w, req)
 
@@ -206,20 +205,9 @@ func TestE2E_AuthValidation(t *testing.T) {
 		}
 	})
 
-	t.Run("verify OTP without body", func(t *testing.T) {
+	t.Run("login without body", func(t *testing.T) {
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest("POST", "/api/v1/auth/otp/verify", nil)
-		req.Header.Set("Content-Type", "application/json")
-		r.ServeHTTP(w, req)
-
-		if w.Code != 400 {
-			t.Errorf("expected 400, got %d", w.Code)
-		}
-	})
-
-	t.Run("google login without token", func(t *testing.T) {
-		w := httptest.NewRecorder()
-		req, _ := http.NewRequest("POST", "/api/v1/auth/google", nil)
+		req, _ := http.NewRequest("POST", "/api/v1/auth/login", nil)
 		req.Header.Set("Content-Type", "application/json")
 		r.ServeHTTP(w, req)
 

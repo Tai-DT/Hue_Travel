@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -8,14 +8,47 @@ import {
   Switch,
   Modal,
   Alert,
+  TextInput,
+  ActivityIndicator,
 } from 'react-native';
+import * as SecureStore from 'expo-secure-store';
 import { Colors, Fonts, Spacing, BorderRadius } from '@/constants/theme';
 import { useTranslation } from '@/hooks/useTranslation';
 import { SUPPORTED_LOCALES, SupportedLocale } from '@/i18n';
+import api from '@/services/api';
 
 // ============================================
-// Settings Screen — with i18n
+// Settings Screen — with i18n + persistence
 // ============================================
+
+const SETTINGS_STORAGE_KEY = 'ht_user_settings';
+
+const DEFAULT_TOGGLES: Record<string, boolean> = {
+  pushNotif: true,
+  emailNotif: true,
+  chatNotif: true,
+  promoNotif: false,
+  darkMode: true,
+  twoFactor: false,
+};
+
+async function loadSavedToggles(): Promise<Record<string, boolean>> {
+  try {
+    const raw = await SecureStore.getItemAsync(SETTINGS_STORAGE_KEY);
+    if (!raw) return { ...DEFAULT_TOGGLES };
+    return { ...DEFAULT_TOGGLES, ...JSON.parse(raw) };
+  } catch {
+    return { ...DEFAULT_TOGGLES };
+  }
+}
+
+async function saveToggles(toggles: Record<string, boolean>) {
+  try {
+    await SecureStore.setItemAsync(SETTINGS_STORAGE_KEY, JSON.stringify(toggles));
+  } catch {
+    // Silently fail — settings are still in memory
+  }
+}
 
 export default function SettingsScreen({
   onBack,
@@ -26,19 +59,36 @@ export default function SettingsScreen({
 }) {
   const { t, locale, setLocale, supportedLocales } = useTranslation();
   const [showLanguagePicker, setShowLanguagePicker] = useState(false);
-
-  const [toggles, setToggles] = useState<Record<string, boolean>>({
-    pushNotif: true,
-    emailNotif: true,
-    chatNotif: true,
-    promoNotif: false,
-    darkMode: true,
-    twoFactor: false,
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [hasPassword, setHasPassword] = useState(false);
+  const [passwordForm, setPasswordForm] = useState({
+    currentPassword: '',
+    newPassword: '',
+    confirmPassword: '',
   });
+  const [passwordLoading, setPasswordLoading] = useState(false);
+  const [passwordError, setPasswordError] = useState('');
+  const [passwordSuccess, setPasswordSuccess] = useState('');
 
-  const handleToggle = (key: string) => {
-    setToggles((prev) => ({ ...prev, [key]: !prev[key] }));
-  };
+  const [toggles, setToggles] = useState<Record<string, boolean>>({ ...DEFAULT_TOGGLES });
+
+  useEffect(() => {
+    loadSavedToggles().then(setToggles);
+    api.getMe().then((res) => {
+      if (res.success && res.data) {
+        const user = (res.data as any).user || res.data;
+        setHasPassword(Boolean(user?.has_password));
+      }
+    });
+  }, []);
+
+  const handleToggle = useCallback((key: string) => {
+    setToggles((prev) => {
+      const next = { ...prev, [key]: !prev[key] };
+      saveToggles(next);
+      return next;
+    });
+  }, []);
 
   const handleLanguageSelect = (code: SupportedLocale) => {
     setLocale(code);
@@ -51,6 +101,44 @@ export default function SettingsScreen({
       { text: t('common.cancel'), style: 'cancel' },
       { text: t('settings.logout'), style: 'destructive', onPress: onLogout },
     ]);
+  };
+
+  const openPasswordModal = () => {
+    setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
+    setPasswordError('');
+    setPasswordSuccess('');
+    setShowPasswordModal(true);
+  };
+
+  const handlePasswordSave = async () => {
+    if (passwordForm.newPassword.length < 8) {
+      setPasswordError('Mật khẩu mới phải có ít nhất 8 ký tự.');
+      return;
+    }
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+      setPasswordError('Mật khẩu nhập lại không khớp.');
+      return;
+    }
+    if (hasPassword && !passwordForm.currentPassword) {
+      setPasswordError('Vui lòng nhập mật khẩu hiện tại.');
+      return;
+    }
+
+    setPasswordLoading(true);
+    setPasswordError('');
+    setPasswordSuccess('');
+
+    const res = await api.updatePassword(passwordForm.currentPassword, passwordForm.newPassword);
+    setPasswordLoading(false);
+
+    if (!res.success) {
+      setPasswordError(res.error?.message || 'Không thể cập nhật mật khẩu.');
+      return;
+    }
+
+    setHasPassword(true);
+    setPasswordSuccess('Đã cập nhật mật khẩu thành công.');
+    setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
   };
 
   const currentLang = supportedLocales.find((l) => l.code === locale);
@@ -99,10 +187,16 @@ export default function SettingsScreen({
     {
       title: t('settings.security'),
       items: [
-        { icon: '🔐', label: t('settings.changePassword'), type: 'link' },
+        { icon: '🔐', label: t('settings.changePassword'), type: 'link', onPress: openPasswordModal },
         { icon: '📱', label: t('settings.twoFactor'), type: 'toggle', key: 'twoFactor' },
         { icon: '👤', label: t('settings.sessions'), type: 'value', value: t('settings.devices', { count: 2 }) },
-        { icon: '🔑', label: t('settings.connectedGoogle'), type: 'value', value: t('settings.connected'), color: '#4CAF50' },
+        {
+          icon: '🔑',
+          label: 'Mật khẩu nội bộ',
+          type: 'value',
+          value: hasPassword ? 'Đã có mật khẩu' : 'Chưa đặt mật khẩu',
+          color: hasPassword ? '#4CAF50' : Colors.textMuted,
+        },
       ],
     },
     {
@@ -234,6 +328,74 @@ export default function SettingsScreen({
           </View>
         </TouchableOpacity>
       </Modal>
+
+      <Modal
+        visible={showPasswordModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowPasswordModal(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowPasswordModal(false)}
+        >
+          <View style={styles.modalContent}>
+            <View style={styles.modalHandle} />
+            <Text style={styles.modalTitle}>{hasPassword ? 'Đổi mật khẩu' : 'Đặt mật khẩu lần đầu'}</Text>
+
+            <Text style={styles.passwordHint}>
+              {hasPassword
+                ? 'Nhập mật khẩu hiện tại rồi chọn mật khẩu mới.'
+                : 'Tài khoản của bạn chưa có mật khẩu nội bộ. Đặt mật khẩu để lần sau đăng nhập bằng email.'}
+            </Text>
+
+            {hasPassword ? (
+              <TextInput
+                style={styles.passwordInput}
+                value={passwordForm.currentPassword}
+                onChangeText={(value) => setPasswordForm((prev) => ({ ...prev, currentPassword: value }))}
+                secureTextEntry
+                placeholder="Mật khẩu hiện tại"
+                placeholderTextColor={Colors.textMuted}
+              />
+            ) : null}
+
+            <TextInput
+              style={styles.passwordInput}
+              value={passwordForm.newPassword}
+              onChangeText={(value) => setPasswordForm((prev) => ({ ...prev, newPassword: value }))}
+              secureTextEntry
+              placeholder="Mật khẩu mới"
+              placeholderTextColor={Colors.textMuted}
+            />
+            <TextInput
+              style={styles.passwordInput}
+              value={passwordForm.confirmPassword}
+              onChangeText={(value) => setPasswordForm((prev) => ({ ...prev, confirmPassword: value }))}
+              secureTextEntry
+              placeholder="Nhập lại mật khẩu mới"
+              placeholderTextColor={Colors.textMuted}
+            />
+
+            {passwordError ? <Text style={styles.passwordError}>{passwordError}</Text> : null}
+            {passwordSuccess ? <Text style={styles.passwordSuccess}>{passwordSuccess}</Text> : null}
+
+            <TouchableOpacity
+              style={styles.passwordButton}
+              onPress={handlePasswordSave}
+              disabled={passwordLoading}
+              activeOpacity={0.85}
+            >
+              {passwordLoading ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.passwordButtonText}>{hasPassword ? 'Cập nhật mật khẩu' : 'Đặt mật khẩu'}</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
 }
@@ -337,5 +499,48 @@ const styles = StyleSheet.create({
     fontSize: 20,
     color: Colors.primary,
     fontWeight: Fonts.weights.bold as any,
+  },
+  passwordHint: {
+    fontSize: Fonts.sizes.sm,
+    color: Colors.textSecondary,
+    lineHeight: 22,
+    textAlign: 'center',
+    marginBottom: Spacing.md,
+  },
+  passwordInput: {
+    width: '100%',
+    paddingHorizontal: Spacing.base,
+    paddingVertical: Spacing.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: BorderRadius.lg,
+    backgroundColor: Colors.background,
+    color: Colors.text,
+    fontSize: Fonts.sizes.base,
+    marginBottom: Spacing.sm,
+  },
+  passwordButton: {
+    marginTop: Spacing.sm,
+    backgroundColor: Colors.primary,
+    borderRadius: BorderRadius.lg,
+    paddingVertical: Spacing.md,
+    alignItems: 'center',
+  },
+  passwordButtonText: {
+    color: Colors.textOnPrimary,
+    fontSize: Fonts.sizes.base,
+    fontWeight: Fonts.weights.semibold as any,
+  },
+  passwordError: {
+    color: Colors.error,
+    fontSize: Fonts.sizes.sm,
+    textAlign: 'center',
+    marginBottom: Spacing.xs,
+  },
+  passwordSuccess: {
+    color: '#4CAF50',
+    fontSize: Fonts.sizes.sm,
+    textAlign: 'center',
+    marginBottom: Spacing.xs,
   },
 });

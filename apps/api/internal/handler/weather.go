@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"errors"
+
 	"github.com/gin-gonic/gin"
 
 	"github.com/huetravel/api/internal/service"
@@ -23,6 +25,10 @@ func NewWeatherHandler(svc *service.WeatherService) *WeatherHandler {
 func (h *WeatherHandler) GetCurrent(c *gin.Context) {
 	weather, err := h.weatherSvc.GetCurrentWeather()
 	if err != nil {
+		if errors.Is(err, service.ErrServiceNotConfigured) || errors.Is(err, service.ErrServiceUnavailable) {
+			response.ServiceUnavailable(c, "HT-WEATHER-001", "Dịch vụ thời tiết hiện chưa sẵn sàng")
+			return
+		}
 		response.InternalError(c, "Không thể lấy thời tiết")
 		return
 	}
@@ -33,6 +39,10 @@ func (h *WeatherHandler) GetCurrent(c *gin.Context) {
 func (h *WeatherHandler) GetForecast(c *gin.Context) {
 	forecast, err := h.weatherSvc.GetForecast()
 	if err != nil {
+		if errors.Is(err, service.ErrServiceNotConfigured) || errors.Is(err, service.ErrServiceUnavailable) {
+			response.ServiceUnavailable(c, "HT-WEATHER-002", "Dịch vụ dự báo thời tiết hiện chưa sẵn sàng")
+			return
+		}
 		response.InternalError(c, "Không thể lấy dự báo")
 		return
 	}

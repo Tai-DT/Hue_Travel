@@ -237,11 +237,14 @@ func (h *StoryHandler) Create(c *gin.Context) {
 }
 
 func (h *StoryHandler) Feed(c *gin.Context) {
-	userID, _ := c.Get("user_id")
+	var userID uuid.UUID
+	if uid, exists := c.Get("user_id"); exists {
+		userID = uid.(uuid.UUID)
+	}
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
-	stories, err := h.repo.Feed(c.Request.Context(), userID.(uuid.UUID), limit, offset)
+	stories, err := h.repo.Feed(c.Request.Context(), userID, limit, offset)
 	if err != nil {
 		response.InternalError(c, "Không thể tải feed")
 		return

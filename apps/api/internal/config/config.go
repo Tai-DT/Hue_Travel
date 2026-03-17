@@ -18,7 +18,6 @@ type Config struct {
 	Goong       GoongConfig
 	VNPay       VNPayConfig
 	AI          AIConfig
-	ESMS        ESMSConfig
 	FCM         FCMConfig
 	Meilisearch MeilisearchConfig
 	OpenWeather OpenWeatherConfig
@@ -73,12 +72,6 @@ type VNPayConfig struct {
 
 type AIConfig struct {
 	GeminiAPIKey string
-}
-
-type ESMSConfig struct {
-	APIKey    string
-	SecretKey string
-	BrandName string
 }
 
 type FCMConfig struct {
@@ -143,11 +136,6 @@ func Load() (*Config, error) {
 		AI: AIConfig{
 			GeminiAPIKey: getEnv("GEMINI_API_KEY", ""),
 		},
-		ESMS: ESMSConfig{
-			APIKey:    getEnv("ESMS_API_KEY", ""),
-			SecretKey: getEnv("ESMS_SECRET_KEY", ""),
-			BrandName: getEnv("ESMS_BRAND_NAME", "HueTravel"),
-		},
 		FCM: FCMConfig{
 			ServerKey: getEnv("FCM_SERVER_KEY", ""),
 		},
@@ -189,8 +177,7 @@ func (c *Config) Validate() error {
 			"GEMINI_API_KEY":         c.AI.GeminiAPIKey,
 			"VNPAY_TMN_CODE":         c.VNPay.TmnCode,
 			"VNPAY_HASH_SECRET":      c.VNPay.HashSecret,
-			"ESMS_API_KEY":           c.ESMS.APIKey,
-			"ESMS_SECRET_KEY":        c.ESMS.SecretKey,
+			"OPENWEATHER_API_KEY":    c.OpenWeather.APIKey,
 			"MEILISEARCH_URL":        c.Meilisearch.URL,
 			"MEILISEARCH_MASTER_KEY": c.Meilisearch.MasterKey,
 			"MINIO_ENDPOINT":         c.MinIO.Endpoint,

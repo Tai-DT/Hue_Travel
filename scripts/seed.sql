@@ -3,11 +3,11 @@
 -- Idempotent seed for local/dev environments
 -- ============================================
 
-INSERT INTO users (phone, email, full_name, role, is_verified, is_active, referral_code, xp, level)
+INSERT INTO users (phone, email, full_name, role, is_verified, is_active, referral_code, xp, level, password_hash)
 VALUES
-    ('901111222', 'admin@huetravel.local', 'Hue Travel Admin', 'admin', TRUE, TRUE, 'ADMIN901', 500, 'Admin'),
-    ('0905556666', 'traveler.mobile@huetravel.local', 'Traveler Demo Huế', 'traveler', TRUE, TRUE, 'TRAV555', 120, 'Explorer'),
-    ('0907778888', 'guide.demo@huetravel.local', 'Guide Demo Huế', 'guide', TRUE, TRUE, 'GUIDE777', 320, 'Expert')
+    ('901111222', 'admin@huetravel.local', 'Hue Travel Admin', 'admin', TRUE, TRUE, 'ADMIN901', 500, 'Admin', '$2y$10$ZYHSdrIkmkz64nDIAJSHlu7NyhsC41eqVaxd4ViSmOWRO835nx4Ga'),
+    ('0905556666', 'traveler.mobile@huetravel.local', 'Traveler Demo Huế', 'traveler', TRUE, TRUE, 'TRAV555', 120, 'Explorer', '$2y$10$ZYHSdrIkmkz64nDIAJSHlu7NyhsC41eqVaxd4ViSmOWRO835nx4Ga'),
+    ('0907778888', 'guide.demo@huetravel.local', 'Guide Demo Huế', 'guide', TRUE, TRUE, 'GUIDE777', 320, 'Expert', '$2y$10$ZYHSdrIkmkz64nDIAJSHlu7NyhsC41eqVaxd4ViSmOWRO835nx4Ga')
 ON CONFLICT (phone) DO UPDATE SET
     email = EXCLUDED.email,
     full_name = EXCLUDED.full_name,
@@ -16,6 +16,7 @@ ON CONFLICT (phone) DO UPDATE SET
     is_active = EXCLUDED.is_active,
     xp = EXCLUDED.xp,
     level = EXCLUDED.level,
+    password_hash = EXCLUDED.password_hash,
     updated_at = NOW();
 
 INSERT INTO guide_profiles (
@@ -98,12 +99,3 @@ ON CONFLICT (slug) DO UPDATE SET
     is_active = EXCLUDED.is_active,
     published_at = EXCLUDED.published_at,
     updated_at = NOW();
-
-DELETE FROM otp_verifications
-WHERE phone IN ('901111222', '0905556666', '0907778888');
-
-INSERT INTO otp_verifications (phone, code, expires_at, verified, attempts)
-VALUES
-    ('901111222', '123456', NOW() + INTERVAL '10 minutes', FALSE, 0),
-    ('0905556666', '123456', NOW() + INTERVAL '10 minutes', FALSE, 0),
-    ('0907778888', '123456', NOW() + INTERVAL '10 minutes', FALSE, 0);

@@ -77,13 +77,15 @@ Check API health status.
 
 ## Authentication
 
-### `POST /auth/otp/send`
-Send OTP to phone number.
+### `POST /auth/register`
+Register a local account with email and password.
 
 **Body:**
 ```json
 {
-  "phone": "0901234567"
+  "full_name": "Nguyễn Văn A",
+  "email": "user@example.com",
+  "password": "Secret123!"
 }
 ```
 
@@ -92,20 +94,22 @@ Send OTP to phone number.
 {
   "success": true,
   "data": {
-    "message": "OTP đã được gửi",
-    "expires_in": 300
+    "token": "eyJhbGciOi...",
+    "refresh_token": "eyJhbGciOi...",
+    "expires_in": 86400,
+    "is_new_user": true
   }
 }
 ```
 
-### `POST /auth/otp/verify`
-Verify OTP and get tokens.
+### `POST /auth/login`
+Login with email and password.
 
 **Body:**
 ```json
 {
-  "phone": "0901234567",
-  "code": "123456"
+  "email": "user@example.com",
+  "password": "Secret123!"
 }
 ```
 
@@ -126,21 +130,14 @@ Verify OTP and get tokens.
 }
 ```
 
-### `POST /auth/google`
-Login with Google ID token.
-
-**Body:**
-```json
-{
-  "id_token": "google-id-token"
-}
-```
-
 ### `POST /auth/refresh` 🔒
 Refresh access token.
 
 ### `POST /auth/logout` 🔒
 Invalidate refresh token.
+
+### `POST /auth/password` 🔒
+Update the current user's local password.
 
 ---
 
@@ -525,11 +522,10 @@ Update booking status.
 | Code | Description |
 |------|-------------|
 | HT-VAL-001 | Validation error |
-| HT-AUTH-001 | Rate limited |
-| HT-AUTH-002 | OTP send failed |
-| HT-AUTH-003 | OTP expired |
-| HT-AUTH-004 | OTP invalid |
-| HT-AUTH-005 | Google login failed |
+| HT-AUTH-001 | Unauthorized / invalid credentials |
+| HT-AUTH-003 | Forbidden |
+| HT-AUTH-007 | Registration failed / email already in use |
+| HT-AUTH-008 | Password update failed |
 | HT-BOOK-001 | Booking validation error |
 | HT-BOOK-002 | Experience not found |
 | HT-BOOK-003 | Duplicate booking |

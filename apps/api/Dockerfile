@@ -28,7 +28,7 @@ COPY --from=builder /bin/server /app/server
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --retries=3 \
-  CMD wget -q --spider http://localhost:8080/api/v1/health || exit 1
+  CMD wget -q --spider http://localhost:8080/health || exit 1
 
 EXPOSE 8080
 

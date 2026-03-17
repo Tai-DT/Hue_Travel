@@ -26,6 +26,7 @@ type User struct {
 	Phone        *string    `json:"phone,omitempty" db:"phone"`
 	Email        *string    `json:"email,omitempty" db:"email"`
 	PasswordHash *string    `json:"-" db:"password_hash"`
+	HasPassword  bool       `json:"has_password" db:"-"`
 	FullName     string     `json:"full_name" db:"full_name"`
 	AvatarURL    *string    `json:"avatar_url,omitempty" db:"avatar_url"`
 	Role         UserRole   `json:"role" db:"role"`
@@ -38,15 +39,6 @@ type User struct {
 	LastLoginAt  *time.Time `json:"last_login_at,omitempty" db:"last_login_at"`
 	CreatedAt    time.Time  `json:"created_at" db:"created_at"`
 	UpdatedAt    time.Time  `json:"updated_at" db:"updated_at"`
-}
-
-type OTPVerification struct {
-	ID        uuid.UUID `json:"id" db:"id"`
-	Phone     string    `json:"phone" db:"phone"`
-	Code      string    `json:"-" db:"code"`
-	ExpiresAt time.Time `json:"expires_at" db:"expires_at"`
-	Verified  bool      `json:"verified" db:"verified"`
-	CreatedAt time.Time `json:"created_at" db:"created_at"`
 }
 
 // ============================================
@@ -185,19 +177,19 @@ type Review struct {
 // ============================================
 
 type GuideProfile struct {
-	ID              uuid.UUID `json:"id" db:"id"`
-	UserID          uuid.UUID `json:"user_id" db:"user_id"`
-	BadgeLevel      string    `json:"badge_level" db:"badge_level"` // bronze, silver, gold, platinum
-	Specialties     []string  `json:"specialties,omitempty" db:"specialties"`
-	ExperienceYears int       `json:"experience_years" db:"experience_years"`
-	TotalTours      int       `json:"total_tours" db:"total_tours"`
-	TotalReviews    int       `json:"total_reviews" db:"total_reviews"`
-	AvgRating       float64   `json:"avg_rating" db:"avg_rating"`
-	ResponseTimeMins int      `json:"response_time_mins" db:"response_time_mins"`
-	AcceptanceRate  float64   `json:"acceptance_rate" db:"acceptance_rate"`
-	IsApproved      bool      `json:"is_approved" db:"is_approved"`
-	IsAvailable     bool      `json:"is_available" db:"is_available"`
-	CreatedAt       time.Time `json:"created_at" db:"created_at"`
+	ID               uuid.UUID `json:"id" db:"id"`
+	UserID           uuid.UUID `json:"user_id" db:"user_id"`
+	BadgeLevel       string    `json:"badge_level" db:"badge_level"` // bronze, silver, gold, platinum
+	Specialties      []string  `json:"specialties,omitempty" db:"specialties"`
+	ExperienceYears  int       `json:"experience_years" db:"experience_years"`
+	TotalTours       int       `json:"total_tours" db:"total_tours"`
+	TotalReviews     int       `json:"total_reviews" db:"total_reviews"`
+	AvgRating        float64   `json:"avg_rating" db:"avg_rating"`
+	ResponseTimeMins int       `json:"response_time_mins" db:"response_time_mins"`
+	AcceptanceRate   float64   `json:"acceptance_rate" db:"acceptance_rate"`
+	IsApproved       bool      `json:"is_approved" db:"is_approved"`
+	IsAvailable      bool      `json:"is_available" db:"is_available"`
+	CreatedAt        time.Time `json:"created_at" db:"created_at"`
 
 	User *User `json:"user,omitempty" db:"-"`
 }

@@ -56,10 +56,10 @@ smoke: ## Validate local infra health and schema consistency
 smoke-api: ## Validate local API public endpoints (set API_BASE if needed)
 	./scripts/smoke-api.sh
 
-smoke-auth: ## Validate OTP login, refresh, and logout flow (set API_BASE/PHONE/OTP_CODE if needed)
+smoke-auth: ## Validate email/password auth, refresh, and logout flow (set API_BASE/EMAIL/PASSWORD if needed)
 	./scripts/smoke-auth.sh
 
-smoke-booking: ## Validate OTP login, booking create, payment create, and logout flow
+smoke-booking: ## Validate email/password auth, booking create, payment create, and logout flow
 	./scripts/smoke-booking.sh
 
 # ---- Setup ----

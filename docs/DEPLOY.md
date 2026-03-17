@@ -67,10 +67,9 @@ CORS_ORIGINS=https://admin.huetravel.vn,https://provider.huetravel.vn
 # API Keys (required for full functionality)
 GOONG_API_KEY=<your-key>
 GEMINI_API_KEY=<your-key>
+OPENWEATHER_API_KEY=<your-key>
 VNPAY_TMN_CODE=<your-code>
 VNPAY_HASH_SECRET=<your-secret>
-ESMS_API_KEY=<your-key>
-ESMS_SECRET_KEY=<your-secret>
 FCM_SERVER_KEY=<your-key>
 ```
 
@@ -164,7 +163,7 @@ docker exec -i hue-postgres psql -U huetravel hue_travel < backup.sql
 ### Health Checks
 ```bash
 # API Health
-curl https://api.huetravel.vn/api/v1/health
+curl https://api.huetravel.vn/health
 
 # Docker health
 docker compose -f deploy/docker-compose.prod.yml ps

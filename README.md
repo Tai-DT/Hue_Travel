@@ -79,7 +79,7 @@ npm run dev  # http://localhost:3001
 
 | Category | Count | Description |
 |---|---|---|
-| Auth | 6 | OTP, Google OAuth, refresh, logout |
+| Auth | 5 | Email/password register, login, refresh, logout |
 | User | 3 | Profile, update, device token |
 | Experiences | 5 | CRUD, search, filter |
 | Bookings | 7 | Create, confirm, complete, cancel, guide |
@@ -117,11 +117,10 @@ npm run dev  # http://localhost:3001
 | Service | Purpose | SDK |
 |---|---|---|
 | PostgreSQL 16 | Primary database | pgx/v5 |
-| Redis 7 | Cache, sessions, OTP | go-redis/v9 |
+| Redis 7 | Cache, sessions | go-redis/v9 |
 | MinIO | File storage (S3) | minio-go/v7 |
 | Meilisearch | Full-text search | HTTP API |
 | Firebase FCM | Push notifications | HTTP API |
-| ESMS.vn | SMS OTP | REST API |
 | Gemini | AI trip planning | REST API |
 | VNPay | Payment gateway | HTTP API |
 | Goong Maps | Maps, places, directions | REST API |
@@ -147,14 +146,16 @@ make smoke
 # Validate API public endpoints
 make smoke-api
 
-# Validate OTP login -> refresh -> logout flow
+# Validate email/password auth -> refresh -> logout flow
 make smoke-auth
 
-# Validate OTP login -> booking -> payment create -> logout flow
+# Validate email/password auth -> booking -> payment create -> logout flow
 make smoke-booking
 ```
 
-`make smoke-booking` supports `PHONE`, `OTP_CODE`, `BOOKING_DATE`, `EXPERIENCE_ID`, `EXPERIENCE_QUERY`, and `BANK_CODE`. In local mock-payment mode, the script also verifies that the booking becomes `confirmed` immediately after payment creation.
+`make smoke-auth` supports `EMAIL`, `PASSWORD`, and `FULL_NAME`. If `EMAIL` is omitted, it auto-registers a fresh local account.
+
+`make smoke-booking` supports `EMAIL`, `PASSWORD`, `FULL_NAME`, `BOOKING_DATE`, `EXPERIENCE_ID`, `EXPERIENCE_QUERY`, and `BANK_CODE`. If `EMAIL` is omitted, it auto-registers a traveler account before creating the booking. In local mock-payment mode, the script also verifies that the booking becomes `confirmed` immediately after payment creation.
 
 ## ⚙️ Runtime Modes
 

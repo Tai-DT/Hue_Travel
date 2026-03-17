@@ -23,23 +23,22 @@ type Container struct {
 	Redis  *redis.Client
 
 	// Repositories
-	UserRepo    *repository.UserRepository
-	OTPRepo     *repository.OTPRepository
-	ExpRepo     *repository.ExperienceRepository
-	BookingRepo *repository.BookingRepository
-	ReviewRepo  *repository.ReviewRepository
-	FavRepo     *repository.FavoriteRepository
-	GuideRepo   *repository.GuideProfileRepository
-	ChatRepo    *repository.ChatRepository
-	FriendRepo   *repository.FriendRepository
-	TripRepo     *repository.TripRepository
-	ReactionRepo *repository.ReactionRepository
-	CallRepo     *repository.CallRepository
-	PromoRepo    *repository.PromotionRepository
-	GamRepo      *repository.GamificationRepository
-	BlogRepo     *repository.BlogRepository
-	DiaryRepo    *repository.DiaryRepository
-	EventRepo    *repository.EventRepository
+	UserRepo       *repository.UserRepository
+	ExpRepo        *repository.ExperienceRepository
+	BookingRepo    *repository.BookingRepository
+	ReviewRepo     *repository.ReviewRepository
+	FavRepo        *repository.FavoriteRepository
+	GuideRepo      *repository.GuideProfileRepository
+	ChatRepo       *repository.ChatRepository
+	FriendRepo     *repository.FriendRepository
+	TripRepo       *repository.TripRepository
+	ReactionRepo   *repository.ReactionRepository
+	CallRepo       *repository.CallRepository
+	PromoRepo      *repository.PromotionRepository
+	GamRepo        *repository.GamificationRepository
+	BlogRepo       *repository.BlogRepository
+	DiaryRepo      *repository.DiaryRepository
+	EventRepo      *repository.EventRepository
 	SOSRepo        *repository.SOSRepository
 	ReportRepo     *repository.ReportBlockRepository
 	GuideAppRepo   *repository.GuideAppRepository
@@ -54,40 +53,39 @@ type Container struct {
 	VNPaySvc   *service.VNPayService
 	NotifSvc   *service.NotificationService
 	SearchSvc  *service.SearchService
-	SMSSvc     *service.SMSService
 	UploadSvc  *service.FileUploadService
 	WeatherSvc *service.WeatherService
 	BGWorker   *service.BackgroundWorker
 
 	// Handlers
-	HealthH    *handler.HealthHandler
-	AuthH      *handler.AuthHandler
-	ExpH       *handler.ExperienceHandler
-	PlaceH     *handler.PlaceHandler
-	BookingH   *handler.BookingHandler
-	ReviewH    *handler.ReviewHandler
-	FavH       *handler.FavoriteHandler
-	GuideH     *handler.GuideHandler
-	ChatH      *handler.ChatHandler
-	AIH        *handler.AIHandler
-	PaymentH   *handler.PaymentHandler
-	NotifH     *handler.NotificationHandler
-	SearchH    *handler.SearchHandler
-	UploadH    *handler.UploadHandler
-	AdminH     *handler.AdminHandler
-	AdminMgmtH *handler.AdminManagementHandler
-	DocsH      *handler.DocsHandler
-	FriendH    *handler.FriendHandler
-	TripH      *handler.TripHandler
-	ReactionH  *handler.ReactionHandler
-	CallH      *handler.CallHandler
-	WeatherH   *handler.WeatherHandler
-	PromoH     *handler.PromotionHandler
-	GamH       *handler.GamificationHandler
-	BlogH      *handler.BlogHandler
-	DiaryH     *handler.DiaryHandler
-	EventH     *handler.EventHandler
-	SOSH       *handler.SOSHandler
+	HealthH       *handler.HealthHandler
+	AuthH         *handler.AuthHandler
+	ExpH          *handler.ExperienceHandler
+	PlaceH        *handler.PlaceHandler
+	BookingH      *handler.BookingHandler
+	ReviewH       *handler.ReviewHandler
+	FavH          *handler.FavoriteHandler
+	GuideH        *handler.GuideHandler
+	ChatH         *handler.ChatHandler
+	AIH           *handler.AIHandler
+	PaymentH      *handler.PaymentHandler
+	NotifH        *handler.NotificationHandler
+	SearchH       *handler.SearchHandler
+	UploadH       *handler.UploadHandler
+	AdminH        *handler.AdminHandler
+	AdminMgmtH    *handler.AdminManagementHandler
+	DocsH         *handler.DocsHandler
+	FriendH       *handler.FriendHandler
+	TripH         *handler.TripHandler
+	ReactionH     *handler.ReactionHandler
+	CallH         *handler.CallHandler
+	WeatherH      *handler.WeatherHandler
+	PromoH        *handler.PromotionHandler
+	GamH          *handler.GamificationHandler
+	BlogH         *handler.BlogHandler
+	DiaryH        *handler.DiaryHandler
+	EventH        *handler.EventHandler
+	SOSH          *handler.SOSHandler
 	TranslateH    *handler.TranslationHandler
 	ReportH       *handler.ReportBlockHandler
 	GuideAppH     *handler.GuideAppHandler
@@ -149,7 +147,6 @@ func (c *Container) initRepositories() {
 	}
 
 	c.UserRepo = repository.NewUserRepository(c.Pool)
-	c.OTPRepo = repository.NewOTPRepository(c.Pool)
 	c.ExpRepo = repository.NewExperienceRepository(c.Pool)
 	c.BookingRepo = repository.NewBookingRepository(c.Pool)
 	c.ReviewRepo = repository.NewReviewRepository(c.Pool)
@@ -177,13 +174,10 @@ func (c *Container) initRepositories() {
 func (c *Container) initServices() {
 	cfg := c.Config
 
-	// SMS service
-	c.SMSSvc = service.NewSMSService(cfg.ESMS.APIKey, cfg.ESMS.SecretKey, cfg.ESMS.BrandName)
-
 	// Auth service (requires DB)
-	if c.UserRepo != nil && c.OTPRepo != nil {
+	if c.UserRepo != nil {
 		c.AuthSvc = service.NewAuthService(
-			c.UserRepo, c.OTPRepo, c.Redis, c.SMSSvc,
+			c.UserRepo, c.Redis,
 			cfg.JWT.Secret, cfg.JWT.Expiry, cfg.JWT.RefreshExpiry,
 		)
 	}
@@ -195,17 +189,29 @@ func (c *Container) initServices() {
 		)
 	}
 
-	// External-API services (always init — they handle "not configured" gracefully)
-	c.PlacesSvc = service.NewGoongPlacesService(cfg.Goong.APIKey)
-	c.AISvc = service.NewAITripPlannerService(cfg.AI.GeminiAPIKey)
-	c.VNPaySvc = service.NewVNPayService(cfg.VNPay.TmnCode, cfg.VNPay.HashSecret, cfg.VNPay.ReturnURL, cfg.VNPay.Sandbox)
+	// External-API services. Fallback/mock behavior is controlled by config so
+	// production can fail fast instead of silently serving demo data.
+	c.PlacesSvc = service.NewGoongPlacesServiceWithFallback(cfg.Goong.APIKey, cfg.App.AllowMockServices)
+	c.AISvc = service.NewAITripPlannerServiceWithFallback(cfg.AI.GeminiAPIKey, cfg.App.AllowMockServices)
+	c.VNPaySvc = service.NewVNPayServiceWithFallback(
+		cfg.VNPay.TmnCode,
+		cfg.VNPay.HashSecret,
+		cfg.VNPay.ReturnURL,
+		cfg.VNPay.Sandbox,
+		cfg.App.AllowMockServices,
+	)
 	c.NotifSvc = service.NewNotificationService(cfg.FCM.ServerKey, c.Pool)
-	c.SearchSvc = service.NewSearchService(cfg.Meilisearch.URL, cfg.Meilisearch.MasterKey)
-	c.UploadSvc = service.NewFileUploadService(
+	c.SearchSvc = service.NewSearchServiceWithFallback(
+		cfg.Meilisearch.URL,
+		cfg.Meilisearch.MasterKey,
+		cfg.App.AllowMockServices,
+	)
+	c.UploadSvc = service.NewFileUploadServiceWithFallback(
 		cfg.MinIO.Endpoint, cfg.MinIO.User, cfg.MinIO.Password,
 		cfg.MinIO.Bucket, cfg.MinIO.UseSSL,
+		cfg.App.AllowMockServices,
 	)
-	c.WeatherSvc = service.NewWeatherService(cfg.OpenWeather.APIKey)
+	c.WeatherSvc = service.NewWeatherServiceWithFallback(cfg.OpenWeather.APIKey, cfg.App.AllowMockServices)
 
 	slog.Info("All services initialized")
 }

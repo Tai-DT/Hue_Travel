@@ -7,100 +7,224 @@ import (
 
 	"github.com/huetravel/api/internal/model"
 	"github.com/huetravel/api/internal/testutil"
+	"golang.org/x/crypto/bcrypt"
 )
 
-func TestAuthServiceGoogleLoginLinksExistingUserByEmail(t *testing.T) {
+func TestAuthServiceRegisterAndPasswordLogin(t *testing.T) {
 	userRepo := testutil.NewMockUserRepo()
-	otpRepo := testutil.NewMockOTPRepo()
-	authService := NewAuthService(userRepo, otpRepo, nil, nil, "test-secret", time.Hour, 24*time.Hour)
+	authService := NewAuthService(userRepo, nil, "test-secret", time.Hour, 24*time.Hour)
 
-	email := "admin@huetravel.local"
-	existingUser := &model.User{
-		Email:    &email,
-		FullName: "Admin Demo",
-		Role:     model.RoleAdmin,
-		IsActive: true,
+	registerResult, err := authService.Register(context.Background(), RegisterRequest{
+		FullName: "Tai Nguyen",
+		Email:    "tai@example.com",
+		Password: "Secret123!",
+	})
+	if err != nil {
+		t.Fatalf("Register() unexpected error: %v", err)
 	}
-	if err := userRepo.Create(context.Background(), existingUser); err != nil {
+	if registerResult == nil || registerResult.User == nil {
+		t.Fatal("expected auth response with created user")
+	}
+	if !registerResult.IsNewUser {
+		t.Fatal("expected register flow to mark user as new")
+	}
+	if registerResult.User.PasswordHash == nil || *registerResult.User.PasswordHash == "" {
+		t.Fatal("expected password hash to be stored for local auth")
+	}
+
+	loginResult, err := authService.LoginWithPassword(context.Background(), PasswordLoginRequest{
+		Email:    "TAI@example.com",
+		Password: "Secret123!",
+	})
+	if err != nil {
+		t.Fatalf("LoginWithPassword() unexpected error: %v", err)
+	}
+	if loginResult == nil || loginResult.User == nil {
+		t.Fatal("expected login response with user")
+	}
+	if loginResult.User.ID != registerResult.User.ID {
+		t.Fatalf("expected same user ID after login, got %s want %s", loginResult.User.ID, registerResult.User.ID)
+	}
+}
+
+func TestAuthServiceLoginWithPasswordNormalizesEmail(t *testing.T) {
+	userRepo := testutil.NewMockUserRepo()
+	authService := NewAuthService(userRepo, nil, "test-secret", time.Hour, 24*time.Hour)
+
+	email := "normalize@example.com"
+	passwordHashBytes, err := bcrypt.GenerateFromPassword([]byte("Secret123!"), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatalf("GenerateFromPassword() unexpected error: %v", err)
+	}
+	passwordHash := string(passwordHashBytes)
+
+	user := &model.User{
+		Email:        &email,
+		PasswordHash: &passwordHash,
+		FullName:     "Email User",
+		Role:         model.RoleTraveler,
+		IsActive:     true,
+	}
+	if err := userRepo.Create(context.Background(), user); err != nil {
 		t.Fatalf("Create() unexpected error: %v", err)
 	}
 
-	originalVerifier := googleTokenVerifier
-	googleTokenVerifier = func(_ string) (*GoogleUser, error) {
-		return &GoogleUser{
-			ID:            "google-admin-123",
-			Email:         email,
-			Name:          "Admin Demo",
-			Picture:       "https://example.com/avatar.png",
-			EmailVerified: "true",
-		}, nil
-	}
-	defer func() {
-		googleTokenVerifier = originalVerifier
-	}()
-
-	result, err := authService.GoogleLogin(context.Background(), "valid-google-token")
+	loginResult, err := authService.LoginWithPassword(context.Background(), PasswordLoginRequest{
+		Email:    "  NORMALIZE@EXAMPLE.COM ",
+		Password: "Secret123!",
+	})
 	if err != nil {
-		t.Fatalf("GoogleLogin() unexpected error: %v", err)
+		t.Fatalf("LoginWithPassword() unexpected error: %v", err)
 	}
-	if result == nil || result.User == nil {
-		t.Fatal("expected non-nil auth response with user")
+	if loginResult == nil || loginResult.User == nil {
+		t.Fatal("expected login response with user")
 	}
-	if result.IsNewUser {
-		t.Fatal("expected existing user to be linked instead of created")
-	}
-	if result.User.ID != existingUser.ID {
-		t.Fatalf("expected linked user ID %s, got %s", existingUser.ID, result.User.ID)
-	}
-	if result.User.Role != model.RoleAdmin {
-		t.Fatalf("expected role %q, got %q", model.RoleAdmin, result.User.Role)
-	}
-	if !result.User.IsVerified {
-		t.Fatal("expected linked user to be marked verified")
-	}
-	if result.User.AvatarURL == nil || *result.User.AvatarURL == "" {
-		t.Fatal("expected avatar URL to be populated from Google profile")
-	}
-
-	linkedUser, err := userRepo.GetByGoogleID(context.Background(), "google-admin-123")
-	if err != nil {
-		t.Fatalf("GetByGoogleID() unexpected error: %v", err)
-	}
-	if linkedUser == nil {
-		t.Fatal("expected google ID to be linked to existing user")
-	}
-	if linkedUser.ID != existingUser.ID {
-		t.Fatalf("expected linked google user ID %s, got %s", existingUser.ID, linkedUser.ID)
+	if loginResult.User.ID != user.ID {
+		t.Fatalf("expected normalized email login to resolve same user, got %s want %s", loginResult.User.ID, user.ID)
 	}
 }
 
-func TestGoogleClientIDsFromEnv(t *testing.T) {
-	t.Setenv("GOOGLE_CLIENT_IDS", "web-client, mobile-client , web-client")
-	t.Setenv("GOOGLE_CLIENT_ID", "fallback-client")
-	t.Setenv("EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID", "")
-	t.Setenv("EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID", "")
-	t.Setenv("EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID", "")
+func TestAuthServiceLoginWithPasswordRejectsWrongPassword(t *testing.T) {
+	userRepo := testutil.NewMockUserRepo()
+	authService := NewAuthService(userRepo, nil, "test-secret", time.Hour, 24*time.Hour)
 
-	clientIDs := googleClientIDsFromEnv()
-	if len(clientIDs) != 2 {
-		t.Fatalf("expected 2 unique client IDs, got %d: %v", len(clientIDs), clientIDs)
+	email := "wrong-pass@example.com"
+	passwordHashBytes, err := bcrypt.GenerateFromPassword([]byte("Secret123!"), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatalf("GenerateFromPassword() unexpected error: %v", err)
 	}
-	if clientIDs[0] != "web-client" || clientIDs[1] != "mobile-client" {
-		t.Fatalf("unexpected client IDs: %#v", clientIDs)
+	passwordHash := string(passwordHashBytes)
+	user := &model.User{
+		Email:        &email,
+		PasswordHash: &passwordHash,
+		FullName:     "Wrong Pass",
+		Role:         model.RoleTraveler,
+		IsActive:     true,
+	}
+	if err := userRepo.Create(context.Background(), user); err != nil {
+		t.Fatalf("Create() unexpected error: %v", err)
+	}
+
+	if _, err := authService.LoginWithPassword(context.Background(), PasswordLoginRequest{
+		Email:    email,
+		Password: "not-the-password",
+	}); err == nil {
+		t.Fatal("expected wrong password to be rejected")
 	}
 }
 
-func TestIsAllowedGoogleAudienceFallback(t *testing.T) {
-	t.Setenv("GOOGLE_CLIENT_IDS", "")
-	t.Setenv("GOOGLE_CLIENT_ID", "single-client")
-	t.Setenv("EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID", "")
-	t.Setenv("EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID", "")
-	t.Setenv("EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID", "")
+func TestAuthServiceUpdatePasswordSetsFirstPasswordWithoutCurrentPassword(t *testing.T) {
+	userRepo := testutil.NewMockUserRepo()
+	authService := NewAuthService(userRepo, nil, "test-secret", time.Hour, 24*time.Hour)
 
-	if !isAllowedGoogleAudience("single-client") {
-		t.Fatal("expected fallback GOOGLE_CLIENT_ID to be allowed")
+	email := "first-password@example.com"
+	user := &model.User{
+		Email:      &email,
+		FullName:   "First Password",
+		Role:       model.RoleTraveler,
+		IsActive:   true,
+		IsVerified: true,
 	}
-	if isAllowedGoogleAudience("different-client") {
-		t.Fatal("expected unknown audience to be rejected")
+	if err := userRepo.Create(context.Background(), user); err != nil {
+		t.Fatalf("Create() unexpected error: %v", err)
+	}
+
+	if err := authService.UpdatePassword(context.Background(), user.ID, UpdatePasswordRequest{
+		NewPassword: "Secret123!",
+	}); err != nil {
+		t.Fatalf("UpdatePassword() unexpected error: %v", err)
+	}
+
+	loginResult, err := authService.LoginWithPassword(context.Background(), PasswordLoginRequest{
+		Email:    email,
+		Password: "Secret123!",
+	})
+	if err != nil {
+		t.Fatalf("LoginWithPassword() unexpected error after set password: %v", err)
+	}
+	if loginResult == nil || loginResult.User == nil || !loginResult.User.HasPassword {
+		t.Fatal("expected user to have password after first set")
+	}
+}
+
+func TestAuthServiceUpdatePasswordRequiresCurrentPasswordWhenAlreadySet(t *testing.T) {
+	userRepo := testutil.NewMockUserRepo()
+	authService := NewAuthService(userRepo, nil, "test-secret", time.Hour, 24*time.Hour)
+
+	email := "rotate-password@example.com"
+	passwordHashBytes, err := bcrypt.GenerateFromPassword([]byte("OldSecret123!"), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatalf("GenerateFromPassword() unexpected error: %v", err)
+	}
+	passwordHash := string(passwordHashBytes)
+	user := &model.User{
+		Email:        &email,
+		PasswordHash: &passwordHash,
+		HasPassword:  true,
+		FullName:     "Rotate Password",
+		Role:         model.RoleTraveler,
+		IsActive:     true,
+	}
+	if err := userRepo.Create(context.Background(), user); err != nil {
+		t.Fatalf("Create() unexpected error: %v", err)
+	}
+
+	if err := authService.UpdatePassword(context.Background(), user.ID, UpdatePasswordRequest{
+		NewPassword: "NewSecret123!",
+	}); err == nil {
+		t.Fatal("expected current password to be required")
+	}
+
+	if err := authService.UpdatePassword(context.Background(), user.ID, UpdatePasswordRequest{
+		CurrentPassword: "OldSecret123!",
+		NewPassword:     "NewSecret123!",
+	}); err != nil {
+		t.Fatalf("UpdatePassword() unexpected error: %v", err)
+	}
+
+	if _, err := authService.LoginWithPassword(context.Background(), PasswordLoginRequest{
+		Email:    email,
+		Password: "NewSecret123!",
+	}); err != nil {
+		t.Fatalf("LoginWithPassword() unexpected error with new password: %v", err)
+	}
+}
+
+func TestAuthServiceUpdatePasswordAllowsLegacyInvalidHashWithoutCurrentPassword(t *testing.T) {
+	userRepo := testutil.NewMockUserRepo()
+	authService := NewAuthService(userRepo, nil, "test-secret", time.Hour, 24*time.Hour)
+
+	email := "legacy-invalid-hash@example.com"
+	legacyHash := "$2a$10$dummy_hash_legacy"
+	user := &model.User{
+		Email:        &email,
+		PasswordHash: &legacyHash,
+		FullName:     "Legacy User",
+		Role:         model.RoleTraveler,
+		IsActive:     true,
+	}
+	if err := userRepo.Create(context.Background(), user); err != nil {
+		t.Fatalf("Create() unexpected error: %v", err)
+	}
+
+	if user.HasPassword {
+		t.Fatal("expected invalid legacy hash to be treated as no password")
+	}
+
+	if err := authService.UpdatePassword(context.Background(), user.ID, UpdatePasswordRequest{
+		NewPassword: "NewSecret123!",
+	}); err != nil {
+		t.Fatalf("UpdatePassword() should allow replacing invalid legacy hash: %v", err)
+	}
+
+	loginResult, err := authService.LoginWithPassword(context.Background(), PasswordLoginRequest{
+		Email:    email,
+		Password: "NewSecret123!",
+	})
+	if err != nil {
+		t.Fatalf("LoginWithPassword() unexpected error after replacing legacy hash: %v", err)
+	}
+	if loginResult == nil || loginResult.User == nil || !loginResult.User.HasPassword {
+		t.Fatal("expected user to have a valid password after update")
 	}
 }

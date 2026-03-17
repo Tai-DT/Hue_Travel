@@ -17,19 +17,17 @@ import (
 // ============================================
 
 type MockUserRepo struct {
-	Users       map[uuid.UUID]*model.User
-	PhoneIndex  map[string]uuid.UUID
-	EmailIndex  map[string]uuid.UUID
-	GoogleIndex map[string]uuid.UUID
-	CreateErr   error
+	Users      map[uuid.UUID]*model.User
+	PhoneIndex map[string]uuid.UUID
+	EmailIndex map[string]uuid.UUID
+	CreateErr  error
 }
 
 func NewMockUserRepo() *MockUserRepo {
 	return &MockUserRepo{
-		Users:       make(map[uuid.UUID]*model.User),
-		PhoneIndex:  make(map[string]uuid.UUID),
-		EmailIndex:  make(map[string]uuid.UUID),
-		GoogleIndex: make(map[string]uuid.UUID),
+		Users:      make(map[uuid.UUID]*model.User),
+		PhoneIndex: make(map[string]uuid.UUID),
+		EmailIndex: make(map[string]uuid.UUID),
 	}
 }
 
@@ -44,6 +42,7 @@ func (m *MockUserRepo) Create(_ context.Context, user *model.User) error {
 		user.Level = "Newbie"
 	}
 	m.Users[user.ID] = user
+	user.HasPassword = model.HasUsablePasswordHash(user.PasswordHash)
 	if user.Phone != nil {
 		m.PhoneIndex[*user.Phone] = user.ID
 	}
@@ -61,14 +60,6 @@ func (m *MockUserRepo) GetByID(_ context.Context, id uuid.UUID) (*model.User, er
 	return u, nil
 }
 
-func (m *MockUserRepo) GetByPhone(_ context.Context, phone string) (*model.User, error) {
-	id, ok := m.PhoneIndex[phone]
-	if !ok {
-		return nil, nil
-	}
-	return m.Users[id], nil
-}
-
 func (m *MockUserRepo) GetByEmail(_ context.Context, email string) (*model.User, error) {
 	id, ok := m.EmailIndex[strings.ToLower(email)]
 	if !ok {
@@ -77,52 +68,21 @@ func (m *MockUserRepo) GetByEmail(_ context.Context, email string) (*model.User,
 	return m.Users[id], nil
 }
 
-func (m *MockUserRepo) GetByGoogleID(_ context.Context, googleID string) (*model.User, error) {
-	id, ok := m.GoogleIndex[googleID]
-	if !ok {
-		return nil, nil
-	}
-	return m.Users[id], nil
-}
-
-func (m *MockUserRepo) CreateWithGoogle(_ context.Context, googleID, email, name, avatarURL string) (*model.User, error) {
-	user := &model.User{
-		ID:         uuid.New(),
-		Email:      &email,
-		FullName:   name,
-		AvatarURL:  &avatarURL,
-		Role:       model.RoleTraveler,
-		IsVerified: true,
-		IsActive:   true,
-		Level:      "Newbie",
-		CreatedAt:  time.Now(),
-		UpdatedAt:  time.Now(),
-	}
-	m.Users[user.ID] = user
-	m.EmailIndex[strings.ToLower(email)] = user.ID
-	m.GoogleIndex[googleID] = user.ID
-	return user, nil
-}
-
-func (m *MockUserRepo) LinkGoogleID(_ context.Context, userID uuid.UUID, googleID, avatarURL string) error {
-	u, ok := m.Users[userID]
-	if !ok {
-		return fmt.Errorf("user not found")
-	}
-	if avatarURL != "" && u.AvatarURL == nil {
-		u.AvatarURL = &avatarURL
-	}
-	u.IsVerified = true
-	m.GoogleIndex[googleID] = userID
-	return nil
-}
-
 func (m *MockUserRepo) UpdateLastLogin(_ context.Context, userID uuid.UUID) error {
 	if u, ok := m.Users[userID]; ok {
 		now := time.Now()
 		u.LastLoginAt = &now
 	}
 	return nil
+}
+
+func (m *MockUserRepo) UpdatePassword(_ context.Context, userID uuid.UUID, passwordHash string) error {
+	if u, ok := m.Users[userID]; ok {
+		u.PasswordHash = &passwordHash
+		u.HasPassword = model.HasUsablePasswordHash(u.PasswordHash)
+		return nil
+	}
+	return fmt.Errorf("user not found")
 }
 
 func (m *MockUserRepo) AddXP(_ context.Context, userID uuid.UUID, xp int) error {
@@ -164,46 +124,6 @@ func (m *MockUserRepo) SetRole(_ context.Context, userID uuid.UUID, role string)
 	if u, ok := m.Users[userID]; ok {
 		u.Role = model.UserRole(role)
 	}
-	return nil
-}
-
-// ============================================
-// Mock OTP Repository
-// ============================================
-
-type MockOTPRepo struct {
-	OTPs    map[string]string // phone -> code
-	Expired map[string]bool
-}
-
-func NewMockOTPRepo() *MockOTPRepo {
-	return &MockOTPRepo{
-		OTPs:    make(map[string]string),
-		Expired: make(map[string]bool),
-	}
-}
-
-func (m *MockOTPRepo) Create(_ context.Context, phone, code string, _ time.Time) (*model.OTPVerification, error) {
-	m.OTPs[phone] = code
-	return &model.OTPVerification{
-		ID:    uuid.New(),
-		Phone: phone,
-		Code:  code,
-	}, nil
-}
-
-func (m *MockOTPRepo) Verify(_ context.Context, phone, code string) (bool, error) {
-	if m.Expired[phone] {
-		return false, nil
-	}
-	stored, ok := m.OTPs[phone]
-	if !ok {
-		return false, nil
-	}
-	return stored == code, nil
-}
-
-func (m *MockOTPRepo) CleanExpired(_ context.Context) error {
 	return nil
 }
 
@@ -378,7 +298,6 @@ func (m *MockBookingRepo) UpdatePaymentInfo(_ context.Context, id uuid.UUID, tra
 // ============================================
 
 var _ repository.UserRepo = (*MockUserRepo)(nil)
-var _ repository.OTPRepo = (*MockOTPRepo)(nil)
 var _ repository.ExperienceRepo = (*MockExperienceRepo)(nil)
 var _ repository.BookingRepo = (*MockBookingRepo)(nil)
 

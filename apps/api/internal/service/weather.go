@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -18,11 +19,27 @@ const (
 )
 
 type WeatherService struct {
-	apiKey string
+	apiKey          string
+	httpClient      *http.Client
+	fallbackEnabled bool
 }
 
 func NewWeatherService(apiKey string) *WeatherService {
-	return &WeatherService{apiKey: apiKey}
+	return NewWeatherServiceWithFallback(apiKey, true)
+}
+
+func NewWeatherServiceWithFallback(apiKey string, fallbackEnabled bool) *WeatherService {
+	return &WeatherService{
+		apiKey:          apiKey,
+		fallbackEnabled: fallbackEnabled,
+		httpClient: &http.Client{
+			Timeout: 10 * time.Second,
+		},
+	}
+}
+
+func (s *WeatherService) HasAPIKey() bool {
+	return strings.TrimSpace(s.apiKey) != ""
 }
 
 type CurrentWeather struct {
@@ -72,7 +89,10 @@ type Season struct {
 
 // GetCurrentWeather — thời tiết hiện tại ở Huế
 func (s *WeatherService) GetCurrentWeather() (*CurrentWeather, error) {
-	if s.apiKey == "" {
+	if !s.HasAPIKey() {
+		if !s.fallbackEnabled {
+			return nil, fmt.Errorf("%w: OpenWeather API key is missing", ErrServiceNotConfigured)
+		}
 		return s.getMockWeather(), nil
 	}
 
@@ -81,15 +101,35 @@ func (s *WeatherService) GetCurrentWeather() (*CurrentWeather, error) {
 		hueLat, hueLng, s.apiKey,
 	)
 
-	resp, err := http.Get(url)
+	resp, err := s.httpClient.Get(url)
 	if err != nil {
+		if !s.fallbackEnabled {
+			return nil, fmt.Errorf("%w: OpenWeather current request failed: %v", ErrServiceUnavailable, err)
+		}
 		return s.getMockWeather(), nil
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		if !s.fallbackEnabled {
+			return nil, fmt.Errorf("%w: OpenWeather current response read failed: %v", ErrServiceUnavailable, err)
+		}
+		return s.getMockWeather(), nil
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		if !s.fallbackEnabled {
+			return nil, fmt.Errorf("%w: OpenWeather current returned status %d", ErrServiceUnavailable, resp.StatusCode)
+		}
+		return s.getMockWeather(), nil
+	}
+
 	var data map[string]interface{}
 	if err := json.Unmarshal(body, &data); err != nil {
+		if !s.fallbackEnabled {
+			return nil, fmt.Errorf("%w: OpenWeather current response parse failed: %v", ErrServiceUnavailable, err)
+		}
 		return s.getMockWeather(), nil
 	}
 
@@ -128,7 +168,10 @@ func (s *WeatherService) GetCurrentWeather() (*CurrentWeather, error) {
 
 // GetForecast — dự báo 7 ngày
 func (s *WeatherService) GetForecast() ([]ForecastDay, error) {
-	if s.apiKey == "" {
+	if !s.HasAPIKey() {
+		if !s.fallbackEnabled {
+			return nil, fmt.Errorf("%w: OpenWeather API key is missing", ErrServiceNotConfigured)
+		}
 		return s.getMockForecast(), nil
 	}
 
@@ -137,15 +180,35 @@ func (s *WeatherService) GetForecast() ([]ForecastDay, error) {
 		hueLat, hueLng, s.apiKey,
 	)
 
-	resp, err := http.Get(url)
+	resp, err := s.httpClient.Get(url)
 	if err != nil {
+		if !s.fallbackEnabled {
+			return nil, fmt.Errorf("%w: OpenWeather forecast request failed: %v", ErrServiceUnavailable, err)
+		}
 		return s.getMockForecast(), nil
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		if !s.fallbackEnabled {
+			return nil, fmt.Errorf("%w: OpenWeather forecast response read failed: %v", ErrServiceUnavailable, err)
+		}
+		return s.getMockForecast(), nil
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		if !s.fallbackEnabled {
+			return nil, fmt.Errorf("%w: OpenWeather forecast returned status %d", ErrServiceUnavailable, resp.StatusCode)
+		}
+		return s.getMockForecast(), nil
+	}
+
 	var data map[string]interface{}
 	if err := json.Unmarshal(body, &data); err != nil {
+		if !s.fallbackEnabled {
+			return nil, fmt.Errorf("%w: OpenWeather forecast response parse failed: %v", ErrServiceUnavailable, err)
+		}
 		return s.getMockForecast(), nil
 	}
 

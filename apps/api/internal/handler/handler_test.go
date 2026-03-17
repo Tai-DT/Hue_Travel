@@ -57,14 +57,13 @@ func TestHealthCheck(t *testing.T) {
 // Auth Handler — Validation Tests
 // ============================================
 
-func TestAuthHandler_SendOTP_MissingPhone(t *testing.T) {
+func TestAuthHandler_Register_MissingData(t *testing.T) {
 	router := gin.New()
-	// Create handler without real services to test validation
 	h := &AuthHandler{}
-	router.POST("/auth/otp/send", h.SendOTP)
+	router.POST("/auth/register", h.Register)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/auth/otp/send", nil)
+	req, _ := http.NewRequest("POST", "/auth/register", nil)
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(w, req)
 
@@ -73,28 +72,13 @@ func TestAuthHandler_SendOTP_MissingPhone(t *testing.T) {
 	}
 }
 
-func TestAuthHandler_VerifyOTP_MissingData(t *testing.T) {
+func TestAuthHandler_LoginWithPassword_MissingData(t *testing.T) {
 	router := gin.New()
 	h := &AuthHandler{}
-	router.POST("/auth/otp/verify", h.VerifyOTP)
+	router.POST("/auth/login", h.LoginWithPassword)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/auth/otp/verify", nil)
-	req.Header.Set("Content-Type", "application/json")
-	router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status 400, got %d", w.Code)
-	}
-}
-
-func TestAuthHandler_GoogleLogin_MissingToken(t *testing.T) {
-	router := gin.New()
-	h := &AuthHandler{}
-	router.POST("/auth/google", h.GoogleLogin)
-
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/auth/google", nil)
+	req, _ := http.NewRequest("POST", "/auth/login", nil)
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(w, req)
 

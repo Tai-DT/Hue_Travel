@@ -1,339 +1,222 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   ActivityIndicator,
-  Alert,
   ScrollView,
-  Platform,
   TextInput,
 } from 'react-native';
 import { Colors, Fonts, Spacing, BorderRadius, Shadows } from '@/constants/theme';
 import api, { User } from '@/services/api';
 
-// Google OAuth Client IDs
-const GOOGLE_WEB_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID || '';
-const GOOGLE_ANDROID_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID || '';
-const GOOGLE_IOS_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID || '';
-const activeGoogleClientId = Platform.select({
-  web: GOOGLE_WEB_CLIENT_ID,
-  android: GOOGLE_ANDROID_CLIENT_ID,
-  ios: GOOGLE_IOS_CLIENT_ID,
-  default: GOOGLE_WEB_CLIENT_ID,
-}) || '';
-const googleConfigured = Boolean(activeGoogleClientId);
-
-// Lazy load expo-auth-session (may not be installed)
-let Google: any = null;
-let WebBrowser: any = null;
-try {
-  Google = require('expo-auth-session/providers/google');
-  WebBrowser = require('expo-web-browser');
-  WebBrowser.maybeCompleteAuthSession();
-} catch {
-  console.log('[Auth] expo-auth-session not available');
-}
-
 type Props = {
   onLoginSuccess: (token: string, user?: User, isNewUser?: boolean) => void;
 };
 
+type CredentialMode = 'login' | 'register';
+
 export default function LoginScreen({ onLoginSuccess }: Props) {
-  const [googleLoading, setGoogleLoading] = useState(false);
+  const [credentialMode, setCredentialMode] = useState<CredentialMode>('login');
+  const [passwordLoading, setPasswordLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // OTP Login state
-  const [loginMode, setLoginMode] = useState<'main' | 'otp'>('main');
-  const [phone, setPhone] = useState('');
-  const [otp, setOtp] = useState('');
-  const [otpSent, setOtpSent] = useState(false);
-  const [otpLoading, setOtpLoading] = useState(false);
+  const [loginEmail, setLoginEmail] = useState('');
+  const [password, setPassword] = useState('');
 
-  // ============================================
-  // Google Sign-In using expo-auth-session/providers/google
-  // This handles redirect URIs automatically per platform
-  // ============================================
-  const googleAuth = Google?.useIdTokenAuthRequest?.({
-    webClientId: GOOGLE_WEB_CLIENT_ID,
-    androidClientId: GOOGLE_ANDROID_CLIENT_ID || undefined,
-    iosClientId: GOOGLE_IOS_CLIENT_ID || undefined,
-    scopes: ['openid', 'email', 'profile'],
-    selectAccount: true,
-  }) || [null, null, null];
+  const [registerFullName, setRegisterFullName] = useState('');
+  const [registerEmail, setRegisterEmail] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
 
-  const [request, response, promptAsync] = googleAuth;
-
-  // Handle Google auth response
-  useEffect(() => {
-    if (!response) return;
-
-    if (response.type === 'success') {
-      const { authentication, params } = response;
-
-      // Get the id_token or access_token depending on the flow
-      const idToken = params?.id_token || authentication?.idToken;
-      const accessToken = authentication?.accessToken;
-
-      if (idToken) {
-        completeGoogleLogin(idToken);
-      } else {
-        if (accessToken) {
-          setError('Google chưa trả về id_token. Kiểm tra Google OAuth client ID cho nền tảng hiện tại.');
-        } else {
-          setError('Không nhận được token từ Google.');
-        }
-        setGoogleLoading(false);
-      }
-    } else if (response.type === 'error') {
-      setError(response.error?.message || 'Đăng nhập Google thất bại.');
-      setGoogleLoading(false);
-    } else if (response.type === 'dismiss' || response.type === 'cancel') {
-      setGoogleLoading(false);
-    }
-  }, [response]);
-
-  // ============================================
-  // Complete login with id_token (preferred)
-  // ============================================
-  const completeGoogleLogin = useCallback(async (idToken: string) => {
-    setGoogleLoading(true);
-    setError('');
-
-    try {
-      const result = await api.googleLogin(idToken);
-      if (result.success && result.data) {
-        await api.setSession(result.data.token, result.data.refresh_token);
-        onLoginSuccess(result.data.token, result.data.user, result.data.is_new_user);
-      } else {
-        setError(result.error?.message || 'Đăng nhập Google thất bại.');
-      }
-    } catch (e: any) {
-      setError(e?.message || 'Lỗi kết nối server.');
-    }
-    setGoogleLoading(false);
+  const finishAuth = useCallback(async (payload: {
+    token: string;
+    refresh_token: string;
+    user: User;
+    is_new_user: boolean;
+  }) => {
+    await api.setSession(payload.token, payload.refresh_token);
+    onLoginSuccess(payload.token, payload.user, payload.is_new_user);
   }, [onLoginSuccess]);
 
-  // ============================================
-  // Handle Google Login button press
-  // ============================================
-  const handleGoogleLogin = useCallback(async () => {
-    if (googleLoading) return;
-
-    if (!googleConfigured) {
-      Alert.alert('Thiếu cấu hình', `Cần Google client ID cho nền tảng ${Platform.OS} trong .env`);
+  const handlePasswordLogin = useCallback(async () => {
+    const email = loginEmail.trim().toLowerCase();
+    if (!email || !password) {
+      setError('Vui lòng nhập email và mật khẩu.');
       return;
     }
 
-    if (!promptAsync) {
-      setError('Google Sign-In chưa sẵn sàng. Vui lòng thử lại.');
-      return;
-    }
-
-    setGoogleLoading(true);
+    setPasswordLoading(true);
     setError('');
 
-    try {
-      await promptAsync();
-    } catch (e: any) {
-      setGoogleLoading(false);
-      setError('Không thể mở trang đăng nhập Google.');
-    }
-  }, [googleLoading, promptAsync]);
-
-  // ============================================
-  // OTP Login (Phone)
-  // ============================================
-  const handleSendOTP = useCallback(async () => {
-    if (!phone.trim()) {
-      setError('Vui lòng nhập số điện thoại.');
-      return;
-    }
-    setOtpLoading(true);
-    setError('');
-
-    const formattedPhone = phone.startsWith('0') ? '+84' + phone.slice(1) : phone;
-    const result = await api.sendOTP(formattedPhone);
-
-    if (result.success) {
-      setOtpSent(true);
-      setPhone(formattedPhone);
-    } else {
-      setError(result.error?.message || 'Gửi OTP thất bại.');
-    }
-    setOtpLoading(false);
-  }, [phone]);
-
-  const handleVerifyOTP = useCallback(async () => {
-    if (!otp.trim()) {
-      setError('Vui lòng nhập mã OTP.');
-      return;
-    }
-    setOtpLoading(true);
-    setError('');
-
-    const result = await api.verifyOTP(phone, otp.trim());
+    const result = await api.loginWithPassword(email, password);
     if (result.success && result.data) {
-      await api.setSession(result.data.token, result.data.refresh_token);
-      onLoginSuccess(result.data.token, result.data.user, result.data.is_new_user);
+      await finishAuth(result.data);
     } else {
-      setError(result.error?.message || 'Xác thực OTP thất bại.');
+      setError(result.error?.message || 'Đăng nhập thất bại.');
     }
-    setOtpLoading(false);
-  }, [phone, otp, onLoginSuccess]);
 
-  // ============================================
-  // UI
-  // ============================================
-  if (loginMode === 'otp') {
-    return (
-      <View style={styles.container}>
-        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-          <View style={styles.heroSection}>
-            <Text style={styles.heroEmoji}>📱</Text>
-            <Text style={styles.heroTitle}>Đăng nhập OTP</Text>
-            <Text style={styles.heroSubtitle}>
-              {otpSent ? `Nhập mã OTP đã gửi đến ${phone}` : 'Nhập số điện thoại để nhận mã OTP'}
-            </Text>
-          </View>
+    setPasswordLoading(false);
+  }, [finishAuth, loginEmail, password]);
 
-          <View style={styles.buttonsSection}>
-            {!otpSent ? (
-              <>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Số điện thoại (0912345678)"
-                  value={phone}
-                  onChangeText={setPhone}
-                  keyboardType="phone-pad"
-                  placeholderTextColor={Colors.textMuted}
-                />
-                <TouchableOpacity
-                  style={styles.primaryButton}
-                  onPress={handleSendOTP}
-                  disabled={otpLoading}
-                  activeOpacity={0.85}
-                >
-                  {otpLoading ? (
-                    <ActivityIndicator color="#fff" />
-                  ) : (
-                    <Text style={styles.primaryButtonText}>Gửi mã OTP</Text>
-                  )}
-                </TouchableOpacity>
-              </>
-            ) : (
-              <>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Mã OTP (6 số)"
-                  value={otp}
-                  onChangeText={setOtp}
-                  keyboardType="number-pad"
-                  maxLength={6}
-                  placeholderTextColor={Colors.textMuted}
-                />
-                <TouchableOpacity
-                  style={styles.primaryButton}
-                  onPress={handleVerifyOTP}
-                  disabled={otpLoading}
-                  activeOpacity={0.85}
-                >
-                  {otpLoading ? (
-                    <ActivityIndicator color="#fff" />
-                  ) : (
-                    <Text style={styles.primaryButtonText}>Xác nhận</Text>
-                  )}
-                </TouchableOpacity>
-              </>
-            )}
+  const handleRegister = useCallback(async () => {
+    const fullName = registerFullName.trim();
+    const email = registerEmail.trim().toLowerCase();
 
-            {error ? <Text style={styles.errorText}>{error}</Text> : null}
+    if (!fullName) {
+      setError('Vui lòng nhập họ tên.');
+      return;
+    }
+    if (!email) {
+      setError('Vui lòng nhập email.');
+      return;
+    }
+    if (password.length < 8) {
+      setError('Mật khẩu phải có ít nhất 8 ký tự.');
+      return;
+    }
+    if (password !== confirmPassword) {
+      setError('Mật khẩu nhập lại không khớp.');
+      return;
+    }
 
-            <TouchableOpacity
-              style={styles.backButton}
-              onPress={() => {
-                setLoginMode('main');
-                setOtpSent(false);
-                setOtp('');
-                setError('');
-              }}
-            >
-              <Text style={styles.backButtonText}>← Quay lại</Text>
-            </TouchableOpacity>
-          </View>
-        </ScrollView>
-      </View>
-    );
-  }
+    setPasswordLoading(true);
+    setError('');
+
+    const result = await api.register({
+      full_name: fullName,
+      email,
+      password,
+    });
+
+    if (result.success && result.data) {
+      await finishAuth(result.data);
+    } else {
+      setError(result.error?.message || 'Đăng ký thất bại.');
+    }
+
+    setPasswordLoading(false);
+  }, [confirmPassword, finishAuth, password, registerEmail, registerFullName]);
 
   return (
     <View style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <View style={styles.heroSection}>
-          <Text style={styles.heroEmoji}>🌏</Text>
+          <Text style={styles.heroEmoji}>🔐</Text>
           <Text style={styles.heroTitle}>Huế Travel</Text>
           <Text style={styles.heroSubtitle}>
-            Khám phá cố đô Huế cùng hướng dẫn viên AI thông minh
+            Đăng nhập và đăng ký chỉ dùng email với mật khẩu nội bộ, tương thích tốt với Expo.
           </Text>
         </View>
 
-        <View style={styles.buttonsSection}>
-          {/* Google Login Button */}
+        <View style={styles.segmentedControl}>
           <TouchableOpacity
-            style={styles.googleButton}
-            onPress={handleGoogleLogin}
-            disabled={googleLoading || !request}
+            style={[styles.segmentButton, credentialMode === 'login' && styles.segmentButtonActive]}
+            onPress={() => {
+              setCredentialMode('login');
+              setError('');
+            }}
             activeOpacity={0.85}
           >
-            {googleLoading ? (
-              <ActivityIndicator color="#333333" />
+            <Text style={[styles.segmentButtonText, credentialMode === 'login' && styles.segmentButtonTextActive]}>
+              Đăng nhập
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.segmentButton, credentialMode === 'register' && styles.segmentButtonActive]}
+            onPress={() => {
+              setCredentialMode('register');
+              setError('');
+            }}
+            activeOpacity={0.85}
+          >
+            <Text style={[styles.segmentButtonText, credentialMode === 'register' && styles.segmentButtonTextActive]}>
+              Đăng ký
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.formSection}>
+          {credentialMode === 'register' ? (
+            <>
+              <TextInput
+                style={styles.input}
+                placeholder="Họ và tên"
+                value={registerFullName}
+                onChangeText={setRegisterFullName}
+                placeholderTextColor={Colors.textMuted}
+              />
+              <TextInput
+                style={styles.input}
+                placeholder="Email"
+                value={registerEmail}
+                onChangeText={setRegisterEmail}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                placeholderTextColor={Colors.textMuted}
+              />
+            </>
+          ) : (
+            <TextInput
+              style={styles.input}
+              placeholder="Email"
+              value={loginEmail}
+              onChangeText={setLoginEmail}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              placeholderTextColor={Colors.textMuted}
+            />
+          )}
+
+          <TextInput
+            style={styles.input}
+            placeholder="Mật khẩu"
+            value={password}
+            onChangeText={setPassword}
+            secureTextEntry
+            autoCapitalize="none"
+            placeholderTextColor={Colors.textMuted}
+          />
+
+          {credentialMode === 'register' ? (
+            <TextInput
+              style={styles.input}
+              placeholder="Nhập lại mật khẩu"
+              value={confirmPassword}
+              onChangeText={setConfirmPassword}
+              secureTextEntry
+              autoCapitalize="none"
+              placeholderTextColor={Colors.textMuted}
+            />
+          ) : null}
+
+          <TouchableOpacity
+            style={styles.primaryButton}
+            onPress={credentialMode === 'login' ? handlePasswordLogin : handleRegister}
+            disabled={passwordLoading}
+            activeOpacity={0.85}
+          >
+            {passwordLoading ? (
+              <ActivityIndicator color="#FFFFFF" />
             ) : (
-              <>
-                <Text style={styles.googleIcon}>G</Text>
-                <Text style={styles.googleButtonText}>Đăng nhập bằng Google</Text>
-              </>
+              <Text style={styles.primaryButtonText}>
+                {credentialMode === 'login' ? 'Đăng nhập' : 'Tạo tài khoản'}
+              </Text>
             )}
           </TouchableOpacity>
 
-          {/* Divider */}
-          <View style={styles.divider}>
-            <View style={styles.dividerLine} />
-            <Text style={styles.dividerText}>hoặc</Text>
-            <View style={styles.dividerLine} />
-          </View>
+          <Text style={styles.helperText}>
+            {credentialMode === 'login'
+              ? 'Dùng email của tài khoản và mật khẩu nội bộ để vào app.'
+              : 'Tài khoản mới chỉ cần họ tên, email và mật khẩu.'}
+          </Text>
 
-          {/* Phone OTP Button */}
-          <TouchableOpacity
-            style={styles.phoneButton}
-            onPress={() => { setLoginMode('otp'); setError(''); }}
-            activeOpacity={0.85}
-          >
-            <Text style={styles.phoneIcon}>📱</Text>
-            <Text style={styles.phoneButtonText}>Đăng nhập bằng SĐT</Text>
-          </TouchableOpacity>
+          {error ? <Text style={styles.errorText}>{error}</Text> : null}
         </View>
 
-        {error ? <Text style={styles.errorText}>{error}</Text> : null}
-
-        {!googleConfigured && (
-          <Text style={styles.helperText}>
-            💡 Cấu hình{' '}
-            <Text style={styles.helperTextStrong}>
-              {Platform.OS === 'android'
-                ? 'EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID'
-                : Platform.OS === 'ios'
-                  ? 'EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID'
-                  : 'EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID'}
-            </Text>
-            {' '}trong .env để bật Google Sign-In
-          </Text>
-        )}
-
         <Text style={styles.termsText}>
-          Bằng việc đăng nhập, bạn đồng ý với{' '}
-          <Text style={styles.termsLink}>Điều khoản sử dụng</Text> và{' '}
-          <Text style={styles.termsLink}>Chính sách bảo mật</Text> của chúng tôi.
+          Bằng việc tiếp tục, bạn đồng ý với <Text style={styles.termsLink}>Điều khoản sử dụng</Text> và{' '}
+          <Text style={styles.termsLink}>Chính sách bảo mật</Text>.
         </Text>
       </ScrollView>
     </View>
@@ -365,6 +248,7 @@ const styles = StyleSheet.create({
     color: Colors.primary,
     letterSpacing: -1,
     marginBottom: Spacing.sm,
+    textAlign: 'center',
   },
   heroSubtitle: {
     fontSize: Fonts.sizes.lg,
@@ -372,61 +256,36 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 26,
   },
-  buttonsSection: {
-    gap: Spacing.base,
+  segmentedControl: {
+    flexDirection: 'row',
+    backgroundColor: '#F4F6FA',
+    borderRadius: BorderRadius.xl,
+    padding: 6,
     marginBottom: Spacing.lg,
   },
-  googleButton: {
-    flexDirection: 'row',
+  segmentButton: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingVertical: Spacing.sm + 2,
+    borderRadius: BorderRadius.lg,
+  },
+  segmentButtonActive: {
     backgroundColor: '#FFFFFF',
-    paddingVertical: Spacing.base,
-    borderRadius: BorderRadius.xl,
-    gap: Spacing.md,
     ...Shadows.small,
   },
-  googleIcon: {
-    fontSize: 22,
-    fontWeight: Fonts.weights.bold,
-    color: '#4285F4',
+  segmentButtonText: {
+    fontSize: Fonts.sizes.base,
+    fontWeight: Fonts.weights.medium,
+    color: Colors.textSecondary,
   },
-  googleButtonText: {
-    fontSize: Fonts.sizes.lg,
+  segmentButtonTextActive: {
+    color: Colors.primary,
     fontWeight: Fonts.weights.semibold,
-    color: '#333333',
   },
-  divider: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.md,
-    marginVertical: Spacing.sm,
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: Colors.border || '#E0E0E0',
-  },
-  dividerText: {
-    color: Colors.textMuted,
-    fontSize: Fonts.sizes.sm,
-  },
-  phoneButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: Colors.primary,
-    paddingVertical: Spacing.base,
-    borderRadius: BorderRadius.xl,
-    gap: Spacing.md,
-  },
-  phoneIcon: {
-    fontSize: 20,
-  },
-  phoneButtonText: {
-    fontSize: Fonts.sizes.lg,
-    fontWeight: Fonts.weights.semibold,
-    color: '#FFFFFF',
+  formSection: {
+    gap: Spacing.base,
+    marginBottom: Spacing.lg,
   },
   input: {
     backgroundColor: '#FFFFFF',
@@ -450,30 +309,17 @@ const styles = StyleSheet.create({
     fontWeight: Fonts.weights.semibold,
     color: '#FFFFFF',
   },
-  backButton: {
-    alignItems: 'center',
-    paddingVertical: Spacing.sm,
-  },
-  backButtonText: {
-    color: Colors.textSecondary,
-    fontSize: Fonts.sizes.base,
-  },
-  errorText: {
-    color: Colors.error,
-    fontSize: Fonts.sizes.sm,
-    textAlign: 'center',
-    marginBottom: Spacing.base,
-  },
   helperText: {
     color: Colors.textSecondary,
     fontSize: Fonts.sizes.sm,
     textAlign: 'center',
     lineHeight: 22,
-    marginBottom: Spacing.base,
   },
-  helperTextStrong: {
-    fontWeight: Fonts.weights.semibold,
-    color: Colors.text,
+  errorText: {
+    color: Colors.error,
+    fontSize: Fonts.sizes.sm,
+    textAlign: 'center',
+    lineHeight: 22,
   },
   termsText: {
     color: Colors.textMuted,

@@ -102,11 +102,11 @@ func registerAuthRoutes(v1 *gin.RouterGroup, c *Container, jwtSecret string) {
 		return
 	}
 	auth := v1.Group("/auth")
-	auth.POST("/otp/send", c.AuthH.SendOTP)
-	auth.POST("/otp/verify", c.AuthH.VerifyOTP)
-	auth.POST("/google", c.AuthH.GoogleLogin)
+	auth.POST("/register", c.AuthH.Register)
+	auth.POST("/login", c.AuthH.LoginWithPassword)
 	auth.POST("/refresh", c.AuthH.RefreshToken)
 	auth.POST("/logout", middleware.Auth(jwtSecret), c.AuthH.Logout)
+	auth.POST("/password", middleware.Auth(jwtSecret), c.AuthH.UpdatePassword)
 }
 
 func registerExperienceRoutes(v1 *gin.RouterGroup, c *Container, jwtSecret string) {
@@ -115,6 +115,7 @@ func registerExperienceRoutes(v1 *gin.RouterGroup, c *Container, jwtSecret strin
 	}
 	exp := v1.Group("/experiences")
 	exp.GET("", c.ExpH.List)
+	exp.GET("/search", c.ExpH.List) // alias — ?q= search
 	exp.GET("/:id", c.ExpH.GetByID)
 
 	authExp := exp.Group("")
@@ -515,13 +516,18 @@ func registerStoryRoutes(v1 *gin.RouterGroup, c *Container, jwtSecret string) {
 		return
 	}
 	feed := v1.Group("/feed")
-	feed.Use(middleware.Auth(jwtSecret))
-	feed.POST("", c.StoryH.Create)
+
+	// Public — anyone can browse the feed
 	feed.GET("", c.StoryH.Feed)
-	feed.POST("/:id/like", c.StoryH.Like)
-	feed.POST("/:id/comment", c.StoryH.Comment)
 	feed.GET("/:id/comments", c.StoryH.ListComments)
-	feed.DELETE("/:id", c.StoryH.Delete)
+
+	// Auth required — posting, liking, commenting, deleting
+	feedAuth := feed.Group("")
+	feedAuth.Use(middleware.Auth(jwtSecret))
+	feedAuth.POST("", c.StoryH.Create)
+	feedAuth.POST("/:id/like", c.StoryH.Like)
+	feedAuth.POST("/:id/comment", c.StoryH.Comment)
+	feedAuth.DELETE("/:id", c.StoryH.Delete)
 }
 
 func registerTranslateRoutes(v1 *gin.RouterGroup, c *Container) {

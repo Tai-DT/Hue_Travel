@@ -109,6 +109,10 @@ class ApiService {
     this.token = token;
   }
 
+  isLoggedIn(): boolean {
+    return !!this.token;
+  }
+
   async setSession(token: string, refreshToken: string) {
     this.token = token;
     this.refreshTokenValue = refreshToken;
@@ -232,36 +236,43 @@ class ApiService {
   }
 
   // ---- Auth ----
-  async sendOTP(phone: string) {
-    return this.request('/auth/otp/send', {
-      method: 'POST',
-      body: { phone },
-    });
-  }
-
-  async verifyOTP(phone: string, code: string) {
+  async register(data: {
+    full_name: string;
+    email: string;
+    password: string;
+  }) {
     return this.request<{
       token: string;
       refresh_token: string;
       expires_in: number;
       user: User;
       is_new_user: boolean;
-    }>('/auth/otp/verify', {
+    }>('/auth/register', {
       method: 'POST',
-      body: { phone, code },
+      body: data,
     });
   }
 
-  async googleLogin(idToken: string) {
+  async loginWithPassword(email: string, password: string) {
     return this.request<{
       token: string;
       refresh_token: string;
       expires_in: number;
       user: User;
       is_new_user: boolean;
-    }>('/auth/google', {
+    }>('/auth/login', {
       method: 'POST',
-      body: { id_token: idToken },
+      body: { email, password },
+    });
+  }
+
+  async updatePassword(currentPassword: string, newPassword: string) {
+    return this.request<{ message: string }>('/auth/password', {
+      method: 'POST',
+      body: {
+        current_password: currentPassword,
+        new_password: newPassword,
+      },
     });
   }
 
@@ -545,7 +556,12 @@ class ApiService {
 
   // ---- Chat ----
   async getChatRooms() {
-    return this.request<{ rooms: ChatRoom[] }>('/chat/rooms');
+    const res = await this.request<{ rooms: ChatRoom[] | null }>('/chat/rooms');
+    if (res.success) {
+      const rooms = Array.isArray(res.data?.rooms) ? res.data.rooms : [];
+      return { ...res, data: { rooms } } as APIResponse<{ rooms: ChatRoom[] }>;
+    }
+    return res as APIResponse<{ rooms: ChatRoom[] }>;
   }
 
   async getOrCreateRoom(otherUserId: string) {
@@ -557,9 +573,14 @@ class ApiService {
 
   async getChatMessages(roomId: string, page?: number) {
     const query = page ? `?page=${page}` : '';
-    return this.request<{ messages: ChatMessage[] }>(
+    const res = await this.request<{ messages: ChatMessage[] | null }>(
       `/chat/rooms/${roomId}/messages${query}`
     );
+    if (res.success) {
+      const messages = Array.isArray(res.data?.messages) ? res.data.messages : [];
+      return { ...res, data: { messages } } as APIResponse<{ messages: ChatMessage[] }>;
+    }
+    return res as APIResponse<{ messages: ChatMessage[] }>;
   }
 
   async sendChatMessage(roomId: string, content: string, msgType: string = 'text') {
@@ -1044,6 +1065,7 @@ export type User = {
   id: string;
   phone?: string;
   email?: string;
+  has_password?: boolean;
   full_name: string;
   avatar_url?: string;
   role: 'traveler' | 'guide' | 'blogger' | 'merchant' | 'expert' | 'admin';

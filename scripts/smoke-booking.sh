@@ -2,8 +2,9 @@
 set -euo pipefail
 
 API_BASE="${API_BASE:-http://localhost:8080/api/v1}"
-PHONE="${PHONE:-0905556666}"
-OTP_CODE="${OTP_CODE:-${DEV_FIXED_OTP:-123456}}"
+EMAIL="${EMAIL:-}"
+PASSWORD="${PASSWORD:-HueTravel123!}"
+FULL_NAME="${FULL_NAME:-Smoke Booking User}"
 START_TIME="${START_TIME:-09:00}"
 GUEST_COUNT="${GUEST_COUNT:-1}"
 BANK_CODE="${BANK_CODE:-}"
@@ -110,26 +111,37 @@ check_status() {
   fail "${label} returned HTTP ${HTTP_STATUS}: ${HTTP_BODY}"
 }
 
+register_if_needed() {
+  if [[ -n "$EMAIL" ]]; then
+    return 0
+  fi
+
+  EMAIL="smoke-booking-$$_$(date +%s)@huetravel.local"
+
+  echo "Registering local traveler ${EMAIL}..."
+  api_request POST "${API_BASE}/auth/register" \
+    "{\"full_name\":\"${FULL_NAME}\",\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}"
+  check_status "Register" 201
+  check_success "Register" "$HTTP_BODY"
+}
+
 BOOKING_DATE="${BOOKING_DATE:-$(default_booking_date "$BOOKING_OFFSET_DAYS")}"
 
 echo "Checking API health..."
 curl -fsS "${API_BASE%/api/v1}/health" >/dev/null || fail "API is not reachable at ${API_BASE%/api/v1}"
 
-echo "Sending OTP to ${PHONE}..."
-api_request POST "${API_BASE}/auth/otp/send" "{\"phone\":\"${PHONE}\"}"
-check_status "Send OTP" 200
-check_success "Send OTP" "$HTTP_BODY"
+register_if_needed
 
-echo "Verifying OTP..."
-api_request POST "${API_BASE}/auth/otp/verify" "{\"phone\":\"${PHONE}\",\"code\":\"${OTP_CODE}\"}"
-check_status "Verify OTP" 200
-check_success "Verify OTP" "$HTTP_BODY"
+echo "Logging in with ${EMAIL}..."
+api_request POST "${API_BASE}/auth/login" "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}"
+check_status "Login" 200
+check_success "Login" "$HTTP_BODY"
 
 access_token="$(json_get 'data.data.token ?? ""' "$HTTP_BODY")"
 refresh_token="$(json_get 'data.data.refresh_token ?? ""' "$HTTP_BODY")"
 
-[[ -n "$access_token" ]] || fail "Verify OTP response did not include access token"
-[[ -n "$refresh_token" ]] || fail "Verify OTP response did not include refresh token"
+[[ -n "$access_token" ]] || fail "Login response did not include access token"
+[[ -n "$refresh_token" ]] || fail "Login response did not include refresh token"
 
 if [[ -z "$EXPERIENCE_ID" ]]; then
   echo "Finding an active experience..."
@@ -223,4 +235,4 @@ api_request POST "${API_BASE}/auth/logout" "" "$access_token"
 check_status "Logout" 200
 check_success "Logout" "$HTTP_BODY"
 
-echo "Booking + payment smoke flow passed for ${PHONE} on ${BOOKING_DATE} via ${API_BASE}"
+echo "Booking + payment smoke flow passed for ${EMAIL} on ${BOOKING_DATE} via ${API_BASE}"

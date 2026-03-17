@@ -198,6 +198,9 @@ func (s *GoongPlacesService) searchPlaces(ctx context.Context, query string, lat
 		return []PlaceResult{}, nil
 	}
 
+	// Extract keywords from query for relevance filtering
+	keywords := extractKeywords(query)
+
 	places := make([]PlaceResult, 0, len(predictions))
 	seen := make(map[string]struct{}, len(predictions))
 
@@ -209,6 +212,11 @@ func (s *GoongPlacesService) searchPlaces(ctx context.Context, query string, lat
 			continue
 		}
 		seen[prediction.PlaceID] = struct{}{}
+
+		// Filter out predictions that don't match any keywords
+		if len(keywords) > 0 && !isPredictionRelevant(prediction, keywords) {
+			continue
+		}
 
 		place, err := s.placeDetail(ctx, prediction.PlaceID)
 		if err != nil {
@@ -234,10 +242,16 @@ func (s *GoongPlacesService) searchPlaces(ctx context.Context, query string, lat
 		}
 
 		places = append(places, place)
+
+		// Limit results for performance
+		if len(places) >= 8 {
+			break
+		}
 	}
 
 	return places, nil
 }
+
 
 func (s *GoongPlacesService) autoComplete(ctx context.Context, input string, lat, lng float64, radiusKm int) ([]goongPrediction, error) {
 	params := url.Values{}
@@ -393,6 +407,46 @@ func metersToGoongRadius(radius int) int {
 	return km
 }
 
+// extractKeywords returns meaningful search keywords from a query string.
+func extractKeywords(query string) []string {
+	stopWords := map[string]bool{
+		"của": true, "và": true, "ở": true, "tại": true, "với": true,
+		"các": true, "những": true, "trong": true, "cho": true, "từ": true,
+		"gần": true, "đây": true, "huế": true, "hue": true, "thành": true, "phố": true,
+	}
+
+	words := strings.Fields(strings.ToLower(query))
+	keywords := make([]string, 0, len(words))
+	for _, w := range words {
+		w = strings.TrimSpace(w)
+		if len([]rune(w)) <= 2 || stopWords[w] {
+			continue
+		}
+		keywords = append(keywords, w)
+	}
+	return keywords
+}
+
+// isPredictionRelevant checks if a Goong prediction matches any search keyword.
+func isPredictionRelevant(prediction goongPrediction, keywords []string) bool {
+	text := strings.ToLower(prediction.Description + " " + prediction.mainText())
+	for _, kw := range keywords {
+		if strings.Contains(text, kw) {
+			return true
+		}
+	}
+	// Also check types
+	for _, t := range prediction.Types {
+		for _, kw := range keywords {
+			if strings.Contains(strings.ToLower(t), kw) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+
 func goongVehicle(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "bicycling", "bike", "motorbike":
@@ -417,12 +471,60 @@ func (s *GoongPlacesService) mockNearbyResults() []PlaceResult {
 }
 
 func (s *GoongPlacesService) mockSearchResults(query string) []PlaceResult {
+	q := strings.ToLower(query)
+
+	// Food queries
+	if strings.Contains(q, "nhà hàng") || strings.Contains(q, "ẩm thực") || strings.Contains(q, "quán ăn") || strings.Contains(q, "food") {
+		return []PlaceResult{
+			{PlaceID: "food_1", Name: "Bún Bò Huế Bà Tuyết", Address: "47 Nguyễn Công Trứ, Huế", Lat: 16.4637, Lng: 107.5909, Rating: 4.5, RatingCount: 234, PriceLevel: 1, Types: []string{"restaurant", "food"}},
+			{PlaceID: "food_2", Name: "Cơm Hến Bà Oanh", Address: "2 Hàn Mặc Tử, Huế", Lat: 16.4712, Lng: 107.5801, Rating: 4.3, RatingCount: 156, PriceLevel: 1, Types: []string{"restaurant", "food"}},
+			{PlaceID: "food_3", Name: "Bánh Khoái Lạc Thiện", Address: "6 Đinh Tiên Hoàng, Huế", Lat: 16.4678, Lng: 107.5859, Rating: 4.4, RatingCount: 312, PriceLevel: 1, Types: []string{"restaurant", "food"}},
+			{PlaceID: "food_4", Name: "Bún Thịt Nướng Huyền Anh", Address: "35 Nguyễn Thái Học, Huế", Lat: 16.4625, Lng: 107.5870, Rating: 4.6, RatingCount: 89, PriceLevel: 1, Types: []string{"restaurant", "food"}},
+			{PlaceID: "food_5", Name: "Quán Chè Hẻm", Address: "1 Hùng Vương, Huế", Lat: 16.4601, Lng: 107.5882, Rating: 4.6, RatingCount: 92, PriceLevel: 1, Types: []string{"cafe"}},
+		}
+	}
+
+	// Temple queries
+	if strings.Contains(q, "chùa") || strings.Contains(q, "đền") || strings.Contains(q, "temple") {
+		return []PlaceResult{
+			{PlaceID: "temple_1", Name: "Chùa Thiên Mụ", Address: "Kim Long, Huế", Lat: 16.4539, Lng: 107.5534, Rating: 4.6, RatingCount: 987, Types: []string{"place_of_worship", "tourist_attraction"}},
+			{PlaceID: "temple_2", Name: "Chùa Từ Hiếu", Address: "Thủy Xuân, Huế", Lat: 16.4488, Lng: 107.5602, Rating: 4.5, RatingCount: 324, Types: []string{"place_of_worship"}},
+			{PlaceID: "temple_3", Name: "Đền Hòn Chén", Address: "Thủy Bằng, Hương Thủy, Huế", Lat: 16.4298, Lng: 107.5423, Rating: 4.4, RatingCount: 215, Types: []string{"place_of_worship"}},
+			{PlaceID: "temple_4", Name: "Chùa Từ Đàm", Address: "1 Sư Liễu Quán, Huế", Lat: 16.4612, Lng: 107.5856, Rating: 4.3, RatingCount: 178, Types: []string{"place_of_worship"}},
+		}
+	}
+
+	// Nature queries
+	if strings.Contains(q, "thiên nhiên") || strings.Contains(q, "công viên") || strings.Contains(q, "nature") || strings.Contains(q, "park") {
+		return []PlaceResult{
+			{PlaceID: "nature_1", Name: "Vườn Quốc gia Bạch Mã", Address: "Phú Lộc, Thừa Thiên Huế", Lat: 16.2025, Lng: 107.8518, Rating: 4.5, RatingCount: 456, Types: []string{"park", "natural_feature"}},
+			{PlaceID: "nature_2", Name: "Biển Thuận An", Address: "Phú Vang, Thừa Thiên Huế", Lat: 16.5587, Lng: 107.6456, Rating: 4.3, RatingCount: 789, Types: []string{"natural_feature"}},
+			{PlaceID: "nature_3", Name: "Đầm Lập An", Address: "Phú Lộc, Thừa Thiên Huế", Lat: 16.2843, Lng: 107.9561, Rating: 4.4, RatingCount: 234, Types: []string{"natural_feature"}},
+			{PlaceID: "nature_4", Name: "Công viên Thương Bạc", Address: "2 Lê Lợi, Huế", Lat: 16.4631, Lng: 107.5882, Rating: 4.1, RatingCount: 112, Types: []string{"park"}},
+		}
+	}
+
+	// Shopping queries
+	if strings.Contains(q, "chợ") || strings.Contains(q, "mua sắm") || strings.Contains(q, "shopping") {
+		return []PlaceResult{
+			{PlaceID: "shop_1", Name: "Chợ Đông Ba", Address: "Trần Hưng Đạo, Huế", Lat: 16.4716, Lng: 107.5928, Rating: 4.2, RatingCount: 876, Types: []string{"shopping_mall", "market"}},
+			{PlaceID: "shop_2", Name: "Chợ An Cựu", Address: "Hùng Vương, Huế", Lat: 16.4582, Lng: 107.5915, Rating: 4.0, RatingCount: 345, Types: []string{"market"}},
+			{PlaceID: "shop_3", Name: "Vincom Plaza Huế", Address: "50A Hùng Vương, Huế", Lat: 16.4589, Lng: 107.5912, Rating: 4.3, RatingCount: 523, Types: []string{"shopping_mall", "store"}},
+			{PlaceID: "shop_4", Name: "Phố đi bộ Nguyễn Đình Chiểu", Address: "Nguyễn Đình Chiểu, Huế", Lat: 16.4685, Lng: 107.5843, Rating: 4.4, RatingCount: 267, Types: []string{"store", "tourist_attraction"}},
+		}
+	}
+
+	// Default: heritage / tourist attractions
 	return []PlaceResult{
-		{PlaceID: "search_1", Name: "Đại Nội Huế", Address: "Đường 23/8, Thuận Hoà, Huế", Lat: 16.4698, Lng: 107.5786, Rating: 4.7, RatingCount: 1523, Types: []string{"tourist_attraction"}},
-		{PlaceID: "search_2", Name: "Chùa Thiên Mụ", Address: "Kim Long, Huế", Lat: 16.4539, Lng: 107.5534, Rating: 4.6, RatingCount: 987, Types: []string{"place_of_worship"}},
-		{PlaceID: "search_3", Name: "Lăng Tự Đức", Address: "Thủy Xuân, Huế", Lat: 16.4582, Lng: 107.5619, Rating: 4.5, RatingCount: 645, Types: []string{"tourist_attraction"}},
+		{PlaceID: "heritage_1", Name: "Đại Nội Huế", Address: "Đường 23/8, Thuận Hoà, Huế", Lat: 16.4698, Lng: 107.5786, Rating: 4.7, RatingCount: 1523, Types: []string{"tourist_attraction", "museum"}},
+		{PlaceID: "heritage_2", Name: "Chùa Thiên Mụ", Address: "Kim Long, Huế", Lat: 16.4539, Lng: 107.5534, Rating: 4.6, RatingCount: 987, Types: []string{"place_of_worship", "tourist_attraction"}},
+		{PlaceID: "heritage_3", Name: "Lăng Tự Đức", Address: "Thủy Xuân, Huế", Lat: 16.4582, Lng: 107.5619, Rating: 4.5, RatingCount: 645, Types: []string{"tourist_attraction"}},
+		{PlaceID: "heritage_4", Name: "Lăng Khải Định", Address: "Thủy Bằng, Hương Thủy", Lat: 16.4111, Lng: 107.5975, Rating: 4.5, RatingCount: 534, Types: []string{"tourist_attraction", "museum"}},
+		{PlaceID: "heritage_5", Name: "Cầu Trường Tiền", Address: "Lê Lợi, Huế", Lat: 16.4643, Lng: 107.5843, Rating: 4.4, RatingCount: 1234, Types: []string{"tourist_attraction"}},
+		{PlaceID: "heritage_6", Name: "Lăng Minh Mạng", Address: "Hương Thọ, Huế", Lat: 16.4267, Lng: 107.5518, Rating: 4.5, RatingCount: 489, Types: []string{"tourist_attraction"}},
 	}
 }
+
 
 func (s *GoongPlacesService) mockDirection() *DirectionResult {
 	return &DirectionResult{

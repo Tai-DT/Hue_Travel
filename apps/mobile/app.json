@@ -71,10 +71,6 @@
       "expo-secure-store",
       "expo-asset"
     ],
-    "extra": {
-      "eas": {
-        "projectId": ""
-      }
-    }
+    "extra": {}
   }
 }

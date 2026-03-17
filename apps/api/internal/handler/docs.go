@@ -31,10 +31,10 @@ func (h *DocsHandler) GetDocs(c *gin.Context) {
 		{Method: "GET", Path: "/ws", Description: "WebSocket connection", Category: "System"},
 
 		// Auth
-		{Method: "POST", Path: "/api/v1/auth/otp/send", Description: "Gửi OTP đến số điện thoại", Category: "Auth"},
-		{Method: "POST", Path: "/api/v1/auth/otp/verify", Description: "Xác thực OTP, nhận JWT", Category: "Auth"},
-		{Method: "POST", Path: "/api/v1/auth/google", Description: "Đăng nhập bằng Google OAuth", Category: "Auth"},
+		{Method: "POST", Path: "/api/v1/auth/register", Description: "Đăng ký tài khoản bằng email + mật khẩu", Category: "Auth"},
+		{Method: "POST", Path: "/api/v1/auth/login", Description: "Đăng nhập bằng email + mật khẩu", Category: "Auth"},
 		{Method: "POST", Path: "/api/v1/auth/refresh", Description: "Làm mới access token", Category: "Auth"},
+		{Method: "POST", Path: "/api/v1/auth/password", Description: "Đặt hoặc đổi mật khẩu cho tài khoản hiện tại", Auth: true, Category: "Auth"},
 
 		// Experiences
 		{Method: "GET", Path: "/api/v1/experiences", Description: "Danh sách trải nghiệm", Category: "Experiences"},

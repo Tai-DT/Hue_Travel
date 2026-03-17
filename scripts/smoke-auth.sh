@@ -2,8 +2,9 @@
 set -euo pipefail
 
 API_BASE="${API_BASE:-http://localhost:8080/api/v1}"
-PHONE="${PHONE:-0900000000}"
-OTP_CODE="${OTP_CODE:-${DEV_FIXED_OTP:-123456}}"
+EMAIL="${EMAIL:-}"
+PASSWORD="${PASSWORD:-HueTravel123!}"
+FULL_NAME="${FULL_NAME:-Smoke Auth User}"
 
 fail() {
   echo "$1" >&2
@@ -25,26 +26,36 @@ check_success() {
   fi
 }
 
+register_if_needed() {
+  if [[ -n "$EMAIL" ]]; then
+    return 0
+  fi
+
+  EMAIL="smoke-auth-$$_$(date +%s)@huetravel.local"
+
+  echo "Registering local account ${EMAIL}..."
+  register_payload="$(curl -fsS -X POST "${API_BASE}/auth/register" \
+    -H 'Content-Type: application/json' \
+    -d "{\"full_name\":\"${FULL_NAME}\",\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}")"
+  check_success "Register" "$register_payload"
+}
+
 echo "Checking API health..."
 curl -fsS "${API_BASE%/api/v1}/health" >/dev/null || fail "API is not reachable at ${API_BASE%/api/v1}"
 
-echo "Sending OTP to ${PHONE}..."
-send_payload="$(curl -fsS -X POST "${API_BASE}/auth/otp/send" \
+register_if_needed
+
+echo "Logging in with ${EMAIL}..."
+login_payload="$(curl -fsS -X POST "${API_BASE}/auth/login" \
   -H 'Content-Type: application/json' \
-  -d "{\"phone\":\"${PHONE}\"}")"
-check_success "Send OTP" "$send_payload"
+  -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}")"
+check_success "Login" "$login_payload"
 
-echo "Verifying OTP..."
-verify_payload="$(curl -fsS -X POST "${API_BASE}/auth/otp/verify" \
-  -H 'Content-Type: application/json' \
-  -d "{\"phone\":\"${PHONE}\",\"code\":\"${OTP_CODE}\"}")"
-check_success "Verify OTP" "$verify_payload"
+access_token="$(extract_json_string "$login_payload" "token")"
+refresh_token="$(extract_json_string "$login_payload" "refresh_token")"
 
-access_token="$(extract_json_string "$verify_payload" "token")"
-refresh_token="$(extract_json_string "$verify_payload" "refresh_token")"
-
-[[ -n "$access_token" ]] || fail "Verify OTP response did not include access token"
-[[ -n "$refresh_token" ]] || fail "Verify OTP response did not include refresh token"
+[[ -n "$access_token" ]] || fail "Login response did not include access token"
+[[ -n "$refresh_token" ]] || fail "Login response did not include refresh token"
 
 echo "Refreshing session..."
 refresh_payload="$(curl -fsS -X POST "${API_BASE}/auth/refresh" \
@@ -64,4 +75,4 @@ logout_payload="$(curl -fsS -X POST "${API_BASE}/auth/logout" \
   -H 'Content-Type: application/json')"
 check_success "Logout" "$logout_payload"
 
-echo "Authenticated smoke flow passed for ${PHONE} via ${API_BASE}"
+echo "Authenticated smoke flow passed for ${EMAIL} via ${API_BASE}"

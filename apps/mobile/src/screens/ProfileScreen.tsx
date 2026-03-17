@@ -10,6 +10,7 @@ import {
   Modal,
   TextInput,
   ActivityIndicator,
+  Linking,
 } from 'react-native';
 import { Colors, Fonts, Spacing, BorderRadius } from '@/constants/theme';
 import api, { User } from '@/services/api';
@@ -24,6 +25,8 @@ type Props = {
   highlightIncompleteProfile?: boolean;
   onProfileUpdated?: (user: User) => void;
   onOpenSettings?: () => void;
+  onOpenBookings?: () => void;
+  onOpenChat?: () => void;
   onLogout?: () => void;
 };
 
@@ -31,6 +34,8 @@ export default function ProfileScreen({
   highlightIncompleteProfile = false,
   onProfileUpdated,
   onOpenSettings,
+  onOpenBookings,
+  onOpenChat,
   onLogout,
 }: Props) {
   const [user, setUser] = useState<User | null>(null);
@@ -183,16 +188,16 @@ export default function ProfileScreen({
           <Text style={styles.menuTitle}>Tài khoản</Text>
           <MenuItem icon="👤" label="Chỉnh sửa hồ sơ" onPress={() => setEditing(true)} />
           <MenuItem icon="📧" label="Bổ sung email" value={user?.email ? 'Đã có' : 'Cần cập nhật'} onPress={() => setEditing(true)} />
-          <MenuItem icon="📋" label="Lịch sử đặt chỗ" />
-          <MenuItem icon="💬" label="Tin nhắn" />
+          <MenuItem icon="📋" label="Lịch sử đặt chỗ" onPress={onOpenBookings} />
+          <MenuItem icon="💬" label="Tin nhắn" onPress={onOpenChat} />
         </View>
 
         <View style={styles.menuSection}>
           <Text style={styles.menuTitle}>Khác</Text>
           <MenuItem icon="⚙️" label="Cài đặt" onPress={onOpenSettings} />
-          <MenuItem icon="⭐" label="Đánh giá ứng dụng" />
-          <MenuItem icon="📜" label="Điều khoản sử dụng" />
-          <MenuItem icon="🛡️" label="Chính sách bảo mật" />
+          <MenuItem icon="⭐" label="Đánh giá ứng dụng" onPress={() => Linking.openURL('https://apps.apple.com')} />
+          <MenuItem icon="📜" label="Điều khoản sử dụng" onPress={() => Linking.openURL('https://huetravel.vn/terms')} />
+          <MenuItem icon="🛡️" label="Chính sách bảo mật" onPress={() => Linking.openURL('https://huetravel.vn/privacy')} />
         </View>
 
         <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>

@@ -99,8 +99,8 @@ npm run dev
 Web Admin: `http://localhost:3000`
 
 Tài khoản test:
-- Phone: `0901234567`
-- OTP: Xem console API server
+- Email: `admin@huetravel.local`
+- Password: `HueTravel123!`
 - Role: `admin`
 
 ---
@@ -116,8 +116,8 @@ npm run dev -- -p 3001
 Provider Portal: `http://localhost:3001`
 
 Tài khoản test:
-- Phone: `0901234568`
-- OTP: Xem console API server
+- Email: `guide.demo@huetravel.local`
+- Password: `HueTravel123!`
 - Role: `guide`
 
 ---
@@ -211,14 +211,13 @@ Các biến **bắt buộc** cho development:
 - `JWT_SECRET` — Secret key cho JWT tokens
 
 Các biến điều khiển mock/strict:
-- `ALLOW_MOCK_SERVICES=true` — Cho phép AI/Places/SMS/Payment fallback trong local
+- `ALLOW_MOCK_SERVICES=true` — Cho phép AI/Places/Payment fallback trong local
 - `APP_STRICT_MODE=true` — Fail-fast khi thiếu cấu hình bắt buộc
 
 Các biến **tùy chọn** khi đang development:
 - `GOONG_API_KEY` — Goong Maps
 - `GEMINI_API_KEY` — AI features
 - `VNPAY_*` — Payment
-- `ESMS_*` — SMS OTP
 - `FCM_SERVER_KEY` — Push notifications
 
 > Khi `APP_STRICT_MODE=true` hoặc `APP_ENV=production`, các integration chính sẽ không được phép chạy mock.

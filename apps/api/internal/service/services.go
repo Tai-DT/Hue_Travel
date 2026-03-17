@@ -2,19 +2,13 @@ package service
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/json"
 	"fmt"
-	"io"
-	"log"
-	"math/big"
-	"net/http"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/huetravel/api/internal/middleware"
 	"github.com/huetravel/api/internal/model"
@@ -27,9 +21,7 @@ import (
 
 type AuthService struct {
 	userRepo         repository.UserRepo
-	otpRepo          repository.OTPRepo
 	redis            *redis.Client
-	smsSvc           *SMSService
 	jwtSecret        string
 	jwtExpiry        time.Duration
 	jwtRefreshExpiry time.Duration
@@ -37,30 +29,33 @@ type AuthService struct {
 
 func NewAuthService(
 	userRepo repository.UserRepo,
-	otpRepo repository.OTPRepo,
 	rdb *redis.Client,
-	smsSvc *SMSService,
 	jwtSecret string,
 	jwtExpiry, jwtRefreshExpiry time.Duration,
 ) *AuthService {
 	return &AuthService{
 		userRepo:         userRepo,
-		otpRepo:          otpRepo,
 		redis:            rdb,
-		smsSvc:           smsSvc,
 		jwtSecret:        jwtSecret,
 		jwtExpiry:        jwtExpiry,
 		jwtRefreshExpiry: jwtRefreshExpiry,
 	}
 }
 
-type SendOTPRequest struct {
-	Phone string `json:"phone" binding:"required"`
+type RegisterRequest struct {
+	FullName string `json:"full_name" binding:"required,min=2"`
+	Email    string `json:"email" binding:"required,email"`
+	Password string `json:"password" binding:"required,min=8"`
 }
 
-type VerifyOTPRequest struct {
-	Phone string `json:"phone" binding:"required"`
-	Code  string `json:"code" binding:"required,len=6"`
+type PasswordLoginRequest struct {
+	Email    string `json:"email" binding:"required,email"`
+	Password string `json:"password" binding:"required"`
+}
+
+type UpdatePasswordRequest struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password" binding:"required,min=8"`
 }
 
 type AuthResponse struct {
@@ -71,155 +66,113 @@ type AuthResponse struct {
 	IsNewUser    bool        `json:"is_new_user"`
 }
 
-// SendOTP — Tạo và gửi mã OTP
-func (s *AuthService) SendOTP(ctx context.Context, req SendOTPRequest) error {
-	// Rate limit: max 3 OTP per 10 minutes
-	if s.redis != nil {
-		rateLimitKey := fmt.Sprintf("otp:ratelimit:%s", req.Phone)
-		count, _ := s.redis.Incr(ctx, rateLimitKey).Result()
-		if count == 1 {
-			s.redis.Expire(ctx, rateLimitKey, 10*time.Minute)
-		}
-		if count > 3 {
-			return fmt.Errorf("quá nhiều yêu cầu OTP, vui lòng thử lại sau 10 phút")
-		}
+// Register creates a local account with email/password for Expo and web clients.
+func (s *AuthService) Register(ctx context.Context, req RegisterRequest) (*AuthResponse, error) {
+	fullName := strings.TrimSpace(req.FullName)
+	email := normalizeAuthEmail(req.Email)
+	password := strings.TrimSpace(req.Password)
+
+	switch {
+	case fullName == "":
+		return nil, fmt.Errorf("vui lòng nhập họ tên")
+	case email == "":
+		return nil, fmt.Errorf("vui lòng nhập email hợp lệ")
+	case len(password) < 8:
+		return nil, fmt.Errorf("mật khẩu phải có ít nhất 8 ký tự")
 	}
 
-	// Generate 6-digit OTP
-	code := generateOTPCode()
-	if s.smsSvc != nil && !s.smsSvc.IsConfigured() {
-		code = devOTPCode()
-	}
-	expiresAt := time.Now().Add(5 * time.Minute)
-
-	// Save to database
-	_, err := s.otpRepo.Create(ctx, req.Phone, code, expiresAt)
+	existingByEmail, err := s.userRepo.GetByEmail(ctx, email)
 	if err != nil {
-		return fmt.Errorf("không thể tạo OTP: %w", err)
+		return nil, err
+	}
+	if existingByEmail != nil {
+		return nil, fmt.Errorf("email đã được sử dụng")
 	}
 
-	// Cache for quick lookup
-	if s.redis != nil {
-		s.redis.Set(ctx, fmt.Sprintf("otp:%s", req.Phone), code, 5*time.Minute)
+	passwordHashBytes, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, fmt.Errorf("không thể bảo mật mật khẩu")
+	}
+	passwordHash := string(passwordHashBytes)
+
+	user := &model.User{
+		Email:        &email,
+		PasswordHash: &passwordHash,
+		HasPassword:  true,
+		FullName:     fullName,
+		Role:         model.RoleTraveler,
+		IsActive:     true,
+		IsVerified:   false,
 	}
 
-	// Send OTP via SMS
-	if s.smsSvc != nil {
-		if err := s.smsSvc.SendOTP(req.Phone, code); err != nil {
-			if !s.smsSvc.FallbackEnabled() {
-				return fmt.Errorf("không thể gửi OTP: %w", err)
-			}
-			log.Printf("⚠️ SMS send failed: %v — OTP logged to console", err)
-			fmt.Printf("📱 OTP for %s: %s (expires: %s)\n", req.Phone, code, expiresAt.Format("15:04:05"))
+	if err := s.userRepo.Create(ctx, user); err != nil {
+		return nil, fmt.Errorf("không thể tạo tài khoản: %w", err)
+	}
+	_ = s.userRepo.UpdateLastLogin(ctx, user.ID)
+
+	return s.issueTokens(ctx, user, true)
+}
+
+// LoginWithPassword authenticates an existing user using email and password.
+func (s *AuthService) LoginWithPassword(ctx context.Context, req PasswordLoginRequest) (*AuthResponse, error) {
+	email := normalizeAuthEmail(req.Email)
+	password := req.Password
+
+	if email == "" || password == "" {
+		return nil, fmt.Errorf("vui lòng nhập đầy đủ email và mật khẩu")
+	}
+
+	user, err := s.userRepo.GetByEmail(ctx, email)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil || !model.HasUsablePasswordHash(user.PasswordHash) {
+		return nil, fmt.Errorf("email hoặc mật khẩu không đúng")
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(*user.PasswordHash), []byte(password)); err != nil {
+		return nil, fmt.Errorf("email hoặc mật khẩu không đúng")
+	}
+
+	_ = s.userRepo.UpdateLastLogin(ctx, user.ID)
+	return s.issueTokens(ctx, user, false)
+}
+
+// UpdatePassword lets existing users set a first password or rotate an existing one.
+func (s *AuthService) UpdatePassword(ctx context.Context, userID uuid.UUID, req UpdatePasswordRequest) error {
+	user, err := s.userRepo.GetByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return fmt.Errorf("không tìm thấy người dùng")
+	}
+
+	newPassword := strings.TrimSpace(req.NewPassword)
+	if len(newPassword) < 8 {
+		return fmt.Errorf("mật khẩu mới phải có ít nhất 8 ký tự")
+	}
+
+	hasExistingPassword := model.HasUsablePasswordHash(user.PasswordHash)
+	if hasExistingPassword {
+		if strings.TrimSpace(req.CurrentPassword) == "" {
+			return fmt.Errorf("vui lòng nhập mật khẩu hiện tại")
 		}
-	} else {
-		// Development mode — log OTP
-		fmt.Printf("📱 OTP for %s: %s (expires: %s)\n", req.Phone, code, expiresAt.Format("15:04:05"))
+		if err := bcrypt.CompareHashAndPassword([]byte(*user.PasswordHash), []byte(req.CurrentPassword)); err != nil {
+			return fmt.Errorf("mật khẩu hiện tại không đúng")
+		}
+	}
+
+	passwordHashBytes, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("không thể bảo mật mật khẩu")
+	}
+
+	if err := s.userRepo.UpdatePassword(ctx, userID, string(passwordHashBytes)); err != nil {
+		return fmt.Errorf("không thể cập nhật mật khẩu: %w", err)
 	}
 
 	return nil
-}
-
-// VerifyOTP — Xác thực OTP và trả về JWT
-func (s *AuthService) VerifyOTP(ctx context.Context, req VerifyOTPRequest) (*AuthResponse, error) {
-	// Quick check from Redis first
-	if s.redis != nil {
-		cachedCode, err := s.redis.Get(ctx, fmt.Sprintf("otp:%s", req.Phone)).Result()
-		if err == nil && cachedCode == req.Code {
-			// Valid! Delete from cache
-			s.redis.Del(ctx, fmt.Sprintf("otp:%s", req.Phone))
-		} else {
-			// Fallback to database verification
-			valid, err := s.otpRepo.Verify(ctx, req.Phone, req.Code)
-			if err != nil {
-				return nil, fmt.Errorf("lỗi xác thực: %w", err)
-			}
-			if !valid {
-				return nil, fmt.Errorf("mã OTP không đúng hoặc đã hết hạn")
-			}
-		}
-	} else {
-		valid, err := s.otpRepo.Verify(ctx, req.Phone, req.Code)
-		if err != nil {
-			return nil, fmt.Errorf("lỗi xác thực: %w", err)
-		}
-		if !valid {
-			return nil, fmt.Errorf("mã OTP không đúng hoặc đã hết hạn")
-		}
-	}
-
-	// Find or create user
-	isNewUser := false
-	user, err := s.userRepo.GetByPhone(ctx, req.Phone)
-	if err != nil {
-		return nil, err
-	}
-
-	if user == nil {
-		// Create new user
-		isNewUser = true
-		user = &model.User{
-			Phone:    &req.Phone,
-			FullName: "Người dùng mới",
-			Role:     model.RoleTraveler,
-			IsActive: true,
-		}
-		if err := s.userRepo.Create(ctx, user); err != nil {
-			return nil, fmt.Errorf("không thể tạo tài khoản: %w", err)
-		}
-	}
-
-	// Update last login
-	s.userRepo.UpdateLastLogin(ctx, user.ID)
-
-	return s.issueTokens(ctx, user, isNewUser)
-}
-
-// GoogleLogin — Xử lý Google OAuth
-func (s *AuthService) GoogleLogin(ctx context.Context, idToken string) (*AuthResponse, error) {
-	// Verify Google ID token
-	googleUser, err := googleTokenVerifier(idToken)
-	if err != nil {
-		return nil, fmt.Errorf("token Google không hợp lệ: %w", err)
-	}
-
-	// Find or create user
-	isNewUser := false
-	user, err := s.userRepo.GetByGoogleID(ctx, googleUser.ID)
-	if err != nil {
-		return nil, err
-	}
-
-	if user == nil && googleUser.Email != "" {
-		user, err = s.userRepo.GetByEmail(ctx, googleUser.Email)
-		if err != nil {
-			return nil, err
-		}
-		if user != nil {
-			if err := s.userRepo.LinkGoogleID(ctx, user.ID, googleUser.ID, googleUser.Picture); err != nil {
-				return nil, fmt.Errorf("không thể liên kết tài khoản Google: %w", err)
-			}
-			user, err = s.userRepo.GetByID(ctx, user.ID)
-			if err != nil {
-				return nil, err
-			}
-			if user == nil {
-				return nil, fmt.Errorf("không tìm thấy tài khoản sau khi liên kết Google")
-			}
-		}
-	}
-
-	if user == nil {
-		isNewUser = true
-		user, err = s.userRepo.CreateWithGoogle(ctx, googleUser.ID, googleUser.Email, googleUser.Name, googleUser.Picture)
-		if err != nil {
-			return nil, fmt.Errorf("không thể tạo tài khoản: %w", err)
-		}
-	}
-
-	s.userRepo.UpdateLastLogin(ctx, user.ID)
-
-	return s.issueTokens(ctx, user, isNewUser)
 }
 
 // RefreshToken — Renew JWT token
@@ -327,6 +280,10 @@ func (s *AuthService) Logout(ctx context.Context, userID uuid.UUID) {
 	if s.redis != nil {
 		s.redis.Del(ctx, fmt.Sprintf("refresh:%s", userID.String()))
 	}
+}
+
+func normalizeAuthEmail(raw string) string {
+	return strings.ToLower(strings.TrimSpace(raw))
 }
 
 // ============================================
@@ -517,113 +474,4 @@ func (s *BookingService) ListTravelerBookings(ctx context.Context, travelerID uu
 // ListGuideBookings lists bookings for a guide with pagination.
 func (s *BookingService) ListGuideBookings(ctx context.Context, guideID uuid.UUID, status string, page, perPage int) ([]model.Booking, int64, error) {
 	return s.bookingRepo.ListByGuide(ctx, guideID, status, page, perPage)
-}
-
-// ============================================
-// Helpers
-// ============================================
-
-func generateOTPCode() string {
-	code := ""
-	for i := 0; i < 6; i++ {
-		n, _ := rand.Int(rand.Reader, big.NewInt(10))
-		code += fmt.Sprintf("%d", n.Int64())
-	}
-	return code
-}
-
-func devOTPCode() string {
-	if code := os.Getenv("DEV_FIXED_OTP"); code != "" {
-		return code
-	}
-	return "123456"
-}
-
-type GoogleUser struct {
-	ID            string `json:"sub"`
-	Email         string `json:"email"`
-	Name          string `json:"name"`
-	Picture       string `json:"picture"`
-	Audience      string `json:"aud"`
-	EmailVerified string `json:"email_verified"`
-}
-
-var googleTokenVerifier = verifyGoogleToken
-
-func googleClientIDsFromEnv() []string {
-	rawIDs := strings.Split(os.Getenv("GOOGLE_CLIENT_IDS"), ",")
-	clientIDs := make([]string, 0, len(rawIDs)+4)
-	seen := make(map[string]struct{}, len(rawIDs)+4)
-
-	addID := func(id string) {
-		id = strings.TrimSpace(id)
-		if id == "" {
-			return
-		}
-		if _, exists := seen[id]; exists {
-			return
-		}
-		seen[id] = struct{}{}
-		clientIDs = append(clientIDs, id)
-	}
-
-	for _, rawID := range rawIDs {
-		addID(rawID)
-	}
-
-	if len(clientIDs) == 0 {
-		addID(os.Getenv("GOOGLE_CLIENT_ID"))
-	}
-
-	// Also accept mobile platform client IDs (Expo / React Native)
-	addID(os.Getenv("EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID"))
-	addID(os.Getenv("EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID"))
-	addID(os.Getenv("EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID"))
-
-	return clientIDs
-}
-
-func isAllowedGoogleAudience(audience string) bool {
-	clientIDs := googleClientIDsFromEnv()
-	if len(clientIDs) == 0 {
-		// No client IDs configured — allow all audiences (dev mode)
-		log.Printf("⚠️ No GOOGLE_CLIENT_IDS configured — accepting all audiences (audience=%s)", audience)
-		return true
-	}
-
-	for _, clientID := range clientIDs {
-		if audience == clientID {
-			return true
-		}
-	}
-
-	log.Printf("❌ Google audience mismatch: token_aud=%q, allowed=%v", audience, clientIDs)
-	return false
-}
-
-func verifyGoogleToken(idToken string) (*GoogleUser, error) {
-	resp, err := http.Get("https://oauth2.googleapis.com/tokeninfo?id_token=" + idToken)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		log.Printf("❌ Google tokeninfo returned %d: %s", resp.StatusCode, string(body))
-		return nil, fmt.Errorf("invalid token (status %d)", resp.StatusCode)
-	}
-
-	body, _ := io.ReadAll(resp.Body)
-	var user GoogleUser
-	if err := json.Unmarshal(body, &user); err != nil {
-		return nil, err
-	}
-	if user.Email == "" || user.EmailVerified != "true" {
-		return nil, fmt.Errorf("google account is not verified")
-	}
-	if !isAllowedGoogleAudience(user.Audience) {
-		return nil, fmt.Errorf("google token audience mismatch: aud=%q not in allowed list (set GOOGLE_CLIENT_IDS env var)", user.Audience)
-	}
-	return &user, nil
 }

@@ -4,7 +4,7 @@ import {
   ActivityIndicator, TextInput, Image,
 } from 'react-native';
 import { Colors, Fonts, Spacing, BorderRadius } from '@/constants/theme';
-import api, { FriendInfo, Story, HueEvent, Trip, TripInvitation } from '@/services/api';
+import api, { FriendInfo, Story, StoryComment, HueEvent, Trip, TripInvitation } from '@/services/api';
 
 type SocialTab = 'feed' | 'friends' | 'trips' | 'events';
 
@@ -79,6 +79,49 @@ function FeedTab() {
       ? { ...s, is_liked: !s.is_liked, like_count: s.is_liked ? s.like_count - 1 : s.like_count + 1 }
       : s
     ));
+  };
+
+  // --- Comments ---
+  const [expandedComments, setExpandedComments] = useState<string | null>(null);
+  const [commentsByStory, setCommentsByStory] = useState<Record<string, StoryComment[]>>({});
+  const [commentText, setCommentText] = useState('');
+  const [commentLoading, setCommentLoading] = useState<string | null>(null);
+  const [commentPosting, setCommentPosting] = useState(false);
+
+  const handleToggleComments = async (storyId: string) => {
+    if (expandedComments === storyId) {
+      setExpandedComments(null);
+      return;
+    }
+    setExpandedComments(storyId);
+    setCommentText('');
+    if (!commentsByStory[storyId]) {
+      setCommentLoading(storyId);
+      const res = await api.getStoryComments(storyId);
+      if (res.success && res.data?.comments) {
+        setCommentsByStory(prev => ({ ...prev, [storyId]: res.data!.comments }));
+      } else {
+        setCommentsByStory(prev => ({ ...prev, [storyId]: [] }));
+      }
+      setCommentLoading(null);
+    }
+  };
+
+  const handlePostComment = async (storyId: string) => {
+    if (!commentText.trim()) return;
+    setCommentPosting(true);
+    const res = await api.commentStory(storyId, commentText.trim());
+    if (res.success && res.data?.comment) {
+      setCommentsByStory(prev => ({
+        ...prev,
+        [storyId]: [...(prev[storyId] || []), res.data!.comment],
+      }));
+      setStories(prev => prev.map(s =>
+        s.id === storyId ? { ...s, comment_count: s.comment_count + 1 } : s
+      ));
+      setCommentText('');
+    }
+    setCommentPosting(false);
   };
 
   const timeAgo = (date: string) => {
@@ -161,11 +204,54 @@ function FeedTab() {
                 </Text>
                 <Text style={styles.actionCount}>{story.like_count}</Text>
               </TouchableOpacity>
-              <View style={styles.storyAction}>
-                <Text style={styles.actionIcon}>💬</Text>
+              <TouchableOpacity style={styles.storyAction} onPress={() => handleToggleComments(story.id)}>
+                <Text style={[styles.actionIcon, expandedComments === story.id && styles.actionIconActive]}>💬</Text>
                 <Text style={styles.actionCount}>{story.comment_count}</Text>
-              </View>
+              </TouchableOpacity>
             </View>
+
+            {/* Inline Comments */}
+            {expandedComments === story.id && (
+              <View style={styles.commentsSection}>
+                {commentLoading === story.id ? (
+                  <ActivityIndicator size="small" color={Colors.primary} style={{ paddingVertical: Spacing.sm }} />
+                ) : (
+                  <>
+                    {(commentsByStory[story.id] || []).length === 0 ? (
+                      <Text style={styles.noComments}>Chưa có bình luận. Hãy là người đầu tiên!</Text>
+                    ) : (
+                      (commentsByStory[story.id] || []).map(c => (
+                        <View key={c.id} style={styles.commentItem}>
+                          <Text style={styles.commentAuthor}>{c.user?.full_name || 'Người dùng'}</Text>
+                          <Text style={styles.commentContent}>{c.content}</Text>
+                          <Text style={styles.commentTime}>{timeAgo(c.created_at)}</Text>
+                        </View>
+                      ))
+                    )}
+                    <View style={styles.commentInputRow}>
+                      <TextInput
+                        style={styles.commentInput}
+                        placeholder="Viết bình luận..."
+                        placeholderTextColor={Colors.textMuted}
+                        value={commentText}
+                        onChangeText={setCommentText}
+                        maxLength={300}
+                      />
+                      <TouchableOpacity
+                        style={[styles.commentSendBtn, !commentText.trim() && styles.postBtnDisabled]}
+                        onPress={() => handlePostComment(story.id)}
+                        disabled={!commentText.trim() || commentPosting}
+                      >
+                        {commentPosting
+                          ? <ActivityIndicator size="small" color={Colors.textOnPrimary} />
+                          : <Text style={styles.commentSendText}>Gửi</Text>
+                        }
+                      </TouchableOpacity>
+                    </View>
+                  </>
+                )}
+              </View>
+            )}
           </View>
         ))
       )}
@@ -810,4 +896,65 @@ const styles = StyleSheet.create({
   emptyIcon: { fontSize: 48, marginBottom: Spacing.md },
   emptyTitle: { fontSize: Fonts.sizes.lg, fontWeight: Fonts.weights.bold as any, color: Colors.text, marginBottom: Spacing.sm },
   emptyText: { fontSize: Fonts.sizes.md, color: Colors.textSecondary, textAlign: 'center' },
+
+  // Comments
+  commentsSection: {
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+    paddingHorizontal: Spacing.md,
+    paddingTop: Spacing.sm,
+    paddingBottom: Spacing.xs,
+  },
+  noComments: {
+    color: Colors.textMuted,
+    fontSize: Fonts.sizes.sm,
+    textAlign: 'center',
+    paddingVertical: Spacing.sm,
+  },
+  commentItem: {
+    marginBottom: Spacing.sm,
+  },
+  commentAuthor: {
+    fontSize: Fonts.sizes.sm,
+    fontWeight: Fonts.weights.semibold as any,
+    color: Colors.text,
+  },
+  commentContent: {
+    fontSize: Fonts.sizes.sm,
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  commentTime: {
+    fontSize: Fonts.sizes.xs,
+    color: Colors.textMuted,
+    marginTop: 2,
+  },
+  commentInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    marginTop: Spacing.sm,
+  },
+  commentInput: {
+    flex: 1,
+    backgroundColor: Colors.surfaceElevated,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    color: Colors.text,
+    fontSize: Fonts.sizes.sm,
+  },
+  commentSendBtn: {
+    backgroundColor: Colors.primary,
+    borderRadius: BorderRadius.lg,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+  },
+  commentSendText: {
+    color: Colors.textOnPrimary,
+    fontSize: Fonts.sizes.sm,
+    fontWeight: Fonts.weights.semibold as any,
+  },
 });

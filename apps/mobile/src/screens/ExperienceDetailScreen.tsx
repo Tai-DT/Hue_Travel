@@ -97,34 +97,39 @@ export default function ExperienceDetailScreen({ experience, onBack, onBookingCr
         setLoadingEngagement(true);
       }
 
-      const [favoritesRes, reviewsRes, bookingsRes] = await Promise.all([
-        api.getFavorites(1, 100),
-        api.getReviews(experience.id, 1, 20),
-        api.getBookings('completed', 1, 100),
-      ]);
-
+      const isLoggedIn = api.isLoggedIn();
       const nextErrors: string[] = [];
 
-      if (favoritesRes.success && favoritesRes.data) {
-        setIsFavorited(favoritesRes.data.some((item) => item.id === experience.id));
-      } else {
-        nextErrors.push(favoritesRes.error?.message || 'Không thể tải trạng thái yêu thích');
-      }
-
+      // Reviews are public — always load
+      const reviewsRes = await api.getReviews(experience.id, 1, 20);
       if (reviewsRes.success && reviewsRes.data) {
         setReviews(reviewsRes.data.reviews || []);
         setReviewSummary(reviewsRes.data.summary || EMPTY_REVIEW_SUMMARY);
       } else {
         setReviews([]);
         setReviewSummary(EMPTY_REVIEW_SUMMARY);
-        nextErrors.push(reviewsRes.error?.message || 'Không thể tải đánh giá');
       }
 
-      if (bookingsRes.success && bookingsRes.data) {
-        setCompletedBookings(bookingsRes.data);
+      // Favorites & Bookings require auth — skip if not logged in
+      if (isLoggedIn) {
+        const [favoritesRes, bookingsRes] = await Promise.all([
+          api.getFavorites(1, 100),
+          api.getBookings('completed', 1, 100),
+        ]);
+
+        if (favoritesRes.success && favoritesRes.data) {
+          setIsFavorited(favoritesRes.data.some((item) => item.id === experience.id));
+        }
+
+        if (bookingsRes.success && bookingsRes.data) {
+          setCompletedBookings(bookingsRes.data);
+        } else {
+          setCompletedBookings([]);
+        }
       } else {
+        // Not logged in — defaults
+        setIsFavorited(false);
         setCompletedBookings([]);
-        nextErrors.push(bookingsRes.error?.message || 'Không thể tải lịch sử booking');
       }
 
       setEngagementError(nextErrors[0] || '');

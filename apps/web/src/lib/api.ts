@@ -235,25 +235,10 @@ class AdminApi {
   }
 
   // ---- Auth ----
-  async sendOTP(phone: string) {
-    return this.request<{ message: string }>('/auth/otp/send', {
-      method: 'POST', body: { phone },
-    });
-  }
-
-  async login(phone: string, code: string) {
-    const res = await this.request<{ token: string; refresh_token: string; user: any }>('/auth/otp/verify', {
-      method: 'POST', body: { phone, code },
-    });
-    if (res.success && res.data?.token && res.data?.refresh_token) {
-      this.setSession(res.data.token, res.data.refresh_token);
-    }
-    return res;
-  }
-
-  async googleLogin(idToken: string) {
-    const res = await this.request<{ token: string; refresh_token: string; user: any }>('/auth/google', {
-      method: 'POST', body: { id_token: idToken },
+  async loginWithPassword(email: string, password: string) {
+    const res = await this.request<{ token: string; refresh_token: string; user: any }>('/auth/login', {
+      method: 'POST',
+      body: { email, password },
     });
     if (res.success && res.data?.token && res.data?.refresh_token) {
       this.setSession(res.data.token, res.data.refresh_token);
@@ -267,6 +252,16 @@ class AdminApi {
       return { ...res, data: res.data.user };
     }
     return res as ApiResponse<any>;
+  }
+
+  async updatePassword(currentPassword: string, newPassword: string) {
+    return this.request<{ message: string }>('/auth/password', {
+      method: 'POST',
+      body: {
+        current_password: currentPassword,
+        new_password: newPassword,
+      },
+    });
   }
 
   async logout() {

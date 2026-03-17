@@ -24,60 +24,62 @@ func NewAuthHandler(authService *service.AuthService) *AuthHandler {
 	return &AuthHandler{authService: authService}
 }
 
-func (h *AuthHandler) SendOTP(c *gin.Context) {
-	var req service.SendOTPRequest
+func (h *AuthHandler) Register(c *gin.Context) {
+	var req service.RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "HT-VAL-001", "Số điện thoại không hợp lệ")
+		response.BadRequest(c, "HT-VAL-001", "Dữ liệu đăng ký không hợp lệ")
 		return
 	}
 
-	if err := h.authService.SendOTP(c.Request.Context(), req); err != nil {
-		if errors.Is(err, service.ErrServiceNotConfigured) || errors.Is(err, service.ErrServiceUnavailable) {
-			response.ServiceUnavailable(c, "HT-AUTH-006", "Dịch vụ OTP hiện chưa sẵn sàng")
+	result, err := h.authService.Register(c.Request.Context(), req)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			response.BadRequest(c, "HT-AUTH-007", "Email đã được sử dụng")
 			return
 		}
-		response.BadRequest(c, "HT-AUTH-002", err.Error())
+		response.BadRequest(c, "HT-AUTH-007", err.Error())
 		return
 	}
 
-	response.OK(c, gin.H{
-		"message":    "OTP đã được gửi",
-		"expires_in": 300,
-	})
+	response.Created(c, result)
 }
 
-func (h *AuthHandler) VerifyOTP(c *gin.Context) {
-	var req service.VerifyOTPRequest
+func (h *AuthHandler) LoginWithPassword(c *gin.Context) {
+	var req service.PasswordLoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "HT-VAL-001", "Dữ liệu không hợp lệ")
+		response.BadRequest(c, "HT-VAL-001", "Dữ liệu đăng nhập không hợp lệ")
 		return
 	}
 
-	result, err := h.authService.VerifyOTP(c.Request.Context(), req)
+	result, err := h.authService.LoginWithPassword(c.Request.Context(), req)
 	if err != nil {
-		response.BadRequest(c, "HT-AUTH-004", err.Error())
+		response.Unauthorized(c, err.Error())
 		return
 	}
 
 	response.OK(c, result)
 }
 
-func (h *AuthHandler) GoogleLogin(c *gin.Context) {
-	var req struct {
-		IDToken string `json:"id_token" binding:"required"`
+func (h *AuthHandler) UpdatePassword(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		response.Unauthorized(c, "Chưa xác thực")
+		return
 	}
+
+	var req service.UpdatePasswordRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "HT-VAL-001", "Token không hợp lệ")
+		response.BadRequest(c, "HT-VAL-001", "Dữ liệu mật khẩu không hợp lệ")
 		return
 	}
 
-	result, err := h.authService.GoogleLogin(c.Request.Context(), req.IDToken)
-	if err != nil {
-		response.BadRequest(c, "HT-AUTH-005", err.Error())
+	if err := h.authService.UpdatePassword(c.Request.Context(), userID.(uuid.UUID), req); err != nil {
+		response.BadRequest(c, "HT-AUTH-008", err.Error())
 		return
 	}
 
-	response.OK(c, result)
+	response.OK(c, gin.H{"message": "Đã cập nhật mật khẩu"})
 }
 
 func (h *AuthHandler) RefreshToken(c *gin.Context) {

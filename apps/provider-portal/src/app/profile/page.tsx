@@ -18,6 +18,14 @@ export default function ProfilePage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
+  const [passwordForm, setPasswordForm] = useState({
+    currentPassword: '',
+    newPassword: '',
+    confirmPassword: '',
+  });
+  const [passwordLoading, setPasswordLoading] = useState(false);
+  const [passwordError, setPasswordError] = useState('');
+  const [passwordSaved, setPasswordSaved] = useState('');
 
   const loadProfile = useCallback(async () => {
     setError('');
@@ -76,6 +84,37 @@ export default function ProfilePage() {
     setSaved(true);
     setEditing(false);
     loadProfile();
+  };
+
+  const handlePasswordSave = async () => {
+    if (passwordForm.newPassword.length < 8) {
+      setPasswordError('Mật khẩu mới phải có ít nhất 8 ký tự.');
+      return;
+    }
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+      setPasswordError('Mật khẩu nhập lại không khớp.');
+      return;
+    }
+    if (profile?.has_password && !passwordForm.currentPassword) {
+      setPasswordError('Vui lòng nhập mật khẩu hiện tại.');
+      return;
+    }
+
+    setPasswordLoading(true);
+    setPasswordError('');
+    setPasswordSaved('');
+
+    const res = await providerApi.updatePassword(passwordForm.currentPassword, passwordForm.newPassword);
+    setPasswordLoading(false);
+
+    if (!res.success) {
+      setPasswordError(res.error?.message || 'Không thể cập nhật mật khẩu.');
+      return;
+    }
+
+    setProfile((prev: any) => ({ ...(prev || {}), has_password: true }));
+    setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
+    setPasswordSaved('Đã cập nhật mật khẩu hướng dẫn viên.');
   };
 
   const displayName = profile?.full_name || 'Guide';
@@ -264,6 +303,71 @@ export default function ProfilePage() {
               }}
             />
           </div>
+        </div>
+      </div>
+
+      <div className="p-card" style={{ padding: 24, marginTop: 24 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, alignItems: 'center' }}>
+          <h3 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>🔐 Bảo mật đăng nhập</h3>
+          <span style={{ fontSize: 13, color: profile?.has_password ? '#4CAF50' : '#888' }}>
+            {profile?.has_password ? 'Đã có mật khẩu' : 'Chưa đặt mật khẩu'}
+          </span>
+        </div>
+
+        <p style={{ color: '#666', lineHeight: 1.6, marginTop: 0 }}>
+          {profile?.has_password
+            ? 'Đổi mật khẩu guide để tiếp tục đăng nhập bằng email và mật khẩu nội bộ.'
+            : 'Tài khoản guide này chưa có mật khẩu nội bộ. Đặt mật khẩu để bật local login.'}
+        </p>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+          {profile?.has_password ? (
+            <input
+              type="password"
+              placeholder="Mật khẩu hiện tại"
+              value={passwordForm.currentPassword}
+              onChange={(e) => setPasswordForm((prev) => ({ ...prev, currentPassword: e.target.value }))}
+              style={{
+                width: '100%', padding: '10px 14px',
+                background: 'var(--bg-secondary)',
+                border: '1px solid var(--border)',
+                borderRadius: 8, fontSize: 14, color: 'var(--text-primary)',
+              }}
+            />
+          ) : <div />}
+          <input
+            type="password"
+            placeholder="Mật khẩu mới"
+            value={passwordForm.newPassword}
+            onChange={(e) => setPasswordForm((prev) => ({ ...prev, newPassword: e.target.value }))}
+            style={{
+              width: '100%', padding: '10px 14px',
+              background: 'var(--bg-secondary)',
+              border: '1px solid var(--border)',
+              borderRadius: 8, fontSize: 14, color: 'var(--text-primary)',
+            }}
+          />
+          <input
+            type="password"
+            placeholder="Nhập lại mật khẩu"
+            value={passwordForm.confirmPassword}
+            onChange={(e) => setPasswordForm((prev) => ({ ...prev, confirmPassword: e.target.value }))}
+            style={{
+              width: '100%', padding: '10px 14px',
+              background: 'var(--bg-secondary)',
+              border: '1px solid var(--border)',
+              borderRadius: 8, fontSize: 14, color: 'var(--text-primary)',
+            }}
+          />
+        </div>
+
+        {passwordError ? <div style={{ marginTop: 12, color: '#F44336', fontSize: 13 }}>{passwordError}</div> : null}
+        {passwordSaved ? <div style={{ marginTop: 12, color: '#4CAF50', fontSize: 13 }}>{passwordSaved}</div> : null}
+
+        <div style={{ marginTop: 16 }}>
+          <button className="p-btn p-btn-primary" onClick={handlePasswordSave} disabled={passwordLoading}>
+            {passwordLoading ? '⏳ Đang lưu...' : profile?.has_password ? 'Cập nhật mật khẩu' : 'Đặt mật khẩu guide'}
+          </button>
         </div>
       </div>
     </div>

@@ -14,28 +14,28 @@ import (
 // ============================================
 
 type ChatMessage struct {
-	ID           uuid.UUID  `json:"id"`
-	RoomID       uuid.UUID  `json:"room_id"`
-	SenderID     uuid.UUID  `json:"sender_id"`
-	SenderName   string     `json:"sender_name"`
-	SenderAvatar *string    `json:"sender_avatar,omitempty"`
-	Content      string     `json:"content"`
-	MessageType  string     `json:"message_type"` // text, image, location, booking
-	Metadata     *string    `json:"metadata,omitempty"`
-	IsRead       bool       `json:"is_read"`
-	CreatedAt    time.Time  `json:"created_at"`
+	ID           uuid.UUID `json:"id"`
+	RoomID       uuid.UUID `json:"room_id"`
+	SenderID     uuid.UUID `json:"sender_id"`
+	SenderName   string    `json:"sender_name"`
+	SenderAvatar *string   `json:"sender_avatar,omitempty"`
+	Content      string    `json:"content"`
+	MessageType  string    `json:"message_type"` // text, image, location, booking
+	Metadata     *string   `json:"metadata,omitempty"`
+	IsRead       bool      `json:"is_read"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 type ChatRoom struct {
-	ID            uuid.UUID    `json:"id"`
-	BookingID     *uuid.UUID   `json:"booking_id,omitempty"`
-	Participants  []uuid.UUID  `json:"participants"`
-	RoomType      string       `json:"room_type"` // direct, booking, group
-	LastMessage   *string      `json:"last_message,omitempty"`
-	LastMessageAt *time.Time   `json:"last_message_at,omitempty"`
-	UnreadCount   int          `json:"unread_count"`
-	CreatedAt     time.Time    `json:"created_at"`
-	UpdatedAt     time.Time    `json:"updated_at"`
+	ID            uuid.UUID   `json:"id"`
+	BookingID     *uuid.UUID  `json:"booking_id,omitempty"`
+	Participants  []uuid.UUID `json:"participants"`
+	RoomType      string      `json:"room_type"` // direct, booking, group
+	LastMessage   *string     `json:"last_message,omitempty"`
+	LastMessageAt *time.Time  `json:"last_message_at,omitempty"`
+	UnreadCount   int         `json:"unread_count"`
+	CreatedAt     time.Time   `json:"created_at"`
+	UpdatedAt     time.Time   `json:"updated_at"`
 
 	// Joined
 	OtherParticipant *ChatParticipant `json:"other_participant,omitempty"`
@@ -121,6 +121,8 @@ func (r *ChatRepository) GetOrCreateDirectRoom(ctx context.Context, userA, userB
 }
 
 func (r *ChatRepository) ListRooms(ctx context.Context, userID uuid.UUID) ([]ChatRoom, error) {
+	rooms := make([]ChatRoom, 0)
+
 	rows, err := r.pool.Query(ctx, `
 		SELECT cr.id, cr.booking_id, cr.participants, cr.room_type,
 			   cr.last_message, cr.last_message_at, cr.created_at, cr.updated_at
@@ -132,7 +134,6 @@ func (r *ChatRepository) ListRooms(ctx context.Context, userID uuid.UUID) ([]Cha
 	}
 	defer rows.Close()
 
-	var rooms []ChatRoom
 	for rows.Next() {
 		var room ChatRoom
 		err := rows.Scan(
@@ -164,6 +165,11 @@ func (r *ChatRepository) ListRooms(ctx context.Context, userID uuid.UUID) ([]Cha
 
 		rooms = append(rooms, room)
 	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
 	return rooms, nil
 }
 
@@ -211,6 +217,8 @@ func (r *ChatRepository) GetMessages(ctx context.Context, roomID uuid.UUID, limi
 		limit = 30
 	}
 
+	messages := make([]ChatMessage, 0)
+
 	rows, err := r.pool.Query(ctx, `
 		SELECT m.id, m.room_id, m.sender_id, m.content, m.message_type,
 			   m.metadata, m.is_read, m.created_at,
@@ -225,7 +233,6 @@ func (r *ChatRepository) GetMessages(ctx context.Context, roomID uuid.UUID, limi
 	}
 	defer rows.Close()
 
-	var messages []ChatMessage
 	for rows.Next() {
 		var msg ChatMessage
 		err := rows.Scan(
@@ -238,6 +245,11 @@ func (r *ChatRepository) GetMessages(ctx context.Context, roomID uuid.UUID, limi
 		}
 		messages = append(messages, msg)
 	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
 	return messages, nil
 }
 
@@ -276,4 +288,3 @@ func (r *ChatRepository) RemoveParticipant(ctx context.Context, roomID, userID u
 	`, roomID, userID)
 	return err
 }
-

@@ -81,6 +81,7 @@ export default function HomeScreen({ onSelectExperience, onSelectGuide, onOpenEx
   const [experiencesError, setExperiencesError] = useState('');
   const [guidesError, setGuidesError] = useState('');
   const [loadingGuideId, setLoadingGuideId] = useState<string | null>(null);
+  const [favoritedIds, setFavoritedIds] = useState<Set<string>>(new Set());
 
   const categories = useMemo(() => CATEGORY_KEYS.map((c) => ({ ...c, label: t(c.i18nKey) })), [t]);
 
@@ -90,6 +91,7 @@ export default function HomeScreen({ onSelectExperience, onSelectGuide, onOpenEx
 
   useEffect(() => {
     loadTopGuides();
+    loadFavorites();
   }, []);
 
   const loadExperiences = async () => {
@@ -106,8 +108,42 @@ export default function HomeScreen({ onSelectExperience, onSelectGuide, onOpenEx
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await Promise.all([loadExperiences(), loadTopGuides()]);
+    await Promise.all([loadExperiences(), loadTopGuides(), loadFavorites()]);
     setRefreshing(false);
+  };
+
+  const loadFavorites = async () => {
+    if (!api.isLoggedIn()) return;
+    const result = await api.getFavorites(1, 100);
+    if (result.success && result.data) {
+      setFavoritedIds(new Set(result.data.map((e) => e.id)));
+    }
+  };
+
+  const handleToggleFavorite = async (experienceId: string) => {
+    // Optimistic update
+    setFavoritedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(experienceId)) {
+        next.delete(experienceId);
+      } else {
+        next.add(experienceId);
+      }
+      return next;
+    });
+
+    const result = await api.toggleFavorite(experienceId);
+    if (result.success && result.data) {
+      setFavoritedIds((prev) => {
+        const next = new Set(prev);
+        if (result.data!.is_favorited) {
+          next.add(experienceId);
+        } else {
+          next.delete(experienceId);
+        }
+        return next;
+      });
+    }
   };
 
   const loadTopGuides = async () => {
@@ -208,7 +244,12 @@ export default function HomeScreen({ onSelectExperience, onSelectGuide, onOpenEx
             contentContainerStyle={styles.experiencesList}
             keyExtractor={(item) => item.id}
             renderItem={({ item }) => (
-              <ExperienceCard experience={item} onPress={() => onSelectExperience(item)} />
+              <ExperienceCard
+                experience={item}
+                isFavorited={favoritedIds.has(item.id)}
+                onPress={() => onSelectExperience(item)}
+                onToggleFavorite={() => handleToggleFavorite(item.id)}
+              />
             )}
           />
         ) : (
@@ -300,10 +341,14 @@ function EmptyStateCard({
 // Experience Card Component
 function ExperienceCard({
   experience,
+  isFavorited,
   onPress,
+  onToggleFavorite,
 }: {
   experience: Experience;
+  isFavorited: boolean;
   onPress: () => void;
+  onToggleFavorite: () => void;
 }) {
   const { t } = useTranslation();
   const formatPrice = (price: number) => {
@@ -335,8 +380,8 @@ function ExperienceCard({
             <Text style={styles.instantText}>{t('home.bookNow')}</Text>
           </View>
         )}
-        <TouchableOpacity style={styles.heartButton}>
-          <Text style={styles.heartIcon}>♡</Text>
+        <TouchableOpacity style={styles.heartButton} onPress={(e) => { e.stopPropagation(); onToggleFavorite(); }}>
+          <Text style={[styles.heartIcon, isFavorited && styles.heartIconActive]}>{isFavorited ? '❤️' : '♡'}</Text>
         </TouchableOpacity>
       </View>
 
@@ -619,6 +664,9 @@ const styles = StyleSheet.create({
   heartIcon: {
     fontSize: 16,
     color: Colors.text,
+  },
+  heartIconActive: {
+    fontSize: 16,
   },
   expInfo: {
     padding: Spacing.md,

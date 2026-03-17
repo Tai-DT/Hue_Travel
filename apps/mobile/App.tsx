@@ -398,6 +398,8 @@ function AppContent() {
             setProfileNeedsAttention(requiresProfileCompletion(user));
           }}
           onOpenSettings={() => { setShowProfile(false); setShowSettings(true); }}
+          onOpenBookings={() => { setShowProfile(false); setActiveTab('bookings'); }}
+          onOpenChat={() => { setShowProfile(false); setShowChat(true); }}
           onLogout={handleLogout}
         />
         <TouchableOpacity

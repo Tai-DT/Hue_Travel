@@ -23,14 +23,6 @@ const SETTINGS_SECTIONS = [
     ],
   },
   {
-    title: '📱 ESMS Configuration',
-    settings: [
-      { key: 'esms_api_key', label: 'API Key', type: 'password', placeholder: 'your-esms-key' },
-      { key: 'esms_secret_key', label: 'Secret Key', type: 'password', placeholder: 'your-secret' },
-      { key: 'esms_brand_name', label: 'Brand Name', type: 'text', placeholder: 'HueTravel' },
-    ],
-  },
-  {
     title: '🔥 Firebase Configuration',
     settings: [
       { key: 'fcm_server_key', label: 'FCM Server Key', type: 'password', placeholder: 'AAAA...' },
@@ -58,6 +50,15 @@ export default function SettingsPage() {
   const [values, setValues] = useState<Record<string, string>>({});
   const [saved, setSaved] = useState(false);
   const [health, setHealth] = useState<SystemHealth | null>(null);
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [passwordForm, setPasswordForm] = useState({
+    currentPassword: '',
+    newPassword: '',
+    confirmPassword: '',
+  });
+  const [passwordLoading, setPasswordLoading] = useState(false);
+  const [passwordError, setPasswordError] = useState('');
+  const [passwordSaved, setPasswordSaved] = useState('');
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -74,6 +75,12 @@ export default function SettingsPage() {
     adminApi.getHealth().then(res => {
       if (res.success && res.data) setHealth(res.data);
     });
+
+    adminApi.getMe().then((res) => {
+      if (res.success && res.data) {
+        setCurrentUser(res.data);
+      }
+    });
   }, []);
 
   const handleChange = (key: string, value: string) => {
@@ -87,6 +94,37 @@ export default function SettingsPage() {
     }
     setSaved(true);
     setTimeout(() => setSaved(false), 3000);
+  };
+
+  const handlePasswordSave = async () => {
+    if (passwordForm.newPassword.length < 8) {
+      setPasswordError('Mật khẩu mới phải có ít nhất 8 ký tự.');
+      return;
+    }
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+      setPasswordError('Mật khẩu nhập lại không khớp.');
+      return;
+    }
+    if (currentUser?.has_password && !passwordForm.currentPassword) {
+      setPasswordError('Vui lòng nhập mật khẩu hiện tại.');
+      return;
+    }
+
+    setPasswordLoading(true);
+    setPasswordError('');
+    setPasswordSaved('');
+
+    const res = await adminApi.updatePassword(passwordForm.currentPassword, passwordForm.newPassword);
+    setPasswordLoading(false);
+
+    if (!res.success) {
+      setPasswordError(res.error?.message || 'Không thể cập nhật mật khẩu.');
+      return;
+    }
+
+    setCurrentUser((prev: any) => ({ ...(prev || {}), has_password: true }));
+    setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
+    setPasswordSaved('Đã cập nhật mật khẩu admin.');
   };
 
   const getDependencyStatus = (name: string) =>
@@ -114,6 +152,68 @@ export default function SettingsPage() {
 
       <div className="data-card" style={{ padding: 16, marginBottom: 24, color: 'var(--text-secondary)' }}>
         Trang này hiện lưu cấu hình nháp trên trình duyệt. Backend chưa có endpoint để áp dụng các thay đổi này cho hệ thống.
+      </div>
+
+      <div className="data-card" style={{ marginBottom: 24 }}>
+        <div className="data-card-header">
+          <h2 className="data-card-title">🔐 Bảo mật tài khoản</h2>
+        </div>
+        <div style={{ padding: 20, display: 'grid', gap: 12 }}>
+          <p style={{ color: 'var(--text-secondary)', lineHeight: 1.6, margin: 0 }}>
+            {currentUser?.has_password
+              ? 'Tài khoản admin này đã có mật khẩu nội bộ. Bạn có thể đổi mật khẩu tại đây để tiếp tục dùng email/password.'
+              : 'Tài khoản admin này chưa có mật khẩu nội bộ. Đặt mật khẩu để lần sau có thể đăng nhập local.'}
+          </p>
+
+          {currentUser?.has_password ? (
+            <input
+              type="password"
+              placeholder="Mật khẩu hiện tại"
+              value={passwordForm.currentPassword}
+              onChange={(e) => setPasswordForm((prev) => ({ ...prev, currentPassword: e.target.value }))}
+              style={{
+                width: '100%', padding: '10px 14px',
+                background: 'var(--bg-secondary)',
+                border: '1px solid var(--border)',
+                borderRadius: 8, fontSize: 14, color: 'var(--text-primary)', outline: 'none',
+              }}
+            />
+          ) : null}
+
+          <input
+            type="password"
+            placeholder="Mật khẩu mới"
+            value={passwordForm.newPassword}
+            onChange={(e) => setPasswordForm((prev) => ({ ...prev, newPassword: e.target.value }))}
+            style={{
+              width: '100%', padding: '10px 14px',
+              background: 'var(--bg-secondary)',
+              border: '1px solid var(--border)',
+              borderRadius: 8, fontSize: 14, color: 'var(--text-primary)', outline: 'none',
+            }}
+          />
+          <input
+            type="password"
+            placeholder="Nhập lại mật khẩu mới"
+            value={passwordForm.confirmPassword}
+            onChange={(e) => setPasswordForm((prev) => ({ ...prev, confirmPassword: e.target.value }))}
+            style={{
+              width: '100%', padding: '10px 14px',
+              background: 'var(--bg-secondary)',
+              border: '1px solid var(--border)',
+              borderRadius: 8, fontSize: 14, color: 'var(--text-primary)', outline: 'none',
+            }}
+          />
+
+          {passwordError ? <div style={{ color: '#F44336', fontSize: 13 }}>{passwordError}</div> : null}
+          {passwordSaved ? <div style={{ color: '#4CAF50', fontSize: 13 }}>{passwordSaved}</div> : null}
+
+          <div>
+            <button className="btn btn-primary" onClick={handlePasswordSave} disabled={passwordLoading}>
+              {passwordLoading ? '⏳ Đang lưu...' : currentUser?.has_password ? 'Cập nhật mật khẩu admin' : 'Đặt mật khẩu admin'}
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* System Health */}

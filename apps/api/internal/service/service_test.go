@@ -258,47 +258,6 @@ func TestFormatVND(t *testing.T) {
 }
 
 // ============================================
-// SMS Service Tests
-// ============================================
-
-func TestSMSService_NotConfigured(t *testing.T) {
-	svc := NewSMSService("", "", "")
-	if svc.IsConfigured() {
-		t.Error("expected not configured without keys")
-	}
-}
-
-func TestSMSService_SendOTP_MockMode(t *testing.T) {
-	svc := NewSMSService("", "", "HueTravel")
-
-	// Should NOT error in mock mode
-	err := svc.SendOTP("0901234567", "123456")
-	if err != nil {
-		t.Errorf("expected no error in mock mode, got: %v", err)
-	}
-}
-
-func TestSMSService_SendNotification_MockMode(t *testing.T) {
-	svc := NewSMSService("", "", "HueTravel")
-
-	err := svc.SendNotification("0901234567", "Booking đã xác nhận")
-	if err != nil {
-		t.Errorf("expected no error in mock mode, got: %v", err)
-	}
-}
-
-func TestSMSService_GetBalance_NotConfigured(t *testing.T) {
-	svc := NewSMSService("", "", "")
-	balance, err := svc.GetBalance()
-	if err != nil {
-		t.Errorf("expected no error, got: %v", err)
-	}
-	if balance != 0 {
-		t.Errorf("expected 0 balance when not configured, got %d", balance)
-	}
-}
-
-// ============================================
 // File Upload Service Tests
 // ============================================
 

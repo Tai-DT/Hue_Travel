@@ -6,10 +6,10 @@ import {
 import { Colors, Fonts, Spacing, BorderRadius } from '@/constants/theme';
 import api, {
   Achievement, GamificationStats, WeatherCurrent, WeatherDay,
-  Promotion, Coupon, EmergencyContact, BlogPost, DiaryEntry, HueEvent,
+  Promotion, Coupon, EmergencyContact, BlogPost, BlogComment, DiaryEntry, HueEvent, Collection,
 } from '@/services/api';
 
-type MoreSection = 'menu' | 'gamification' | 'weather' | 'sos' | 'promotions' | 'blog' | 'diary' | 'map' | 'translate';
+type MoreSection = 'menu' | 'gamification' | 'weather' | 'sos' | 'promotions' | 'blog' | 'diary' | 'map' | 'translate' | 'collections';
 
 export default function MoreScreen() {
   const [section, setSection] = useState<MoreSection>('menu');
@@ -31,6 +31,7 @@ export default function MoreScreen() {
            section === 'blog' ? '📝 Blog' :
            section === 'map' ? '🗺️ Bản đồ' :
            section === 'translate' ? '🌍 Dịch thuật' :
+           section === 'collections' ? '📑 Bộ sưu tập' :
            '📔 Nhật ký'}
         </Text>
       </View>
@@ -44,6 +45,7 @@ export default function MoreScreen() {
       {section === 'diary' && <DiarySection />}
       {section === 'map' && <MapSection />}
       {section === 'translate' && <TranslateSection />}
+      {section === 'collections' && <CollectionsSection />}
     </View>
   );
 }
@@ -61,6 +63,7 @@ function MenuGrid({ onSelect }: { onSelect: (s: MoreSection) => void }) {
     { key: 'diary', icon: '📔', label: 'Nhật ký', desc: 'Ghi lại kỷ niệm tại Huế', color: '#26A69A' },
     { key: 'map', icon: '🗺️', label: 'Bản đồ', desc: 'Khám phá địa điểm & chỉ đường', color: '#5C6BC0' },
     { key: 'translate', icon: '🌍', label: 'Dịch thuật', desc: 'Dịch ngôn ngữ & sổ tay cụm từ', color: '#78909C' },
+    { key: 'collections', icon: '📑', label: 'Bộ sưu tập', desc: 'Lưu & tổ chức trải nghiệm yêu thích', color: '#EC407A' },
   ];
 
   return (
@@ -364,6 +367,11 @@ function PromotionsSection() {
 function BlogSection() {
   const [posts, setPosts] = useState<BlogPost[]>([]);
   const [loading, setLoading] = useState(true);
+  const [expandedComments, setExpandedComments] = useState<string | null>(null);
+  const [commentsByPost, setCommentsByPost] = useState<Record<string, BlogComment[]>>({});
+  const [commentText, setCommentText] = useState('');
+  const [commentLoading, setCommentLoading] = useState<string | null>(null);
+  const [commentPosting, setCommentPosting] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -372,6 +380,52 @@ function BlogSection() {
       setLoading(false);
     })();
   }, []);
+
+  const handleLike = async (postId: string) => {
+    setPosts(prev => prev.map(p =>
+      p.id === postId
+        ? { ...p, is_liked: !p.is_liked, like_count: p.is_liked ? p.like_count - 1 : p.like_count + 1 }
+        : p
+    ));
+    await api.toggleBlogLike(postId);
+  };
+
+  const handleToggleComments = async (postId: string) => {
+    if (expandedComments === postId) {
+      setExpandedComments(null);
+      return;
+    }
+    setExpandedComments(postId);
+    setCommentText('');
+    if (!commentsByPost[postId]) {
+      setCommentLoading(postId);
+      const res = await api.getBlogComments(postId);
+      if (res.success && res.data?.comments) {
+        setCommentsByPost(prev => ({ ...prev, [postId]: res.data!.comments }));
+      } else {
+        setCommentsByPost(prev => ({ ...prev, [postId]: [] }));
+      }
+      setCommentLoading(null);
+    }
+  };
+
+  const handlePostComment = async (postId: string) => {
+    if (!commentText.trim()) return;
+    setCommentPosting(true);
+    const res = await api.addBlogComment(postId, commentText.trim());
+    if (res.success) {
+      // Refresh comments
+      const refreshRes = await api.getBlogComments(postId);
+      if (refreshRes.success && refreshRes.data?.comments) {
+        setCommentsByPost(prev => ({ ...prev, [postId]: refreshRes.data!.comments }));
+      }
+      setPosts(prev => prev.map(p =>
+        p.id === postId ? { ...p, comment_count: p.comment_count + 1 } : p
+      ));
+      setCommentText('');
+    }
+    setCommentPosting(false);
+  };
 
   if (loading) return <LoadingView />;
 
@@ -386,8 +440,59 @@ function BlogSection() {
             {post.excerpt && <Text style={styles.blogExcerpt} numberOfLines={3}>{post.excerpt}</Text>}
             <View style={styles.blogMeta}>
               <Text style={styles.blogAuthor}>✍️ {post.author?.full_name || 'Ẩn danh'}</Text>
-              <Text style={styles.blogStats}>❤️ {post.like_count} · 💬 {post.comment_count} · 👁 {post.view_count}</Text>
+              <Text style={styles.blogStats}>👁 {post.view_count}</Text>
             </View>
+            <View style={styles.blogActions}>
+              <TouchableOpacity style={styles.blogActionBtn} onPress={() => handleLike(post.id)}>
+                <Text>{post.is_liked ? '❤️' : '🤍'}</Text>
+                <Text style={styles.blogActionCount}>{post.like_count}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.blogActionBtn} onPress={() => handleToggleComments(post.id)}>
+                <Text>💬</Text>
+                <Text style={styles.blogActionCount}>{post.comment_count}</Text>
+              </TouchableOpacity>
+            </View>
+
+            {expandedComments === post.id && (
+              <View style={styles.blogCommentsSection}>
+                {commentLoading === post.id ? (
+                  <ActivityIndicator size="small" color={Colors.primary} />
+                ) : (
+                  <>
+                    {(commentsByPost[post.id] || []).length === 0 ? (
+                      <Text style={styles.blogNoComments}>Chưa có bình luận.</Text>
+                    ) : (
+                      (commentsByPost[post.id] || []).map(c => (
+                        <View key={c.id} style={styles.blogCommentItem}>
+                          <Text style={styles.blogCommentAuthor}>{c.user?.full_name || 'Người dùng'}</Text>
+                          <Text style={styles.blogCommentContent}>{c.content}</Text>
+                        </View>
+                      ))
+                    )}
+                    <View style={styles.createForm}>
+                      <TextInput
+                        style={styles.createInput}
+                        placeholder="Viết bình luận..."
+                        placeholderTextColor={Colors.textMuted}
+                        value={commentText}
+                        onChangeText={setCommentText}
+                        maxLength={300}
+                      />
+                      <TouchableOpacity
+                        style={[styles.createSubmitBtn, !commentText.trim() && { opacity: 0.5 }]}
+                        onPress={() => handlePostComment(post.id)}
+                        disabled={!commentText.trim() || commentPosting}
+                      >
+                        {commentPosting
+                          ? <ActivityIndicator size="small" color={Colors.textOnPrimary} />
+                          : <Text style={styles.createSubmitText}>Gửi</Text>
+                        }
+                      </TouchableOpacity>
+                    </View>
+                  </>
+                )}
+              </View>
+            )}
           </View>
         ))
       )}
@@ -561,6 +666,102 @@ function LoadingView() {
     <View style={styles.loadingWrap}>
       <ActivityIndicator color={Colors.primary} />
     </View>
+  );
+}
+
+// ============================================
+// Collections
+// ============================================
+function CollectionsSection() {
+  const [collections, setCollections] = useState<Collection[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [showCreate, setShowCreate] = useState(false);
+
+  const load = useCallback(async () => {
+    const res = await api.getCollections();
+    if (res.success && res.data?.collections) setCollections(res.data.collections);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleCreate = async () => {
+    if (!newName.trim()) return;
+    setCreating(true);
+    const res = await api.createCollection(newName.trim());
+    if (res.success && res.data?.collection) {
+      setCollections(prev => [res.data!.collection, ...prev]);
+      setNewName('');
+      setShowCreate(false);
+    } else {
+      Alert.alert('Lỗi', res.error?.message || 'Không thể tạo bộ sưu tập');
+    }
+    setCreating(false);
+  };
+
+  if (loading) return <LoadingView />;
+
+  return (
+    <ScrollView style={styles.sectionScroll} showsVerticalScrollIndicator={false}>
+      <TouchableOpacity
+        style={styles.createBtn}
+        onPress={() => setShowCreate(!showCreate)}
+      >
+        <Text style={styles.createBtnText}>
+          {showCreate ? '✕ Huỷ' : '+ Tạo bộ sưu tập mới'}
+        </Text>
+      </TouchableOpacity>
+
+      {showCreate && (
+        <View style={styles.createForm}>
+          <TextInput
+            style={styles.createInput}
+            placeholder="Tên bộ sưu tập (VD: Ẩm thực Huế)"
+            placeholderTextColor={Colors.textMuted}
+            value={newName}
+            onChangeText={setNewName}
+            maxLength={100}
+          />
+          <TouchableOpacity
+            style={[styles.createSubmitBtn, !newName.trim() && { opacity: 0.5 }]}
+            onPress={handleCreate}
+            disabled={!newName.trim() || creating}
+          >
+            {creating
+              ? <ActivityIndicator size="small" color={Colors.textOnPrimary} />
+              : <Text style={styles.createSubmitText}>Tạo</Text>
+            }
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {collections.length === 0 ? (
+        <View style={styles.emptyWrap}>
+          <Text style={{ fontSize: 48 }}>📑</Text>
+          <Text style={styles.emptyTitle}>Chưa có bộ sưu tập</Text>
+          <Text style={styles.emptyDesc}>Tạo bộ sưu tập để lưu các trải nghiệm yêu thích!</Text>
+        </View>
+      ) : (
+        collections.map(col => (
+          <View key={col.id} style={styles.collectionCard}>
+            <View style={styles.collectionIcon}>
+              <Text style={{ fontSize: 24 }}>📑</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.collectionName}>{col.name}</Text>
+              {col.description ? (
+                <Text style={styles.collectionDesc} numberOfLines={1}>{col.description}</Text>
+              ) : null}
+              <Text style={styles.collectionMeta}>{col.item_count} mục</Text>
+            </View>
+            <Text style={styles.menuArrow}>›</Text>
+          </View>
+        ))
+      )}
+      <View style={{ height: 100 }} />
+    </ScrollView>
   );
 }
 
@@ -774,6 +975,30 @@ const styles = StyleSheet.create({
   blogMeta: { flexDirection: 'row', justifyContent: 'space-between' },
   blogAuthor: { fontSize: Fonts.sizes.xs, color: Colors.textMuted },
   blogStats: { fontSize: Fonts.sizes.xs, color: Colors.textMuted },
+  blogActions: {
+    flexDirection: 'row' as const,
+    gap: Spacing.lg,
+    marginTop: Spacing.sm,
+    paddingTop: Spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  blogActionBtn: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 4,
+  },
+  blogActionCount: { fontSize: Fonts.sizes.sm, color: Colors.textSecondary },
+  blogCommentsSection: {
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+    paddingTop: Spacing.sm,
+    marginTop: Spacing.sm,
+  },
+  blogNoComments: { color: Colors.textMuted, fontSize: Fonts.sizes.sm, textAlign: 'center' as const, paddingVertical: Spacing.sm },
+  blogCommentItem: { marginBottom: Spacing.sm },
+  blogCommentAuthor: { fontSize: Fonts.sizes.sm, fontWeight: Fonts.weights.semibold as any, color: Colors.text },
+  blogCommentContent: { fontSize: Fonts.sizes.sm, color: Colors.textSecondary, marginTop: 2 },
 
   // Diary
   diaryCard: {
@@ -854,4 +1079,72 @@ const styles = StyleSheet.create({
   },
   phraseVi: { fontSize: Fonts.sizes.sm, color: Colors.text, flex: 1 },
   phraseEn: { fontSize: Fonts.sizes.sm, color: Colors.textSecondary, flex: 1, textAlign: 'right' as const },
+
+  // Shared
+  sectionScroll: { flex: 1 },
+  emptyWrap: { alignItems: 'center' as const, paddingTop: 60 },
+  emptyTitle: { fontSize: Fonts.sizes.lg, fontWeight: Fonts.weights.bold as any, color: Colors.text, marginBottom: Spacing.sm, marginTop: Spacing.md },
+  emptyDesc: { fontSize: Fonts.sizes.md, color: Colors.textSecondary, textAlign: 'center' as const },
+
+  // Create
+  createBtn: {
+    marginHorizontal: Spacing.xl,
+    marginVertical: Spacing.md,
+    paddingVertical: Spacing.md,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+    borderRadius: BorderRadius.lg,
+    borderStyle: 'dashed' as const,
+    alignItems: 'center' as const,
+  },
+  createBtnText: { color: Colors.primary, fontSize: Fonts.sizes.md, fontWeight: Fonts.weights.semibold as any },
+  createForm: {
+    flexDirection: 'row' as const,
+    marginHorizontal: Spacing.xl,
+    marginBottom: Spacing.md,
+    gap: Spacing.sm,
+  },
+  createInput: {
+    flex: 1,
+    backgroundColor: Colors.surfaceElevated,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    color: Colors.text,
+    fontSize: Fonts.sizes.sm,
+  },
+  createSubmitBtn: {
+    backgroundColor: Colors.primary,
+    borderRadius: BorderRadius.lg,
+    paddingHorizontal: Spacing.lg,
+    justifyContent: 'center' as const,
+  },
+  createSubmitText: { color: Colors.textOnPrimary, fontSize: Fonts.sizes.sm, fontWeight: Fonts.weights.bold as any },
+
+  // Collections
+  collectionCard: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    backgroundColor: Colors.surface,
+    marginHorizontal: Spacing.xl,
+    marginBottom: Spacing.sm,
+    padding: Spacing.md,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    gap: Spacing.md,
+  },
+  collectionIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: 'rgba(236, 64, 122, 0.15)',
+    justifyContent: 'center' as const,
+    alignItems: 'center' as const,
+  },
+  collectionName: { fontSize: Fonts.sizes.md, fontWeight: Fonts.weights.semibold as any, color: Colors.text },
+  collectionDesc: { fontSize: Fonts.sizes.sm, color: Colors.textSecondary, marginTop: 2 },
+  collectionMeta: { fontSize: Fonts.sizes.xs, color: Colors.textMuted, marginTop: 2 },
 });

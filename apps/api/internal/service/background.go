@@ -33,9 +33,6 @@ func (w *BackgroundWorker) Start() {
 
 	// Expired booking cleanup — every 5 minutes
 	go w.runPeriodic(ctx, "expired-bookings", 5*time.Minute, w.cleanupExpiredBookings)
-
-	// Expired OTP cleanup — every 15 minutes
-	go w.runPeriodic(ctx, "expired-otps", 15*time.Minute, w.cleanupExpiredOTPs)
 }
 
 // Stop cancels all background tasks gracefully.
@@ -88,25 +85,6 @@ func (w *BackgroundWorker) cleanupExpiredBookings(ctx context.Context) error {
 
 	if result.RowsAffected() > 0 {
 		log.Printf("🧹 Cleaned up %d expired pending bookings", result.RowsAffected())
-	}
-	return nil
-}
-
-// cleanupExpiredOTPs removes OTP records that have expired more than 1 hour ago.
-// This keeps the otp_verifications table lean.
-func (w *BackgroundWorker) cleanupExpiredOTPs(ctx context.Context) error {
-	if w.pool == nil {
-		return nil
-	}
-
-	result, err := w.pool.Exec(ctx,
-		`DELETE FROM otp_verifications WHERE expires_at < NOW() - INTERVAL '1 hour'`)
-	if err != nil {
-		return err
-	}
-
-	if result.RowsAffected() > 0 {
-		log.Printf("🧹 Cleaned up %d expired OTP records", result.RowsAffected())
 	}
 	return nil
 }

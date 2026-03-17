@@ -306,48 +306,55 @@ paths:
   # ============================================
   # Auth
   # ============================================
-  /api/v1/auth/otp/send:
+  /api/v1/auth/register:
     post:
       tags: [Auth]
-      summary: Gửi OTP
-      description: Gửi OTP đến số điện thoại Việt Nam
+      summary: Đăng ký tài khoản
+      description: Tạo tài khoản mới bằng email và mật khẩu
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [phone]
+              required: [full_name, email, password]
               properties:
-                phone:
+                full_name:
                   type: string
-                  example: "0901234567"
+                  example: "Nguyen Van A"
+                email:
+                  type: string
+                  format: email
+                  example: "user@example.com"
+                password:
+                  type: string
+                  example: "Secret123!"
       responses:
-        '200':
-          description: OTP sent
+        '201':
+          description: Account created
         '400':
-          description: Invalid phone
-        '429':
-          description: Rate limited
+          description: Invalid registration data
 
-  /api/v1/auth/otp/verify:
+  /api/v1/auth/login:
     post:
       tags: [Auth]
-      summary: Xác thực OTP
-      description: Verify OTP và nhận JWT tokens
+      summary: Đăng nhập bằng email
+      description: Đăng nhập bằng email và mật khẩu
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [phone, code]
+              required: [email, password]
               properties:
-                phone:
+                email:
                   type: string
-                code:
+                  format: email
+                  example: "user@example.com"
+                password:
                   type: string
-                  example: "123456"
+                  example: "Secret123!"
       responses:
         '200':
           description: JWT tokens returned
@@ -362,23 +369,8 @@ paths:
                     type: string
                   user:
                     $ref: '#/components/schemas/User'
-        '400':
-          description: Invalid OTP
-
-  /api/v1/auth/google:
-    post:
-      tags: [Auth]
-      summary: Google OAuth login
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [id_token]
-              properties:
-                id_token:
-                  type: string
+        '401':
+          description: Invalid credentials
       responses:
         '200':
           description: JWT tokens returned
@@ -412,6 +404,29 @@ paths:
       responses:
         '200':
           description: Logged out
+
+  /api/v1/auth/password:
+    post:
+      tags: [Auth]
+      summary: Đặt hoặc đổi mật khẩu
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [new_password]
+              properties:
+                current_password:
+                  type: string
+                new_password:
+                  type: string
+                  example: "NewSecret123!"
+      responses:
+        '200':
+          description: Password updated
 
   # ============================================
   # Experiences

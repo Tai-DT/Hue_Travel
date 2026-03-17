@@ -2,7 +2,6 @@
 //
 // Repositories are split into separate files by domain:
 //   - user.go         — UserRepository
-//   - otp.go          — OTPRepository
 //   - experience.go   — ExperienceRepository
 //   - booking.go      — BookingRepository
 //   - review_favorite_guide.go — ReviewRepository, FavoriteRepository, GuideProfileRepository
