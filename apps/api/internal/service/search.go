@@ -319,7 +319,7 @@ func (s *SearchService) matchesFilters(doc SearchDocument, f SearchFilters) bool
 	return true
 }
 
-func (s *SearchService) buildFacets(query, queryLower string) map[string][]Facet {
+func (s *SearchService) buildFacets(_, queryLower string) map[string][]Facet {
 	categories := make(map[string]int)
 	types := make(map[string]int)
 

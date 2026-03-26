@@ -399,7 +399,7 @@ func (s *GooglePlacesService) mockNearbyResults() []PlaceResult {
 	}
 }
 
-func (s *GooglePlacesService) mockSearchResults(query string) []PlaceResult {
+func (s *GooglePlacesService) mockSearchResults(_ string) []PlaceResult {
 	return []PlaceResult{
 		{PlaceID: "search_1", Name: "Đại Nội Huế", Address: "Đường 23/8, Thuận Hoà, Huế", Lat: 16.4698, Lng: 107.5786, Rating: 4.7, RatingCount: 1523, Types: []string{"tourist_attraction"}},
 		{PlaceID: "search_2", Name: "Chùa Thiên Mụ", Address: "Kim Long, Huế", Lat: 16.4539, Lng: 107.5534, Rating: 4.6, RatingCount: 987, Types: []string{"place_of_worship"}},

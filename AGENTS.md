@@ -215,7 +215,7 @@ This project (Hue_Travel) is connected to the following platforms. All CLIs are 
 - **CLI:** `gh` at `/opt/homebrew/bin/gh`
 - **Account:** Tai-DT (taidt3004@gmail.com)
 - **Remote:** `https://github.com/Tai-DT/Hue_Travel.git`
-- **Skills:** `github`, `gh-issues` (built-in OpenClaw skills, already loaded)
+- **Skills:** `github`, `gh-issues` (built-in skills, already loaded)
 - **Common commands:**
   - `gh repo view` — view repo info
   - `gh pr list` / `gh pr create` — pull requests
