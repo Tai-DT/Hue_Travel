@@ -53,6 +53,14 @@ function resolveAPIBase() {
 
 const API_BASE = resolveAPIBase();
 
+export function getWSBase(): string {
+  if (API_BASE.startsWith('https://')) {
+    return API_BASE.replace('https://', 'wss://').replace('/api/v1', '/ws');
+  }
+  return API_BASE.replace('http://', 'ws://').replace('/api/v1', '/ws');
+}
+
+
 type RequestOptions = {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: object;
