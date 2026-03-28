@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { Colors, Fonts, Spacing, BorderRadius } from '@/constants/theme';
 import api, { ChatMessage as APIChatMessage, ChatRoom as APIChatRoom } from '@/services/api';
+import { wsService, WSMessagePayload } from '@/services/websocket';
 
 type ChatRoom = {
   id: string;
@@ -135,7 +136,56 @@ export default function ChatScreen() {
     setTimeout(() => scrollRef.current?.scrollToEnd(), 80);
   };
 
+
+  // WebSocket connection lifecycle
   useEffect(() => {
+    wsService.connect();
+
+    return () => {
+      wsService.disconnect();
+    };
+  }, []); // Only connect once when ChatScreen mounts, disconnect when unmounts
+
+  // WebSocket message listener
+  useEffect(() => {
+    const handleWSMessage = (payload: WSMessagePayload) => {
+      if (payload.type === 'message') {
+        if (selectedRoom && payload.room_id === selectedRoom.id) {
+          if (payload.sender_id !== currentUserId) {
+             const newMsg = normalizeMessage(payload.data, currentUserId);
+             setMessages((prev) => [...prev, newMsg]);
+             setTimeout(() => scrollRef.current?.scrollToEnd(), 80);
+          }
+        } else {
+          setRooms((prevRooms) =>
+            prevRooms.map((r) => {
+              if (r.id === payload.room_id) {
+                return {
+                  ...r,
+                  unread_count: r.unread_count + 1,
+                  last_message: payload.content,
+                  last_message_time: new Date().toISOString(),
+                };
+              }
+              return r;
+            }).sort((a, b) => {
+              const dateA = new Date(a.last_message_time || 0).getTime();
+              const dateB = new Date(b.last_message_time || 0).getTime();
+              return dateB - dateA;
+            })
+          );
+        }
+      }
+    };
+
+    wsService.addListener(handleWSMessage);
+
+    return () => {
+      wsService.removeListener(handleWSMessage);
+    };
+  }, [selectedRoom, currentUserId]);
+
+useEffect(() => {
     loadRooms();
   }, []);
 
