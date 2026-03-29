@@ -16,9 +16,12 @@
   --bg-elevated: #1a1a1a;
   --bg-hover: #222222;
   --bg-card: #161616;
+  --card-bg: var(--bg-card);
+  --bg-secondary: var(--bg-elevated);
 
   /* Text */
   --text: #ffffff;
+  --text-primary: var(--text);
   --text-secondary: #b0b0b0;
   --text-muted: #666666;
   --text-on-primary: #0a0a0a;

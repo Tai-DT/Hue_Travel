@@ -1,12 +1,19 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/huetravel/api/internal/model"
+	"github.com/huetravel/api/internal/service"
+	"github.com/huetravel/api/internal/testutil"
 )
 
 func init() {
@@ -114,6 +121,102 @@ func TestAuthHandler_Me_NoAuth(t *testing.T) {
 	// Should return 401 because no user_id in context
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("expected status 401, got %d", w.Code)
+	}
+}
+
+func TestAuthHandler_UpdateProfile_PreservesEmailWhenOmitted(t *testing.T) {
+	userRepo := testutil.NewMockUserRepo()
+	authService := service.NewAuthService(userRepo, nil, "test-secret", time.Hour, 24*time.Hour)
+	authHandler := NewAuthHandler(authService, nil)
+
+	email := "guide.demo@huetravel.local"
+	existingBio := "Bio cu"
+	user := &model.User{
+		Email:      &email,
+		FullName:   "Guide Demo",
+		Role:       model.RoleGuide,
+		Bio:        &existingBio,
+		IsActive:   true,
+		IsVerified: true,
+		Languages:  []string{"vi"},
+	}
+	if err := userRepo.Create(context.Background(), user); err != nil {
+		t.Fatalf("Create() unexpected error: %v", err)
+	}
+
+	router := gin.New()
+	router.PUT("/me", func(c *gin.Context) {
+		c.Set("user_id", user.ID)
+		authHandler.UpdateProfile(c)
+	})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("PUT", "/me", strings.NewReader(`{"full_name":"Guide Demo Updated","bio":"Ho so moi"}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	updated, err := userRepo.GetByID(context.Background(), user.ID)
+	if err != nil {
+		t.Fatalf("GetByID() unexpected error: %v", err)
+	}
+	if updated == nil {
+		t.Fatal("expected updated user")
+	}
+	if updated.Email == nil || *updated.Email != email {
+		t.Fatalf("expected email to be preserved, got %+v", updated.Email)
+	}
+	if updated.Bio == nil || *updated.Bio != "Ho so moi" {
+		t.Fatalf("expected bio to be updated, got %+v", updated.Bio)
+	}
+}
+
+func TestAuthHandler_UpdateProfile_ClearsBioWhenEmptyStringProvided(t *testing.T) {
+	userRepo := testutil.NewMockUserRepo()
+	authService := service.NewAuthService(userRepo, nil, "test-secret", time.Hour, 24*time.Hour)
+	authHandler := NewAuthHandler(authService, nil)
+
+	email := "traveler@example.com"
+	existingBio := "Toi yeu Hue"
+	user := &model.User{
+		Email:      &email,
+		FullName:   "Traveler Demo",
+		Role:       model.RoleTraveler,
+		Bio:        &existingBio,
+		IsActive:   true,
+		IsVerified: true,
+	}
+	if err := userRepo.Create(context.Background(), user); err != nil {
+		t.Fatalf("Create() unexpected error: %v", err)
+	}
+
+	router := gin.New()
+	router.PUT("/me", func(c *gin.Context) {
+		c.Set("user_id", user.ID)
+		authHandler.UpdateProfile(c)
+	})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("PUT", "/me", strings.NewReader(`{"full_name":"Traveler Demo","bio":""}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	updated, err := userRepo.GetByID(context.Background(), user.ID)
+	if err != nil {
+		t.Fatalf("GetByID() unexpected error: %v", err)
+	}
+	if updated == nil {
+		t.Fatal("expected updated user")
+	}
+	if updated.Bio != nil {
+		t.Fatalf("expected bio to be cleared, got %+v", updated.Bio)
 	}
 }
 

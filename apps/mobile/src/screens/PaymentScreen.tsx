@@ -9,18 +9,16 @@ import {
   Linking,
 } from 'react-native';
 import { Colors, Fonts, Spacing, BorderRadius } from '@/constants/theme';
-import api, { Booking, PaymentMethod } from '@/services/api';
+import api, { Booking, PaymentMethod, TravelerCurrency } from '@/services/api';
+import { formatCurrencyFromVND } from '@/utils/currency';
 
 type PaymentStep = 'review' | 'method' | 'processing' | 'success';
 
 type Props = {
   booking: Booking;
   onBack: () => void;
+  currency: TravelerCurrency;
 };
-
-function formatPrice(value: number) {
-  return new Intl.NumberFormat('vi-VN').format(value) + '₫';
-}
 
 function formatDate(value: string) {
   const date = new Date(value);
@@ -28,7 +26,7 @@ function formatDate(value: string) {
   return date.toLocaleDateString('vi-VN');
 }
 
-export default function PaymentScreen({ booking, onBack }: Props) {
+export default function PaymentScreen({ booking, onBack, currency }: Props) {
   const [step, setStep] = useState<PaymentStep>('review');
   const [selectedMethod, setSelectedMethod] = useState('VNPAYQR');
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
@@ -81,7 +79,7 @@ export default function PaymentScreen({ booking, onBack }: Props) {
     setPaymentURL(result.data.payment_url);
     setPaymentConfirmed(result.data.status === 'success');
 
-    if (result.data.payment_url) {
+    if (result.data.payment_url && result.data.status !== 'success') {
       try {
         await Linking.openURL(result.data.payment_url);
       } catch {
@@ -125,7 +123,7 @@ export default function PaymentScreen({ booking, onBack }: Props) {
             <SummaryRow label="Trải nghiệm" value={bookingTitle} />
             <SummaryRow label="Ngày" value={`${formatDate(booking.booking_date)} • ${booking.start_time}`} />
             <SummaryRow label="Số khách" value={`${booking.guest_count} khách`} />
-            <SummaryRow label="Số tiền" value={formatPrice(booking.total_price)} highlight />
+            <SummaryRow label="Số tiền" value={formatCurrencyFromVND(booking.total_price, currency)} highlight />
             {paymentRef ? <SummaryRow label="Mã giao dịch" value={paymentRef} /> : null}
           </View>
 
@@ -177,10 +175,10 @@ export default function PaymentScreen({ booking, onBack }: Props) {
 
             <View style={styles.card}>
               <Text style={styles.cardSectionTitle}>💰 Chi tiết giá</Text>
-              <PriceRow label="Giá trải nghiệm" value={formatPrice(basePrice)} />
-              <PriceRow label="Phí dịch vụ" value={formatPrice(booking.service_fee)} />
+              <PriceRow label="Giá trải nghiệm" value={formatCurrencyFromVND(basePrice, currency)} />
+              <PriceRow label="Phí dịch vụ" value={formatCurrencyFromVND(booking.service_fee, currency)} />
               <View style={styles.priceDivider} />
-              <PriceRow label="Tổng cộng" value={formatPrice(booking.total_price)} total />
+              <PriceRow label="Tổng cộng" value={formatCurrencyFromVND(booking.total_price, currency)} total />
             </View>
 
             <View style={styles.card}>
@@ -254,7 +252,7 @@ export default function PaymentScreen({ booking, onBack }: Props) {
             onPress={handlePay}
             disabled={methods.length === 0}
           >
-            <Text style={styles.primaryButtonText}>Thanh toán {formatPrice(booking.total_price)}</Text>
+            <Text style={styles.primaryButtonText}>Thanh toán {formatCurrencyFromVND(booking.total_price, currency)}</Text>
           </TouchableOpacity>
         )}
       </View>

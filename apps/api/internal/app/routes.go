@@ -64,7 +64,6 @@ func SetupRouter(c *Container) (*gin.Engine, *ws.Hub) {
 	registerFriendRoutes(v1, c, jwtSecret)
 	registerTripRoutes(v1, c, jwtSecret)
 	registerReactionRoutes(v1, c, jwtSecret)
-	registerCallRoutes(v1, c, jwtSecret)
 	registerWeatherRoutes(v1, c)
 	registerPromotionRoutes(v1, c, jwtSecret)
 	registerGamificationRoutes(v1, c, jwtSecret)
@@ -85,9 +84,6 @@ func SetupRouter(c *Container) (*gin.Engine, *ws.Hub) {
 	}
 	if c.ReactionH != nil {
 		c.ReactionH.SetHub(hub)
-	}
-	if c.CallH != nil {
-		c.CallH.SetHub(hub)
 	}
 
 	return r, hub
@@ -228,6 +224,8 @@ func registerUserProfileRoutes(v1 *gin.RouterGroup, c *Container, jwtSecret stri
 	v1.GET("/me", middleware.Auth(jwtSecret), c.AuthH.Me)
 	v1.PUT("/me", middleware.Auth(jwtSecret), c.AuthH.UpdateProfile)
 	v1.DELETE("/me", middleware.Auth(jwtSecret), c.AuthH.DeleteAccount)
+	v1.GET("/me/preferences", middleware.Auth(jwtSecret), c.AuthH.GetPreferences)
+	v1.PUT("/me/preferences", middleware.Auth(jwtSecret), c.AuthH.UpdatePreferences)
 }
 
 func registerUploadRoutes(v1 *gin.RouterGroup, c *Container, jwtSecret string) {
@@ -248,6 +246,8 @@ func registerAdminRoutes(v1 *gin.RouterGroup, c *Container, jwtSecret string) {
 	admin.GET("/dashboard", c.AdminH.DashboardStats)
 	admin.GET("/health", c.AdminH.SystemHealth)
 	admin.GET("/quick-stats", c.AdminH.QuickStats)
+	admin.GET("/settings", c.AdminH.GetSettings)
+	admin.PUT("/settings", c.AdminH.SaveSettings)
 
 	if c.AdminMgmtH != nil {
 		admin.GET("/users", c.AdminMgmtH.ListUsers)
@@ -264,6 +264,8 @@ func registerAdminRoutes(v1 *gin.RouterGroup, c *Container, jwtSecret string) {
 
 		admin.GET("/bookings", c.AdminMgmtH.ListBookings)
 		admin.PUT("/bookings/:id/status", c.AdminMgmtH.UpdateBookingStatus)
+		admin.GET("/stories", c.AdminMgmtH.ListStories)
+		admin.DELETE("/stories/:id", c.AdminMgmtH.DeleteStory)
 	}
 
 	// Guide Applications (admin)
@@ -320,6 +322,7 @@ func registerTripRoutes(v1 *gin.RouterGroup, c *Container, jwtSecret string) {
 	tripsAuth.Use(middleware.Auth(jwtSecret))
 	tripsAuth.POST("", c.TripH.Create)
 	tripsAuth.GET("", c.TripH.ListMyTrips)
+	tripsAuth.GET("/me", c.TripH.ListMyTrips)
 	tripsAuth.GET("/invitations", c.TripH.ListInvitations)
 	tripsAuth.GET("/:id", c.TripH.GetByID)
 	tripsAuth.POST("/:id/invite", c.TripH.InviteMember)
@@ -339,24 +342,6 @@ func registerReactionRoutes(v1 *gin.RouterGroup, c *Container, jwtSecret string)
 	reactions.Use(middleware.Auth(jwtSecret))
 	reactions.POST("/:message_id/reactions", c.ReactionH.ToggleReaction)
 	reactions.GET("/:message_id/reactions", c.ReactionH.GetReactions)
-}
-
-func registerCallRoutes(v1 *gin.RouterGroup, c *Container, jwtSecret string) {
-	if c.CallH == nil {
-		return
-	}
-	calls := v1.Group("/calls")
-	calls.Use(middleware.Auth(jwtSecret))
-
-	// Call management
-	calls.POST("/rooms/:room_id/call", c.CallH.InitiateCall)
-	calls.GET("/rooms/:room_id/active", c.CallH.GetActiveCall)
-	calls.POST("/:call_id/answer", c.CallH.AnswerCall)
-	calls.POST("/:call_id/decline", c.CallH.DeclineCall)
-	calls.POST("/:call_id/end", c.CallH.EndCall)
-	calls.POST("/:call_id/leave", c.CallH.LeaveCall)
-	calls.GET("/:call_id/participants", c.CallH.GetCallParticipants)
-	calls.GET("/history", c.CallH.GetCallHistory)
 }
 
 func registerWeatherRoutes(v1 *gin.RouterGroup, c *Container) {

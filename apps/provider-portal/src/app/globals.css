@@ -10,9 +10,12 @@
   --accent: #F9A825;
   --bg: #fafbfc;
   --bg-card: #ffffff;
+  --card-bg: var(--bg-card);
+  --bg-secondary: #f5f7fa;
   --bg-sidebar: #1a2332;
   --bg-sidebar-hover: #243447;
   --text: #1a1a1a;
+  --text-primary: var(--text);
   --text-secondary: #666666;
   --text-muted: #999999;
   --text-light: #ffffff;

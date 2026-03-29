@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -18,8 +19,11 @@ import (
 type AITripPlannerService struct {
 	apiKey          string
 	modelName       string
+	temperature     *float64
+	maxOutputTokens *int
 	httpClient      *http.Client
 	fallbackEnabled bool
+	mu              sync.RWMutex
 }
 
 func NewAITripPlannerService(apiKey string) *AITripPlannerService {
@@ -36,11 +40,56 @@ func NewAITripPlannerServiceWithFallback(apiKey string, fallbackEnabled bool) *A
 }
 
 func (s *AITripPlannerService) HasAPIKey() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.apiKey != "" && s.apiKey != "your_gemini_api_key"
 }
 
 func (s *AITripPlannerService) FallbackEnabled() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.fallbackEnabled
+}
+
+func (s *AITripPlannerService) UpdateConfig(apiKey string, temperature *float64, maxOutputTokens *int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.apiKey = apiKey
+	s.temperature = temperature
+	s.maxOutputTokens = maxOutputTokens
+}
+
+type aiTripPlannerSnapshot struct {
+	apiKey          string
+	modelName       string
+	temperature     float64
+	maxOutputTokens int
+	httpClient      *http.Client
+	fallbackEnabled bool
+}
+
+func (s *AITripPlannerService) snapshot(defaultTemperature float64, defaultMaxOutputTokens int) aiTripPlannerSnapshot {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	temperature := defaultTemperature
+	if s.temperature != nil {
+		temperature = *s.temperature
+	}
+
+	maxOutputTokens := defaultMaxOutputTokens
+	if s.maxOutputTokens != nil {
+		maxOutputTokens = *s.maxOutputTokens
+	}
+
+	return aiTripPlannerSnapshot{
+		apiKey:          s.apiKey,
+		modelName:       s.modelName,
+		temperature:     temperature,
+		maxOutputTokens: maxOutputTokens,
+		httpClient:      s.httpClient,
+		fallbackEnabled: s.fallbackEnabled,
+	}
 }
 
 // ============================================
@@ -104,7 +153,7 @@ type AIChatMessage struct {
 
 func (s *AITripPlannerService) GenerateTripPlan(ctx context.Context, req TripPlanRequest) (*TripPlan, error) {
 	if !s.HasAPIKey() {
-		if !s.fallbackEnabled {
+		if !s.FallbackEnabled() {
 			return nil, fmt.Errorf("%w: Gemini API key is missing", ErrServiceNotConfigured)
 		}
 		return s.mockTripPlan(req), nil
@@ -113,7 +162,7 @@ func (s *AITripPlannerService) GenerateTripPlan(ctx context.Context, req TripPla
 	prompt := s.buildTripPlanPrompt(req)
 	response, err := s.callGemini(ctx, prompt)
 	if err != nil {
-		if !s.fallbackEnabled {
+		if !s.FallbackEnabled() {
 			return nil, fmt.Errorf("%w: Gemini trip planner request failed: %v", ErrServiceUnavailable, err)
 		}
 		return s.mockTripPlan(req), nil
@@ -137,8 +186,10 @@ func (s *AITripPlannerService) GenerateTripPlan(ctx context.Context, req TripPla
 // ============================================
 
 func (s *AITripPlannerService) Chat(ctx context.Context, messages []AIChatMessage) (string, error) {
-	if !s.HasAPIKey() {
-		if !s.fallbackEnabled {
+	cfg := s.snapshot(0.8, 1024)
+
+	if cfg.apiKey == "" || cfg.apiKey == "your_gemini_api_key" {
+		if !cfg.fallbackEnabled {
 			return "", fmt.Errorf("%w: Gemini API key is missing", ErrServiceNotConfigured)
 		}
 		return s.mockChatResponse(messages), nil
@@ -188,30 +239,30 @@ Kiến thức đặc biệt:
 	body := map[string]interface{}{
 		"contents": geminiMessages,
 		"generationConfig": map[string]interface{}{
-			"temperature":     0.8,
-			"maxOutputTokens": 1024,
+			"temperature":     cfg.temperature,
+			"maxOutputTokens": cfg.maxOutputTokens,
 		},
 	}
 
 	jsonBody, _ := json.Marshal(body)
 	url := fmt.Sprintf(
 		"https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s",
-		s.modelName, s.apiKey,
+		cfg.modelName, cfg.apiKey,
 	)
 
 	httpReq, _ := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonBody))
 	httpReq.Header.Set("Content-Type", "application/json")
 
-	resp, err := s.httpClient.Do(httpReq)
+	resp, err := cfg.httpClient.Do(httpReq)
 	if err != nil {
-		if !s.fallbackEnabled {
+		if !cfg.fallbackEnabled {
 			return "", fmt.Errorf("%w: Gemini chat request failed: %v", ErrServiceUnavailable, err)
 		}
 		return s.mockChatResponse(messages), nil
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= http.StatusBadRequest {
-		if !s.fallbackEnabled {
+		if !cfg.fallbackEnabled {
 			return "", fmt.Errorf("%w: Gemini chat returned status %d", ErrServiceUnavailable, resp.StatusCode)
 		}
 		return s.mockChatResponse(messages), nil
@@ -230,7 +281,7 @@ Kiến thức đặc biệt:
 	}
 
 	if err := json.Unmarshal(respBody, &result); err != nil || len(result.Candidates) == 0 {
-		if !s.fallbackEnabled {
+		if !cfg.fallbackEnabled {
 			return "", fmt.Errorf("%w: Gemini returned invalid chat response", ErrServiceUnavailable)
 		}
 		return s.mockChatResponse(messages), nil
@@ -244,6 +295,8 @@ Kiến thức đặc biệt:
 // ============================================
 
 func (s *AITripPlannerService) callGemini(ctx context.Context, prompt string) (string, error) {
+	cfg := s.snapshot(0.7, 4096)
+
 	body := map[string]interface{}{
 		"contents": []map[string]interface{}{
 			{
@@ -251,8 +304,8 @@ func (s *AITripPlannerService) callGemini(ctx context.Context, prompt string) (s
 			},
 		},
 		"generationConfig": map[string]interface{}{
-			"temperature":      0.7,
-			"maxOutputTokens":  4096,
+			"temperature":      cfg.temperature,
+			"maxOutputTokens":  cfg.maxOutputTokens,
 			"responseMimeType": "application/json",
 		},
 	}
@@ -260,13 +313,13 @@ func (s *AITripPlannerService) callGemini(ctx context.Context, prompt string) (s
 	jsonBody, _ := json.Marshal(body)
 	url := fmt.Sprintf(
 		"https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s",
-		s.modelName, s.apiKey,
+		cfg.modelName, cfg.apiKey,
 	)
 
 	req, _ := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonBody))
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := s.httpClient.Do(req)
+	resp, err := cfg.httpClient.Do(req)
 	if err != nil {
 		return "", err
 	}

@@ -9,12 +9,14 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Colors, Fonts, Spacing, BorderRadius } from '@/constants/theme';
-import api, { Booking } from '@/services/api';
+import api, { Booking, TravelerCurrency } from '@/services/api';
+import { formatCurrencyFromVND } from '@/utils/currency';
 
 type BookingTab = 'all' | 'upcoming' | 'completed' | 'cancelled';
 
 type Props = {
   onOpenPayment: (booking: Booking) => void;
+  currency: TravelerCurrency;
 };
 
 const STATUS_CONFIG: Record<Booking['status'], { label: string; color: string; bg: string; icon: string }> = {
@@ -25,10 +27,6 @@ const STATUS_CONFIG: Record<Booking['status'], { label: string; color: string; b
   cancelled: { label: 'Đã huỷ', color: Colors.error, bg: 'rgba(244,67,54,0.15)', icon: '❌' },
   refunded: { label: 'Đã hoàn tiền', color: Colors.textSecondary, bg: 'rgba(158,158,158,0.16)', icon: '↩️' },
 };
-
-function formatPrice(price: number) {
-  return new Intl.NumberFormat('vi-VN').format(price) + '₫';
-}
 
 function formatDate(value: string) {
   const date = new Date(value);
@@ -43,7 +41,7 @@ function matchesTab(tab: BookingTab, booking: Booking) {
   return booking.status === 'pending' || booking.status === 'confirmed' || booking.status === 'active';
 }
 
-export default function BookingScreen({ onOpenPayment }: Props) {
+export default function BookingScreen({ onOpenPayment, currency }: Props) {
   const [activeTab, setActiveTab] = useState<BookingTab>('all');
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [refreshing, setRefreshing] = useState(false);
@@ -178,7 +176,7 @@ export default function BookingScreen({ onOpenPayment }: Props) {
                   <View style={styles.cardFooter}>
                     <View>
                       <Text style={styles.priceLabel}>Tổng cộng</Text>
-                      <Text style={styles.price}>{formatPrice(booking.total_price)}</Text>
+                      <Text style={styles.price}>{formatCurrencyFromVND(booking.total_price, currency)}</Text>
                     </View>
 
                     <View style={styles.actions}>

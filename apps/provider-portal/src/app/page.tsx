@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
-import { providerApi } from '@/lib/api';
+import { useState, useEffect, useCallback, lazy, Suspense, useRef } from 'react';
+import { providerApi, ProviderNotification } from '@/lib/api';
 import GuideLoginPage from '@/components/GuideLoginPage';
 
 const GuideBookingsPage = lazy(() => import('./bookings/page'));
@@ -9,6 +9,7 @@ const ProfilePage = lazy(() => import('./profile/page'));
 const MyToursPage = lazy(() => import('./my-tours/page'));
 const RevenuePage = lazy(() => import('./revenue/page'));
 const CalendarPage = lazy(() => import('./calendar/page'));
+const SettingsPage = lazy(() => import('@/components/ProviderSettingsPage'));
 
 const Loader = () => (
   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 300 }}>⏳ Đang tải...</div>
@@ -18,6 +19,12 @@ type NavSection = {
   section: string;
   items: { icon: string; label: string; key: string; badge?: number }[];
 };
+
+type ProviderPortalPrefs = {
+  desktopAlerts: boolean;
+};
+
+const PROVIDER_PORTAL_PREFS_KEY = 'provider_portal_settings';
 
 const NAV: NavSection[] = [
   { section: 'Tổng quan', items: [
@@ -31,6 +38,7 @@ const NAV: NavSection[] = [
   ]},
   { section: 'Tài khoản', items: [
     { icon: '👤', label: 'Hồ sơ', key: 'profile' },
+    { icon: '⚙️', label: 'Cài đặt', key: 'settings' },
   ]},
 ];
 
@@ -176,6 +184,125 @@ export default function ProviderDashboard() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [currentUser, setCurrentUser] = useState<any>(null);
+  const [notifications, setNotifications] = useState<ProviderNotification[]>([]);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [notifLoading, setNotifLoading] = useState(false);
+  const [notifError, setNotifError] = useState('');
+  const [portalPrefs, setPortalPrefs] = useState<ProviderPortalPrefs>({ desktopAlerts: false });
+
+  const notifRef = useRef<HTMLDivElement | null>(null);
+  const notificationBootstrapRef = useRef(false);
+  const notifiedIdsRef = useRef<Set<string>>(new Set());
+
+  const unreadCount = notifications.filter((item) => !item.is_read).length;
+  const recentNotifications = notifications.slice(0, 6);
+
+  const savePortalPrefs = useCallback((next: ProviderPortalPrefs) => {
+    setPortalPrefs(next);
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(PROVIDER_PORTAL_PREFS_KEY, JSON.stringify(next));
+    }
+  }, []);
+
+  const updateDesktopAlerts = useCallback(async (enabled: boolean) => {
+    if (typeof window === 'undefined' || !('Notification' in window)) {
+      return false;
+    }
+
+    if (enabled) {
+      let permission = window.Notification.permission;
+      if (permission === 'default') {
+        permission = await window.Notification.requestPermission();
+      }
+      if (permission !== 'granted') {
+        return false;
+      }
+    }
+
+    savePortalPrefs({ desktopAlerts: enabled });
+    return true;
+  }, [savePortalPrefs]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const raw = window.localStorage.getItem(PROVIDER_PORTAL_PREFS_KEY);
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw) as Partial<ProviderPortalPrefs>;
+      setPortalPrefs({
+        desktopAlerts: Boolean(parsed.desktopAlerts),
+      });
+    } catch {
+      window.localStorage.removeItem(PROVIDER_PORTAL_PREFS_KEY);
+    }
+  }, []);
+
+  const formatRelativeTime = useCallback((value: string) => {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return 'Vừa xong';
+
+    const diffMs = Date.now() - date.getTime();
+    const diffMinutes = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMinutes / 60);
+    const diffDays = Math.floor(diffHours / 24);
+
+    if (diffMinutes < 1) return 'Vừa xong';
+    if (diffMinutes < 60) return `${diffMinutes} phút trước`;
+    if (diffHours < 24) return `${diffHours} giờ trước`;
+    return `${diffDays} ngày trước`;
+  }, []);
+
+  const loadNotifications = useCallback(async () => {
+    setNotifLoading(true);
+    const res = await providerApi.getNotifications();
+    if (res.success && res.data) {
+      const nextNotifications = res.data.notifications || [];
+
+      if (!notificationBootstrapRef.current) {
+        notificationBootstrapRef.current = true;
+        notifiedIdsRef.current = new Set(nextNotifications.map((item) => item.id));
+      } else if (
+        portalPrefs.desktopAlerts &&
+        typeof window !== 'undefined' &&
+        'Notification' in window &&
+        window.Notification.permission === 'granted'
+      ) {
+        nextNotifications
+          .filter((item) => !item.is_read && !notifiedIdsRef.current.has(item.id))
+          .forEach((item) => {
+            notifiedIdsRef.current.add(item.id);
+            new window.Notification(item.title, { body: item.body });
+          });
+      }
+
+      setNotifications(nextNotifications);
+      setNotifError('');
+    } else {
+      setNotifError(res.error?.message || 'Không thể tải thông báo');
+    }
+    setNotifLoading(false);
+  }, [portalPrefs.desktopAlerts]);
+
+  const markNotificationRead = useCallback(async (id: string) => {
+    const target = notifications.find((item) => item.id === id);
+    if (!target || target.is_read) return;
+
+    const res = await providerApi.markNotificationRead(id);
+    if (!res.success) return;
+
+    setNotifications((prev) => prev.map((item) => (
+      item.id === id ? { ...item, is_read: true } : item
+    )));
+  }, [notifications]);
+
+  const markAllNotificationsRead = useCallback(async () => {
+    if (unreadCount <= 0) return;
+
+    const res = await providerApi.markNotificationRead('all');
+    if (!res.success) return;
+
+    setNotifications((prev) => prev.map((item) => ({ ...item, is_read: true })));
+  }, [unreadCount]);
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -199,15 +326,44 @@ export default function ProviderDashboard() {
     const handleLogout = () => {
       setIsLoggedIn(false);
       setCurrentUser(null);
+      setNotifications([]);
+      setNotifOpen(false);
     };
     window.addEventListener('auth:logout', handleLogout);
     return () => window.removeEventListener('auth:logout', handleLogout);
   }, []);
 
+  useEffect(() => {
+    if (!isLoggedIn) return;
+
+    void loadNotifications();
+    const timer = window.setInterval(() => {
+      void loadNotifications();
+    }, 30000);
+
+    return () => window.clearInterval(timer);
+  }, [isLoggedIn, loadNotifications]);
+
+  useEffect(() => {
+    if (!notifOpen) return;
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (notifRef.current && !notifRef.current.contains(event.target as Node)) {
+        setNotifOpen(false);
+      }
+    };
+
+    window.addEventListener('mousedown', handleClickOutside);
+    return () => window.removeEventListener('mousedown', handleClickOutside);
+  }, [notifOpen]);
+
   const handleLogout = async () => {
     await providerApi.logout();
     setIsLoggedIn(false);
     setCurrentUser(null);
+    setNotifications([]);
+    setNotifOpen(false);
+    setActivePage('dashboard');
   };
 
   if (checkingAuth) {
@@ -284,7 +440,84 @@ export default function ProviderDashboard() {
         <header className="p-topbar">
           <h1 className="p-topbar-title">👋 Xin chào, {currentUser?.full_name?.split(' ').pop() || 'Guide'}!</h1>
           <div className="p-topbar-actions">
-            <div className="p-topbar-btn">🔔</div>
+            <div ref={notifRef} style={{ position: 'relative' }}>
+              <button
+                type="button"
+                className="p-topbar-btn"
+                onClick={() => setNotifOpen((prev) => !prev)}
+                aria-label="Thông báo"
+              >
+                🔔
+                {unreadCount > 0 ? <span className="dot" /> : null}
+              </button>
+
+              {notifOpen ? (
+                <div
+                  className="p-card"
+                  style={{
+                    position: 'absolute',
+                    top: 48,
+                    right: 0,
+                    width: 360,
+                    maxHeight: 420,
+                    overflowY: 'auto',
+                    padding: 0,
+                    zIndex: 40,
+                  }}
+                >
+                  <div className="p-card-header">
+                    <span className="p-card-title">🔔 Thông báo</span>
+                    {unreadCount > 0 ? (
+                      <button className="p-btn" onClick={() => void markAllNotificationsRead()}>
+                        Đọc tất cả
+                      </button>
+                    ) : null}
+                  </div>
+
+                  {notifLoading ? (
+                    <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}>⏳ Đang tải...</div>
+                  ) : notifError ? (
+                    <div style={{ padding: 16, color: 'var(--error)', fontSize: 13 }}>{notifError}</div>
+                  ) : recentNotifications.length === 0 ? (
+                    <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}>
+                      Không có thông báo nào
+                    </div>
+                  ) : (
+                    recentNotifications.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => void markNotificationRead(item.id)}
+                        style={{
+                          width: '100%',
+                          textAlign: 'left',
+                          background: item.is_read ? 'transparent' : 'rgba(46,125,50,0.08)',
+                          border: 'none',
+                          borderTop: '1px solid var(--border-light)',
+                          padding: '14px 16px',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 6 }}>
+                          <div style={{ fontSize: 14, fontWeight: item.is_read ? 600 : 700, color: 'var(--text)' }}>
+                            {item.title}
+                          </div>
+                          {!item.is_read ? (
+                            <span style={{ width: 8, height: 8, borderRadius: 999, background: 'var(--primary)', flexShrink: 0, marginTop: 6 }} />
+                          ) : null}
+                        </div>
+                        <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                          {item.body}
+                        </div>
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8 }}>
+                          {formatRelativeTime(item.created_at)}
+                        </div>
+                      </button>
+                    ))
+                  )}
+                </div>
+              ) : null}
+            </div>
           </div>
         </header>
 
@@ -299,6 +532,20 @@ export default function ProviderDashboard() {
             <Suspense fallback={<Loader />}><RevenuePage /></Suspense>
           ) : activePage === 'calendar' ? (
             <Suspense fallback={<Loader />}><CalendarPage /></Suspense>
+          ) : activePage === 'settings' ? (
+            <Suspense fallback={<Loader />}>
+              <SettingsPage
+                currentUser={currentUser}
+                notifications={notifications}
+                notifLoading={notifLoading}
+                notifError={notifError}
+                desktopAlerts={portalPrefs.desktopAlerts}
+                onRefreshNotifications={loadNotifications}
+                onMarkNotificationRead={markNotificationRead}
+                onMarkAllNotificationsRead={markAllNotificationsRead}
+                onDesktopAlertsChange={updateDesktopAlerts}
+              />
+            </Suspense>
           ) : (
             <DashboardContent />
           )}

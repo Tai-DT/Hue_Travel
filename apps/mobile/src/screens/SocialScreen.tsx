@@ -4,11 +4,16 @@ import {
   ActivityIndicator, TextInput, Image,
 } from 'react-native';
 import { Colors, Fonts, Spacing, BorderRadius } from '@/constants/theme';
-import api, { FriendInfo, Story, StoryComment, HueEvent, Trip, TripInvitation } from '@/services/api';
+import api, { FriendInfo, Guide, Story, StoryComment, HueEvent, Trip, TripInvitation, TripMember } from '@/services/api';
 
 type SocialTab = 'feed' | 'friends' | 'trips' | 'events';
 
-export default function SocialScreen() {
+type SocialScreenProps = {
+  onOpenChatWithUser?: (userId: string) => void;
+  onOpenChatRoom?: (roomId: string) => void;
+};
+
+export default function SocialScreen({ onOpenChatWithUser, onOpenChatRoom }: SocialScreenProps) {
   const [tab, setTab] = useState<SocialTab>('feed');
 
   return (
@@ -35,8 +40,8 @@ export default function SocialScreen() {
       </View>
 
       {tab === 'feed' && <FeedTab />}
-      {tab === 'friends' && <FriendsTab />}
-      {tab === 'trips' && <TripsTab />}
+      {tab === 'friends' && <FriendsTab onOpenChatWithUser={onOpenChatWithUser} />}
+      {tab === 'trips' && <TripsTab onOpenChatRoom={onOpenChatRoom} />}
       {tab === 'events' && <EventsTab />}
     </View>
   );
@@ -45,12 +50,20 @@ export default function SocialScreen() {
 // ============================================
 // Feed Tab — Stories
 // ============================================
+type FriendState = {
+  status: string;
+  incoming?: boolean;
+  friendshipId?: string;
+};
+
 function FeedTab() {
   const [stories, setStories] = useState<Story[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [newContent, setNewContent] = useState('');
   const [posting, setPosting] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [friendStates, setFriendStates] = useState<Record<string, FriendState>>({});
 
   const load = useCallback(async () => {
     const res = await api.getFeed();
@@ -60,7 +73,102 @@ function FeedTab() {
 
   useEffect(() => { load(); }, [load]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      const res = await api.getMe();
+      if (cancelled || !res.success || !res.data) return;
+      const me = (res.data as any).user || res.data;
+      setCurrentUserId(me.id);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!currentUserId || stories.length === 0) return;
+
+    const userIds = [...new Set(
+      stories
+        .map((story) => story.user_id)
+        .filter((userId) => Boolean(userId) && userId !== currentUserId)
+    )];
+
+    if (userIds.length === 0) return;
+
+    let cancelled = false;
+
+    (async () => {
+      const nextStates = await Promise.all(userIds.map(async (userId) => {
+        const res = await api.getFriendStatus(userId);
+        const friendship = res.data?.friendship;
+        return [
+          userId,
+          {
+            status: res.success && res.data?.status ? res.data.status : 'none',
+            incoming: friendship?.addressee_id === currentUserId && res.data?.status === 'pending',
+            friendshipId: friendship?.id,
+          } satisfies FriendState,
+        ] as const;
+      }));
+
+      if (!cancelled) {
+        setFriendStates((prev) => ({
+          ...prev,
+          ...Object.fromEntries(nextStates),
+        }));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUserId, stories]);
+
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
+
+  const getFriendActionLabel = (state?: FriendState) => {
+    if (!state || state.status === 'none' || state.status === 'declined') return 'Kết bạn';
+    if (state.status === 'accepted') return 'Bạn bè';
+    if (state.incoming) return 'Chấp nhận';
+    return 'Đã gửi';
+  };
+
+  const handleFriendAction = async (userId: string) => {
+    const state = friendStates[userId];
+
+    if (!state || state.status === 'none' || state.status === 'declined') {
+      const res = await api.sendFriendRequest(userId);
+      if (res.success) {
+        setFriendStates((prev) => ({
+          ...prev,
+          [userId]: {
+            status: 'pending',
+            incoming: false,
+            friendshipId: res.data?.friendship?.id,
+          },
+        }));
+      }
+      return;
+    }
+
+    if (state.status === 'pending' && state.incoming && state.friendshipId) {
+      const res = await api.acceptFriendRequest(state.friendshipId);
+      if (res.success) {
+        setFriendStates((prev) => ({
+          ...prev,
+          [userId]: {
+            status: 'accepted',
+            incoming: false,
+            friendshipId: state.friendshipId,
+          },
+        }));
+      }
+    }
+  };
 
   const handlePost = async () => {
     if (!newContent.trim()) return;
@@ -180,6 +288,25 @@ function FeedTab() {
                 <Text style={styles.storyName}>{story.user?.full_name || 'Người dùng'}</Text>
                 <Text style={styles.storyTime}>{timeAgo(story.created_at)}</Text>
               </View>
+              {currentUserId && story.user_id !== currentUserId ? (
+                <TouchableOpacity
+                  style={[
+                    styles.friendRequestBtn,
+                    (friendStates[story.user_id]?.status === 'accepted' ||
+                      (friendStates[story.user_id]?.status === 'pending' && !friendStates[story.user_id]?.incoming))
+                      && styles.friendRequestBtnDisabled,
+                  ]}
+                  disabled={
+                    friendStates[story.user_id]?.status === 'accepted' ||
+                    (friendStates[story.user_id]?.status === 'pending' && !friendStates[story.user_id]?.incoming)
+                  }
+                  onPress={() => handleFriendAction(story.user_id)}
+                >
+                  <Text style={styles.friendRequestBtnText}>
+                    {getFriendActionLabel(friendStates[story.user_id])}
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
               {story.location && (
                 <View style={styles.locationTag}>
                   <Text style={styles.locationText}>📍 {story.location}</Text>
@@ -264,7 +391,7 @@ function FeedTab() {
 // ============================================
 // Friends Tab
 // ============================================
-function FriendsTab() {
+function FriendsTab({ onOpenChatWithUser }: { onOpenChatWithUser?: (userId: string) => void }) {
   const [friends, setFriends] = useState<FriendInfo[]>([]);
   const [pending, setPending] = useState<FriendInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -329,7 +456,7 @@ function FriendsTab() {
           <EmptyView icon="👥" title="Chưa có bạn bè" text="Kết nối với những người bạn đồng hành!" />
         ) : (
           friends.map((f) => (
-            <View key={f.friendship_id} style={styles.friendCard}>
+            <View key={`${f.friendship_id}-${f.user_id}`} style={styles.friendCard}>
               <View style={styles.friendAvatar}>
                 {f.avatar_url
                   ? <Image source={{ uri: f.avatar_url }} style={styles.avatarImg} />
@@ -340,8 +467,8 @@ function FriendsTab() {
                 <Text style={styles.friendName}>{f.full_name}</Text>
                 {f.level && <Text style={styles.friendLevel}>🏅 {f.level}</Text>}
               </View>
-              <TouchableOpacity style={styles.chatBtn}>
-                <Text>💬</Text>
+              <TouchableOpacity style={styles.chatBtn} onPress={() => onOpenChatWithUser?.(f.user_id)}>
+                <Text style={styles.chatBtnText}>💬 Nhắn tin</Text>
               </TouchableOpacity>
             </View>
           ))
@@ -351,7 +478,7 @@ function FriendsTab() {
           <EmptyView icon="📨" title="Không có lời mời" text="Chưa có lời mời kết bạn mới." />
         ) : (
           pending.map((f) => (
-            <View key={f.friendship_id} style={styles.friendCard}>
+            <View key={`${f.friendship_id}-${f.user_id}`} style={styles.friendCard}>
               <View style={styles.friendAvatar}>
                 {f.avatar_url
                   ? <Image source={{ uri: f.avatar_url }} style={styles.avatarImg} />
@@ -364,10 +491,10 @@ function FriendsTab() {
               </View>
               <View style={styles.pendingActions}>
                 <TouchableOpacity style={styles.acceptBtn} onPress={() => handleAccept(f.friendship_id)}>
-                  <Text style={styles.acceptBtnText}>✓</Text>
+                  <Text style={styles.acceptBtnText}>Chấp nhận</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.declineBtn} onPress={() => handleDecline(f.friendship_id)}>
-                  <Text style={styles.declineBtnText}>✕</Text>
+                  <Text style={styles.declineBtnText}>Từ chối</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -383,22 +510,37 @@ function FriendsTab() {
 // ============================================
 // Trips Tab
 // ============================================
-function TripsTab() {
+function TripsTab({ onOpenChatRoom }: { onOpenChatRoom?: (roomId: string) => void }) {
   const [myTrips, setMyTrips] = useState<Trip[]>([]);
   const [discover, setDiscover] = useState<Trip[]>([]);
   const [invitations, setInvitations] = useState<TripInvitation[]>([]);
+  const [friends, setFriends] = useState<FriendInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [tripTitle, setTripTitle] = useState('');
+  const [tripDestination, setTripDestination] = useState('Huế');
+  const [tripStartDate, setTripStartDate] = useState('');
+  const [tripEndDate, setTripEndDate] = useState('');
+  const [tripIsPublic, setTripIsPublic] = useState(true);
+  const [expandedFriendTripId, setExpandedFriendTripId] = useState<string | null>(null);
+  const [expandedGuideTripId, setExpandedGuideTripId] = useState<string | null>(null);
+  const [guidesByTripId, setGuidesByTripId] = useState<Record<string, Guide[]>>({});
+  const [tripMembersByTripId, setTripMembersByTripId] = useState<Record<string, TripMember[]>>({});
+  const [loadingGuidesTripId, setLoadingGuidesTripId] = useState<string | null>(null);
+  const [loadingMembersTripId, setLoadingMembersTripId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const [myRes, discoverRes, invRes] = await Promise.all([
+    const [myRes, discoverRes, invRes, friendsRes] = await Promise.all([
       api.getMyTrips(),
       api.discoverTrips(),
       api.getTripInvitations(),
+      api.getFriends(),
     ]);
     if (myRes.success && myRes.data?.trips) setMyTrips(myRes.data.trips);
     if (discoverRes.success && discoverRes.data?.trips) setDiscover(discoverRes.data.trips);
     if (invRes.success && invRes.data?.invitations) setInvitations(invRes.data.invitations);
+    if (friendsRes.success && friendsRes.data?.friends) setFriends(friendsRes.data.friends);
     setLoading(false);
   }, []);
 
@@ -407,8 +549,33 @@ function TripsTab() {
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
   const formatDate = (d: string) => {
+    if (!d) return 'Chưa chọn';
     const date = new Date(d);
+    if (Number.isNaN(date.getTime())) return d;
     return date.toLocaleDateString('vi-VN', { day: '2-digit', month: 'short' });
+  };
+
+  const handleCreateTrip = async () => {
+    if (!tripTitle.trim()) return;
+
+    setCreating(true);
+    const res = await api.createTrip({
+      title: tripTitle.trim(),
+      destination: tripDestination.trim() || 'Huế',
+      start_date: tripStartDate.trim() || undefined,
+      end_date: tripEndDate.trim() || undefined,
+      is_public: tripIsPublic,
+    });
+    setCreating(false);
+
+    if (res.success) {
+      setTripTitle('');
+      setTripDestination('Huế');
+      setTripStartDate('');
+      setTripEndDate('');
+      setTripIsPublic(true);
+      load();
+    }
   };
 
   const handleAcceptInvite = async (tripId: string) => {
@@ -421,6 +588,113 @@ function TripsTab() {
     load();
   };
 
+  const ensureTripMembersLoaded = useCallback(async (tripId: string) => {
+    if (tripMembersByTripId[tripId]) return;
+
+    setLoadingMembersTripId(tripId);
+    const res = await api.getTrip(tripId);
+    if (res.success && res.data?.trip) {
+      setTripMembersByTripId((prev) => ({
+        ...prev,
+        [tripId]: res.data?.trip.members || [],
+      }));
+    }
+    setLoadingMembersTripId(null);
+  }, [tripMembersByTripId]);
+
+  const upsertTripMemberStatus = useCallback((
+    tripId: string,
+    userId: string,
+    fullName: string,
+    role: string,
+    status: string,
+  ) => {
+    setTripMembersByTripId((prev) => {
+      const existing = prev[tripId] || [];
+      const next = existing.some((member) => member.user_id === userId)
+        ? existing.map((member) => (
+          member.user_id === userId
+            ? { ...member, full_name: member.full_name || fullName, role, status }
+            : member
+        ))
+        : [...existing, { user_id: userId, full_name: fullName, role, status }];
+
+      return {
+        ...prev,
+        [tripId]: next,
+      };
+    });
+  }, []);
+
+  const toggleFriendPicker = async (tripId: string) => {
+    if (expandedFriendTripId === tripId) {
+      setExpandedFriendTripId(null);
+      return;
+    }
+
+    setExpandedFriendTripId(tripId);
+    await ensureTripMembersLoaded(tripId);
+  };
+
+  const handleInviteFriend = async (tripId: string, userId: string) => {
+    const res = await api.inviteTripMember(tripId, userId);
+    if (res.success) {
+      const friend = friends.find((item) => item.user_id === userId);
+      upsertTripMemberStatus(tripId, userId, friend?.full_name || 'Người dùng', 'member', 'invited');
+      load();
+    }
+  };
+
+  const toggleGuidePicker = async (tripId: string) => {
+    if (expandedGuideTripId === tripId) {
+      setExpandedGuideTripId(null);
+      return;
+    }
+
+    setExpandedGuideTripId(tripId);
+    await ensureTripMembersLoaded(tripId);
+    if (guidesByTripId[tripId]) return;
+
+    setLoadingGuidesTripId(tripId);
+    const res = await api.searchGuidesForTrip(tripId);
+    if (res.success && res.data?.guides) {
+      setGuidesByTripId((prev) => ({ ...prev, [tripId]: res.data!.guides }));
+    }
+    setLoadingGuidesTripId(null);
+  };
+
+  const handleInviteGuide = async (tripId: string, guideId: string) => {
+    const res = await api.inviteTripGuide(tripId, guideId);
+    if (res.success) {
+      const guide = (guidesByTripId[tripId] || []).find((item) => item.user_id === guideId);
+      upsertTripMemberStatus(
+        tripId,
+        guideId,
+        guide?.user?.full_name || 'Guide Huế Travel',
+        'guide',
+        'invited',
+      );
+      load();
+    }
+  };
+
+  const getTripMemberStatus = (tripId: string, userId: string) => (
+    tripMembersByTripId[tripId]?.find((member) => member.user_id === userId)?.status
+  );
+
+  const getInviteButtonLabel = (tripId: string, userId: string) => {
+    const status = getTripMemberStatus(tripId, userId);
+    if (status === 'accepted') return 'Đã tham gia';
+    if (status === 'invited') return 'Đã mời';
+    if (status === 'declined' || status === 'removed') return 'Mời lại';
+    return 'Mời';
+  };
+
+  const isInviteDisabled = (tripId: string, userId: string) => {
+    const status = getTripMemberStatus(tripId, userId);
+    return status === 'accepted' || status === 'invited';
+  };
+
   if (loading) return <LoadingView text="Đang tải chuyến đi..." />;
 
   return (
@@ -429,6 +703,59 @@ function TripsTab() {
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}
       showsVerticalScrollIndicator={false}
     >
+      <View style={styles.composeCard}>
+        <Text style={styles.sectionTitle}>➕ Tạo chuyến đi nhóm</Text>
+        <TextInput
+          style={styles.tripFormInput}
+          placeholder="Tên chuyến đi"
+          placeholderTextColor={Colors.textMuted}
+          value={tripTitle}
+          onChangeText={setTripTitle}
+        />
+        <TextInput
+          style={styles.tripFormInput}
+          placeholder="Điểm đến"
+          placeholderTextColor={Colors.textMuted}
+          value={tripDestination}
+          onChangeText={setTripDestination}
+        />
+        <View style={styles.tripFormRow}>
+          <TextInput
+            style={[styles.tripFormInput, styles.tripFormInputHalf]}
+            placeholder="Bắt đầu (YYYY-MM-DD)"
+            placeholderTextColor={Colors.textMuted}
+            value={tripStartDate}
+            onChangeText={setTripStartDate}
+            autoCapitalize="none"
+          />
+          <TextInput
+            style={[styles.tripFormInput, styles.tripFormInputHalf]}
+            placeholder="Kết thúc (YYYY-MM-DD)"
+            placeholderTextColor={Colors.textMuted}
+            value={tripEndDate}
+            onChangeText={setTripEndDate}
+            autoCapitalize="none"
+          />
+        </View>
+        <TouchableOpacity
+          style={[styles.tripVisibilityBtn, tripIsPublic && styles.tripVisibilityBtnActive]}
+          onPress={() => setTripIsPublic((prev) => !prev)}
+        >
+          <Text style={[styles.tripVisibilityText, tripIsPublic && styles.tripVisibilityTextActive]}>
+            {tripIsPublic ? '🌍 Công khai' : '🔒 Riêng tư'}
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.postBtn, !tripTitle.trim() && styles.postBtnDisabled]}
+          onPress={handleCreateTrip}
+          disabled={!tripTitle.trim() || creating}
+        >
+          {creating
+            ? <ActivityIndicator size="small" color={Colors.textOnPrimary} />
+            : <Text style={styles.postBtnText}>Tạo chuyến đi</Text>}
+        </TouchableOpacity>
+      </View>
+
       {/* Invitations */}
       {invitations.length > 0 && (
         <View style={styles.section}>
@@ -455,20 +782,113 @@ function TripsTab() {
         ) : (
           myTrips.map((trip) => (
             <View key={trip.id} style={styles.tripCard}>
-              <View style={styles.tripDates}>
-                <Text style={styles.tripDateStart}>{formatDate(trip.start_date)}</Text>
-                <Text style={styles.tripDateArrow}>→</Text>
-                <Text style={styles.tripDateEnd}>{formatDate(trip.end_date)}</Text>
-              </View>
-              <View style={{ flex: 1, marginLeft: Spacing.md }}>
-                <Text style={styles.tripTitle}>{trip.title}</Text>
-                <Text style={styles.tripMembers}>👥 {trip.member_count} thành viên</Text>
-              </View>
-              {trip.is_public && (
-                <View style={styles.publicBadge}>
-                  <Text style={styles.publicBadgeText}>Công khai</Text>
+              <View style={styles.tripRow}>
+                <View style={styles.tripDates}>
+                  <Text style={styles.tripDateStart}>{formatDate(trip.start_date)}</Text>
+                  <Text style={styles.tripDateArrow}>→</Text>
+                  <Text style={styles.tripDateEnd}>{formatDate(trip.end_date)}</Text>
                 </View>
-              )}
+                <View style={{ flex: 1, marginLeft: Spacing.md }}>
+                  <Text style={styles.tripTitle}>{trip.title}</Text>
+                  <Text style={styles.tripOwner}>📍 {trip.destination || 'Huế'}</Text>
+                  <Text style={styles.tripMembers}>👥 {trip.member_count} thành viên</Text>
+                </View>
+                {trip.is_public && (
+                  <View style={styles.publicBadge}>
+                    <Text style={styles.publicBadgeText}>Công khai</Text>
+                  </View>
+                )}
+              </View>
+              <View style={styles.tripActionRow}>
+                {trip.chat_room_id ? (
+                  <TouchableOpacity style={styles.tripMiniBtn} onPress={() => onOpenChatRoom?.(trip.chat_room_id!)}>
+                    <Text style={styles.tripMiniBtnText}>💬 Chat nhóm</Text>
+                  </TouchableOpacity>
+                ) : null}
+                <TouchableOpacity
+                  style={styles.tripMiniBtn}
+                  onPress={() => toggleFriendPicker(trip.id)}
+                >
+                  <Text style={styles.tripMiniBtnText}>👥 Mời bạn</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.tripMiniBtn} onPress={() => toggleGuidePicker(trip.id)}>
+                  <Text style={styles.tripMiniBtnText}>🧭 Mời guide</Text>
+                </TouchableOpacity>
+              </View>
+              {expandedFriendTripId === trip.id ? (
+                <View style={styles.tripInvitePanel}>
+                  <Text style={styles.tripInviteTitle}>Bạn bè của bạn</Text>
+                  {loadingMembersTripId === trip.id ? (
+                    <ActivityIndicator size="small" color={Colors.primary} />
+                  ) : friends.length === 0 ? (
+                    <Text style={styles.tripInviteHint}>Hãy kết bạn trước để mời vào chuyến đi.</Text>
+                  ) : (
+                    friends.map((friend) => (
+                      <View key={`${trip.id}-${friend.user_id}`} style={styles.tripInviteRow}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.friendName}>{friend.full_name}</Text>
+                          {friend.level ? <Text style={styles.friendLevel}>🏅 {friend.level}</Text> : null}
+                        </View>
+                        <TouchableOpacity
+                          style={[
+                            styles.joinBtn,
+                            isInviteDisabled(trip.id, friend.user_id) && styles.invitedBtn,
+                          ]}
+                          onPress={() => handleInviteFriend(trip.id, friend.user_id)}
+                          disabled={isInviteDisabled(trip.id, friend.user_id)}
+                        >
+                          <Text
+                            style={[
+                              styles.joinBtnText,
+                              isInviteDisabled(trip.id, friend.user_id) && styles.invitedBtnText,
+                            ]}
+                          >
+                            {getInviteButtonLabel(trip.id, friend.user_id)}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    ))
+                  )}
+                </View>
+              ) : null}
+              {expandedGuideTripId === trip.id ? (
+                <View style={styles.tripInvitePanel}>
+                  <Text style={styles.tripInviteTitle}>Hướng dẫn viên phù hợp</Text>
+                  {loadingMembersTripId === trip.id || loadingGuidesTripId === trip.id ? (
+                    <ActivityIndicator size="small" color={Colors.primary} />
+                  ) : (guidesByTripId[trip.id] || []).length === 0 ? (
+                    <Text style={styles.tripInviteHint}>Chưa có guide khả dụng.</Text>
+                  ) : (
+                    (guidesByTripId[trip.id] || []).map((guide) => (
+                      <View key={`${trip.id}-${guide.user_id}`} style={styles.tripInviteRow}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.friendName}>{guide.user?.full_name || 'Guide Huế Travel'}</Text>
+                          <Text style={styles.friendLevel}>
+                            ⭐ {guide.avg_rating.toFixed(1)} • {guide.specialties?.join(', ') || 'Guide địa phương'}
+                          </Text>
+                        </View>
+                        <TouchableOpacity
+                          style={[
+                            styles.joinBtn,
+                            isInviteDisabled(trip.id, guide.user_id) && styles.invitedBtn,
+                          ]}
+                          onPress={() => handleInviteGuide(trip.id, guide.user_id)}
+                          disabled={isInviteDisabled(trip.id, guide.user_id)}
+                        >
+                          <Text
+                            style={[
+                              styles.joinBtnText,
+                              isInviteDisabled(trip.id, guide.user_id) && styles.invitedBtnText,
+                            ]}
+                          >
+                            {getInviteButtonLabel(trip.id, guide.user_id)}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    ))
+                  )}
+                </View>
+              ) : null}
             </View>
           ))
         )}
@@ -480,16 +900,18 @@ function TripsTab() {
           <Text style={styles.sectionTitle}>🌍 Khám phá</Text>
           {discover.map((trip) => (
             <View key={trip.id} style={styles.tripCard}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.tripTitle}>{trip.title}</Text>
-                <Text style={styles.tripMembers}>
-                  {formatDate(trip.start_date)} — {formatDate(trip.end_date)} • 👥 {trip.member_count}
-                </Text>
-                {trip.owner && <Text style={styles.tripOwner}>Bởi {trip.owner.full_name}</Text>}
+              <View style={styles.tripRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.tripTitle}>{trip.title}</Text>
+                  <Text style={styles.tripMembers}>
+                    {formatDate(trip.start_date)} — {formatDate(trip.end_date)} • 👥 {trip.member_count}
+                  </Text>
+                  {trip.owner && <Text style={styles.tripOwner}>Bởi {trip.owner.full_name}</Text>}
+                </View>
+                <TouchableOpacity style={styles.joinBtn} onPress={() => handleJoin(trip.id)}>
+                  <Text style={styles.joinBtnText}>Tham gia</Text>
+                </TouchableOpacity>
               </View>
-              <TouchableOpacity style={styles.joinBtn} onPress={() => handleJoin(trip.id)}>
-                <Text style={styles.joinBtnText}>Tham gia</Text>
-              </TouchableOpacity>
             </View>
           ))}
         </View>
@@ -723,6 +1145,18 @@ const styles = StyleSheet.create({
     borderRadius: BorderRadius.full,
   },
   locationText: { fontSize: Fonts.sizes.xs, color: Colors.primary },
+  friendRequestBtn: {
+    backgroundColor: 'rgba(249,168,37,0.14)',
+    borderRadius: BorderRadius.full,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 6,
+  },
+  friendRequestBtnDisabled: { opacity: 0.55 },
+  friendRequestBtnText: {
+    color: Colors.primary,
+    fontSize: Fonts.sizes.xs,
+    fontWeight: Fonts.weights.semibold as any,
+  },
   storyContent: {
     fontSize: Fonts.sizes.base,
     color: Colors.text,
@@ -766,25 +1200,37 @@ const styles = StyleSheet.create({
   friendName: { fontSize: Fonts.sizes.base, fontWeight: Fonts.weights.semibold as any, color: Colors.text },
   friendLevel: { fontSize: Fonts.sizes.xs, color: Colors.textMuted, marginTop: 2 },
   chatBtn: {
-    width: 40, height: 40, borderRadius: 20,
+    borderRadius: BorderRadius.full,
     backgroundColor: Colors.surfaceElevated,
-    justifyContent: 'center', alignItems: 'center',
-  },
-  pendingActions: { flexDirection: 'row', gap: Spacing.sm },
-  acceptBtn: {
-    width: 36, height: 36, borderRadius: 18,
-    backgroundColor: Colors.success,
-    justifyContent: 'center', alignItems: 'center',
-  },
-  acceptBtnText: { color: '#FFF', fontSize: 16, fontWeight: Fonts.weights.bold as any },
-  declineBtn: {
-    width: 36, height: 36, borderRadius: 18,
-    backgroundColor: Colors.surfaceElevated,
-    justifyContent: 'center', alignItems: 'center',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.base,
+    paddingVertical: Spacing.sm,
     borderWidth: 1,
     borderColor: Colors.border,
   },
-  declineBtnText: { color: Colors.textMuted, fontSize: 16 },
+  chatBtnText: { color: Colors.textSecondary, fontSize: Fonts.sizes.sm, fontWeight: Fonts.weights.medium as any },
+  pendingActions: { flexDirection: 'row', gap: Spacing.sm },
+  acceptBtn: {
+    minHeight: 36,
+    borderRadius: BorderRadius.full,
+    backgroundColor: Colors.success,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.base,
+  },
+  acceptBtnText: { color: '#FFF', fontSize: Fonts.sizes.sm, fontWeight: Fonts.weights.bold as any },
+  declineBtn: {
+    minHeight: 36,
+    borderRadius: BorderRadius.full,
+    backgroundColor: Colors.surfaceElevated,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: Spacing.base,
+  },
+  declineBtnText: { color: Colors.textMuted, fontSize: Fonts.sizes.sm, fontWeight: Fonts.weights.medium as any },
 
   // Sections
   section: { marginBottom: Spacing.xl },
@@ -797,8 +1243,6 @@ const styles = StyleSheet.create({
 
   // Trips
   tripCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
     backgroundColor: Colors.surface,
     borderRadius: BorderRadius.lg,
     padding: Spacing.base,
@@ -806,6 +1250,41 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.border,
   },
+  tripRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  tripFormInput: {
+    backgroundColor: Colors.background,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    color: Colors.text,
+    paddingHorizontal: Spacing.base,
+    paddingVertical: Spacing.sm,
+    marginBottom: Spacing.sm,
+  },
+  tripFormRow: { flexDirection: 'row', gap: Spacing.sm },
+  tripFormInputHalf: { flex: 1 },
+  tripVisibilityBtn: {
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: BorderRadius.full,
+    paddingHorizontal: Spacing.base,
+    paddingVertical: Spacing.xs,
+    marginBottom: Spacing.sm,
+  },
+  tripVisibilityBtnActive: {
+    borderColor: Colors.primary,
+    backgroundColor: 'rgba(249,168,37,0.12)',
+  },
+  tripVisibilityText: {
+    color: Colors.textSecondary,
+    fontSize: Fonts.sizes.sm,
+    fontWeight: Fonts.weights.medium as any,
+  },
+  tripVisibilityTextActive: { color: Colors.primary },
   tripDates: { alignItems: 'center' },
   tripDateStart: { fontSize: Fonts.sizes.sm, color: Colors.primary, fontWeight: Fonts.weights.bold as any },
   tripDateArrow: { fontSize: Fonts.sizes.xs, color: Colors.textMuted, marginVertical: 2 },
@@ -813,6 +1292,46 @@ const styles = StyleSheet.create({
   tripTitle: { fontSize: Fonts.sizes.base, fontWeight: Fonts.weights.semibold as any, color: Colors.text },
   tripMembers: { fontSize: Fonts.sizes.xs, color: Colors.textMuted, marginTop: 2 },
   tripOwner: { fontSize: Fonts.sizes.xs, color: Colors.textSecondary, marginTop: 2 },
+  tripActionRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.sm,
+    marginTop: Spacing.md,
+  },
+  tripMiniBtn: {
+    backgroundColor: Colors.background,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: BorderRadius.full,
+    paddingHorizontal: Spacing.base,
+    paddingVertical: Spacing.xs,
+  },
+  tripMiniBtnText: {
+    color: Colors.textSecondary,
+    fontSize: Fonts.sizes.xs,
+    fontWeight: Fonts.weights.medium as any,
+  },
+  tripInvitePanel: {
+    marginTop: Spacing.md,
+    paddingTop: Spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+    gap: Spacing.sm,
+  },
+  tripInviteTitle: {
+    fontSize: Fonts.sizes.sm,
+    fontWeight: Fonts.weights.semibold as any,
+    color: Colors.text,
+  },
+  tripInviteHint: { fontSize: Fonts.sizes.sm, color: Colors.textMuted },
+  tripInviteRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    backgroundColor: Colors.background,
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.sm,
+  },
   publicBadge: {
     backgroundColor: 'rgba(66,165,245,0.15)',
     paddingHorizontal: Spacing.sm,
@@ -840,7 +1359,13 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.sm,
     borderRadius: BorderRadius.full,
   },
+  invitedBtn: {
+    backgroundColor: Colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
   joinBtnText: { color: Colors.textOnPrimary, fontSize: Fonts.sizes.sm, fontWeight: Fonts.weights.bold as any },
+  invitedBtnText: { color: Colors.textSecondary },
 
   // Events
   eventCard: {

@@ -27,6 +27,13 @@ type SearchService struct {
 	fallbackEnabled bool
 }
 
+type searchConfigSnapshot struct {
+	meilisearchURL  string
+	masterKey       string
+	httpClient      *http.Client
+	fallbackEnabled bool
+}
+
 type SearchDocument struct {
 	ID          string            `json:"id"`
 	Type        string            `json:"type"` // experience, place, guide, blog
@@ -95,30 +102,73 @@ func NewSearchServiceWithFallback(meilisearchURL, masterKey string, fallbackEnab
 }
 
 func (s *SearchService) IsConfigured() bool {
-	return s.meilisearchURL != "" && s.masterKey != ""
+	cfg := s.configSnapshot()
+	return cfg.meilisearchURL != "" && cfg.masterKey != ""
+}
+
+func (s *SearchService) configSnapshot() searchConfigSnapshot {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return searchConfigSnapshot{
+		meilisearchURL:  s.meilisearchURL,
+		masterKey:       s.masterKey,
+		httpClient:      s.httpClient,
+		fallbackEnabled: s.fallbackEnabled,
+	}
+}
+
+func (s *SearchService) UpdateConfig(ctx context.Context, meilisearchURL, masterKey string, pool interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}) {
+	s.mu.Lock()
+	s.meilisearchURL = meilisearchURL
+	s.masterKey = masterKey
+	fallbackEnabled := s.fallbackEnabled
+	s.mu.Unlock()
+
+	if strings.TrimSpace(meilisearchURL) == "" || strings.TrimSpace(masterKey) == "" {
+		if fallbackEnabled {
+			log.Println("⚠️ Meilisearch hot config cleared — using in-memory search")
+		}
+		return
+	}
+
+	log.Printf("✅ Meilisearch hot config applied: %s", meilisearchURL)
+	s.setupMeilisearchIndexWithConfig(meilisearchURL, masterKey)
+	if pool != nil {
+		s.SyncFromDB(ctx, pool)
+	}
 }
 
 // setupMeilisearchIndex creates the index with searchable/filterable attributes
 func (s *SearchService) setupMeilisearchIndex() {
+	cfg := s.configSnapshot()
+	if cfg.meilisearchURL == "" || cfg.masterKey == "" {
+		return
+	}
+	s.setupMeilisearchIndexWithConfig(cfg.meilisearchURL, cfg.masterKey)
+}
+
+func (s *SearchService) setupMeilisearchIndexWithConfig(meilisearchURL, masterKey string) {
 	// Create index if not exists
 	body := `{"uid": "hue_travel", "primaryKey": "id"}`
-	req, _ := http.NewRequest("POST", s.meilisearchURL+"/indexes", strings.NewReader(body))
+	req, _ := http.NewRequest("POST", meilisearchURL+"/indexes", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+s.masterKey)
+	req.Header.Set("Authorization", "Bearer "+masterKey)
 	s.httpClient.Do(req) //nolint:errcheck // best-effort
 
 	// Set searchable attributes
 	searchable := `["title", "description", "category", "tags", "location"]`
-	req, _ = http.NewRequest("PUT", s.meilisearchURL+"/indexes/hue_travel/settings/searchable-attributes", strings.NewReader(searchable))
+	req, _ = http.NewRequest("PUT", meilisearchURL+"/indexes/hue_travel/settings/searchable-attributes", strings.NewReader(searchable))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+s.masterKey)
+	req.Header.Set("Authorization", "Bearer "+masterKey)
 	s.httpClient.Do(req) //nolint:errcheck
 
 	// Set filterable attributes
 	filterable := `["type", "category", "price", "rating", "location"]`
-	req, _ = http.NewRequest("PUT", s.meilisearchURL+"/indexes/hue_travel/settings/filterable-attributes", strings.NewReader(filterable))
+	req, _ = http.NewRequest("PUT", meilisearchURL+"/indexes/hue_travel/settings/filterable-attributes", strings.NewReader(filterable))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+s.masterKey)
+	req.Header.Set("Authorization", "Bearer "+masterKey)
 	s.httpClient.Do(req) //nolint:errcheck
 
 	log.Println("✅ Meilisearch index 'hue_travel' configured")
@@ -129,22 +179,24 @@ func (s *SearchService) setupMeilisearchIndex() {
 // ============================================
 
 func (s *SearchService) IsReady() bool {
-	return s.IsConfigured() || s.fallbackEnabled
+	cfg := s.configSnapshot()
+	return (cfg.meilisearchURL != "" && cfg.masterKey != "") || cfg.fallbackEnabled
 }
 
 func (s *SearchService) Search(ctx context.Context, query string, filters SearchFilters) (SearchResult, error) {
 	start := time.Now()
+	cfg := s.configSnapshot()
 
-	if s.IsConfigured() {
+	if cfg.meilisearchURL != "" && cfg.masterKey != "" {
 		result, err := s.searchMeilisearch(ctx, query, filters)
 		if err == nil {
 			return *result, nil
 		}
-		if !s.fallbackEnabled {
+		if !cfg.fallbackEnabled {
 			return SearchResult{}, fmt.Errorf("%w: Meilisearch query failed: %v", ErrServiceUnavailable, err)
 		}
 		log.Printf("⚠️ Meilisearch search failed: %v — falling back to in-memory", err)
-	} else if !s.fallbackEnabled {
+	} else if !cfg.fallbackEnabled {
 		return SearchResult{}, fmt.Errorf("%w: Meilisearch is not configured", ErrServiceNotConfigured)
 	}
 
@@ -193,6 +245,8 @@ func (s *SearchService) Search(ctx context.Context, query string, filters Search
 
 // searchMeilisearch calls the Meilisearch multi-search API
 func (s *SearchService) searchMeilisearch(ctx context.Context, query string, filters SearchFilters) (*SearchResult, error) {
+	cfg := s.configSnapshot()
+
 	// Build filter string
 	var filterParts []string
 	if filters.Type != "" {
@@ -228,14 +282,14 @@ func (s *SearchService) searchMeilisearch(ctx context.Context, query string, fil
 
 	bodyBytes, _ := json.Marshal(reqBody)
 
-	req, err := http.NewRequestWithContext(ctx, "POST", s.meilisearchURL+"/indexes/hue_travel/search", strings.NewReader(string(bodyBytes)))
+	req, err := http.NewRequestWithContext(ctx, "POST", cfg.meilisearchURL+"/indexes/hue_travel/search", strings.NewReader(string(bodyBytes)))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+s.masterKey)
+	req.Header.Set("Authorization", "Bearer "+cfg.masterKey)
 
-	resp, err := s.httpClient.Do(req)
+	resp, err := cfg.httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -355,17 +409,18 @@ func (s *SearchService) Suggest(ctx context.Context, query string, limit int) ([
 	if limit == 0 {
 		limit = 5
 	}
+	cfg := s.configSnapshot()
 
-	if s.IsConfigured() {
+	if cfg.meilisearchURL != "" && cfg.masterKey != "" {
 		suggestions, err := s.suggestMeilisearch(ctx, query, limit)
 		if err == nil {
 			return suggestions, nil
 		}
-		if !s.fallbackEnabled {
+		if !cfg.fallbackEnabled {
 			return nil, fmt.Errorf("%w: Meilisearch suggest failed: %v", ErrServiceUnavailable, err)
 		}
 		log.Printf("⚠️ Meilisearch suggest failed: %v — falling back to in-memory", err)
-	} else if !s.fallbackEnabled {
+	} else if !cfg.fallbackEnabled {
 		return nil, fmt.Errorf("%w: Meilisearch is not configured", ErrServiceNotConfigured)
 	}
 
@@ -406,16 +461,17 @@ func (s *SearchService) suggestFromIndexed(query string, limit int) []string {
 // ============================================
 
 func (s *SearchService) Trending(ctx context.Context) ([]string, error) {
-	if s.IsConfigured() {
+	cfg := s.configSnapshot()
+	if cfg.meilisearchURL != "" && cfg.masterKey != "" {
 		trending, err := s.topTitlesMeilisearch(ctx, 8)
 		if err == nil {
 			return trending, nil
 		}
-		if !s.fallbackEnabled {
+		if !cfg.fallbackEnabled {
 			return nil, fmt.Errorf("%w: Meilisearch trending query failed: %v", ErrServiceUnavailable, err)
 		}
 		log.Printf("⚠️ Meilisearch trending failed: %v — falling back to static list", err)
-	} else if !s.fallbackEnabled {
+	} else if !cfg.fallbackEnabled {
 		return nil, fmt.Errorf("%w: Meilisearch is not configured", ErrServiceNotConfigured)
 	}
 
@@ -507,12 +563,13 @@ func (s *SearchService) IndexDocument(docType string, doc SearchDocument) {
 	s.mu.Unlock()
 
 	// Also index to Meilisearch if configured
-	if s.IsConfigured() {
+	cfg := s.configSnapshot()
+	if cfg.meilisearchURL != "" && cfg.masterKey != "" {
 		bodyBytes, _ := json.Marshal([]SearchDocument{doc})
-		req, _ := http.NewRequest("POST", s.meilisearchURL+"/indexes/hue_travel/documents", strings.NewReader(string(bodyBytes)))
+		req, _ := http.NewRequest("POST", cfg.meilisearchURL+"/indexes/hue_travel/documents", strings.NewReader(string(bodyBytes)))
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+s.masterKey)
-		resp, err := s.httpClient.Do(req)
+		req.Header.Set("Authorization", "Bearer "+cfg.masterKey)
+		resp, err := cfg.httpClient.Do(req)
 		if err != nil {
 			log.Printf("⚠️ Meilisearch index failed: %v", err)
 		} else {
@@ -522,16 +579,17 @@ func (s *SearchService) IndexDocument(docType string, doc SearchDocument) {
 }
 
 func (s *SearchService) GetStats(ctx context.Context) (map[string]int, error) {
-	if s.IsConfigured() {
+	cfg := s.configSnapshot()
+	if cfg.meilisearchURL != "" && cfg.masterKey != "" {
 		stats, err := s.statsMeilisearch(ctx)
 		if err == nil {
 			return stats, nil
 		}
-		if !s.fallbackEnabled {
+		if !cfg.fallbackEnabled {
 			return nil, fmt.Errorf("%w: Meilisearch stats query failed: %v", ErrServiceUnavailable, err)
 		}
 		log.Printf("⚠️ Meilisearch stats failed: %v — falling back to in-memory", err)
-	} else if !s.fallbackEnabled {
+	} else if !cfg.fallbackEnabled {
 		return nil, fmt.Errorf("%w: Meilisearch is not configured", ErrServiceNotConfigured)
 	}
 
@@ -652,12 +710,13 @@ func (s *SearchService) BulkIndex(docType string, docs []SearchDocument) {
 	s.mu.Unlock()
 
 	// Also bulk-push to Meilisearch if configured
-	if s.IsConfigured() && len(docs) > 0 {
+	cfg := s.configSnapshot()
+	if cfg.meilisearchURL != "" && cfg.masterKey != "" && len(docs) > 0 {
 		bodyBytes, _ := json.Marshal(docs)
-		req, _ := http.NewRequest("POST", s.meilisearchURL+"/indexes/hue_travel/documents", strings.NewReader(string(bodyBytes)))
+		req, _ := http.NewRequest("POST", cfg.meilisearchURL+"/indexes/hue_travel/documents", strings.NewReader(string(bodyBytes)))
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+s.masterKey)
-		resp, err := s.httpClient.Do(req)
+		req.Header.Set("Authorization", "Bearer "+cfg.masterKey)
+		resp, err := cfg.httpClient.Do(req)
 		if err != nil {
 			log.Printf("⚠️ [Search] Meilisearch bulk index failed: %v", err)
 		} else {

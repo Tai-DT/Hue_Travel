@@ -77,7 +77,7 @@ Ngày cập nhật: 2026-03-17
 ## Nên Làm Tiếp
 
 1. Viết smoke/UAT cho các nhóm `Present` có rủi ro cao:
-   - chat/calls
+   - chat
    - social/friends/trips/feed
    - admin role
    - provider role

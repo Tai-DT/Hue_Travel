@@ -1,9 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { adminApi, SystemHealth } from '@/lib/api';
-
-const SETTINGS_STORAGE_KEY = 'admin_settings_draft';
 
 const SETTINGS_SECTIONS = [
   {
@@ -46,11 +44,36 @@ const SETTINGS_SECTIONS = [
   },
 ];
 
+const buildDefaultValues = () =>
+  SETTINGS_SECTIONS.reduce<Record<string, string>>((acc, section) => {
+    section.settings.forEach((setting) => {
+      acc[setting.key] = '';
+    });
+    return acc;
+  }, {});
+
+const formatSavedAt = (value?: string | null) => {
+  if (!value) {
+    return null;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return date.toLocaleString('vi-VN');
+};
+
 export default function SettingsPage() {
-  const [values, setValues] = useState<Record<string, string>>({});
-  const [saved, setSaved] = useState(false);
+  const [values, setValues] = useState<Record<string, string>>(() => buildDefaultValues());
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const [saveMessage, setSaveMessage] = useState('');
   const [health, setHealth] = useState<SystemHealth | null>(null);
   const [currentUser, setCurrentUser] = useState<any>(null);
+  const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
   const [passwordForm, setPasswordForm] = useState({
     currentPassword: '',
     newPassword: '',
@@ -61,39 +84,69 @@ export default function SettingsPage() {
   const [passwordSaved, setPasswordSaved] = useState('');
 
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const draft = localStorage.getItem(SETTINGS_STORAGE_KEY);
-      if (draft) {
-        try {
-          setValues(JSON.parse(draft));
-        } catch {
-          localStorage.removeItem(SETTINGS_STORAGE_KEY);
-        }
-      }
-    }
+    let active = true;
 
-    adminApi.getHealth().then(res => {
-      if (res.success && res.data) setHealth(res.data);
-    });
+    const loadPage = async () => {
+      setLoading(true);
 
-    adminApi.getMe().then((res) => {
-      if (res.success && res.data) {
-        setCurrentUser(res.data);
+      const [settingsRes, healthRes, meRes] = await Promise.all([
+        adminApi.getSettings(),
+        adminApi.getHealth(),
+        adminApi.getMe(),
+      ]);
+
+      if (!active) {
+        return;
       }
-    });
+
+      if (settingsRes.success && settingsRes.data) {
+        setValues((prev) => ({ ...prev, ...settingsRes.data?.settings }));
+        setLastSavedAt(settingsRes.data.updated_at || null);
+      } else if (settingsRes.error) {
+        setSaveError(settingsRes.error.message || 'Không thể tải cài đặt hệ thống.');
+      }
+
+      if (healthRes.success && healthRes.data) {
+        setHealth(healthRes.data);
+      }
+
+      if (meRes.success && meRes.data) {
+        setCurrentUser(meRes.data);
+      }
+
+      setLoading(false);
+    };
+
+    void loadPage();
+
+    return () => {
+      active = false;
+    };
   }, []);
 
   const handleChange = (key: string, value: string) => {
-    setValues(prev => ({ ...prev, [key]: value }));
-    setSaved(false);
+    setValues((prev) => ({ ...prev, [key]: value }));
+    setSaveError('');
+    setSaveMessage('');
   };
 
-  const handleSave = () => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(values));
+  const handleSave = async () => {
+    setSaving(true);
+    setSaveError('');
+    setSaveMessage('');
+
+    const res = await adminApi.saveSettings(values);
+    setSaving(false);
+
+    if (!res.success || !res.data) {
+      setSaveError(res.error?.message || 'Không thể lưu cài đặt hệ thống.');
+      return;
     }
-    setSaved(true);
-    setTimeout(() => setSaved(false), 3000);
+
+    const payload = res.data;
+    setValues((prev) => ({ ...prev, ...payload.settings }));
+    setLastSavedAt(payload.updated_at || null);
+    setSaveMessage('Đã lưu cài đặt vào server.');
   };
 
   const handlePasswordSave = async () => {
@@ -137,22 +190,44 @@ export default function SettingsPage() {
     return '...';
   };
 
+  const savedAtLabel = useMemo(() => formatSavedAt(lastSavedAt), [lastSavedAt]);
+
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-        <h1 style={{ fontSize: 24, fontWeight: 800 }}>⚙️ Cài đặt hệ thống</h1>
+        <div>
+          <h1 style={{ fontSize: 24, fontWeight: 800, marginBottom: 6 }}>⚙️ Cài đặt hệ thống</h1>
+          {savedAtLabel ? (
+            <div style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
+              Lần lưu gần nhất: {savedAtLabel}
+            </div>
+          ) : null}
+        </div>
         <button
           className="btn btn-primary"
-          onClick={handleSave}
+          onClick={() => void handleSave()}
+          disabled={loading || saving}
           style={{ padding: '10px 24px', fontSize: 14 }}
         >
-          {saved ? '✅ Đã lưu nháp!' : '💾 Lưu bản nháp'}
+          {saving ? '⏳ Đang lưu...' : '💾 Lưu cài đặt'}
         </button>
       </div>
 
       <div className="data-card" style={{ padding: 16, marginBottom: 24, color: 'var(--text-secondary)' }}>
-        Trang này hiện lưu cấu hình nháp trên trình duyệt. Backend chưa có endpoint để áp dụng các thay đổi này cho hệ thống.
+        Các giá trị trên trang này được lưu tập trung trong database admin và áp dụng lại ngay lên runtime API hiện tại. Nếu để trống một số ô như temperature, max tokens hoặc VNPay URL, hệ thống sẽ quay về giá trị mặc định theo cấu hình gốc.
       </div>
+
+      {saveError ? (
+        <div className="data-card" style={{ padding: 16, marginBottom: 24, color: '#F44336' }}>
+          {saveError}
+        </div>
+      ) : null}
+
+      {saveMessage ? (
+        <div className="data-card" style={{ padding: 16, marginBottom: 24, color: '#4CAF50' }}>
+          {saveMessage}
+        </div>
+      ) : null}
 
       <div className="data-card" style={{ marginBottom: 24 }}>
         <div className="data-card-header">
@@ -172,10 +247,14 @@ export default function SettingsPage() {
               value={passwordForm.currentPassword}
               onChange={(e) => setPasswordForm((prev) => ({ ...prev, currentPassword: e.target.value }))}
               style={{
-                width: '100%', padding: '10px 14px',
+                width: '100%',
+                padding: '10px 14px',
                 background: 'var(--bg-secondary)',
                 border: '1px solid var(--border)',
-                borderRadius: 8, fontSize: 14, color: 'var(--text-primary)', outline: 'none',
+                borderRadius: 8,
+                fontSize: 14,
+                color: 'var(--text-primary)',
+                outline: 'none',
               }}
             />
           ) : null}
@@ -186,10 +265,14 @@ export default function SettingsPage() {
             value={passwordForm.newPassword}
             onChange={(e) => setPasswordForm((prev) => ({ ...prev, newPassword: e.target.value }))}
             style={{
-              width: '100%', padding: '10px 14px',
+              width: '100%',
+              padding: '10px 14px',
               background: 'var(--bg-secondary)',
               border: '1px solid var(--border)',
-              borderRadius: 8, fontSize: 14, color: 'var(--text-primary)', outline: 'none',
+              borderRadius: 8,
+              fontSize: 14,
+              color: 'var(--text-primary)',
+              outline: 'none',
             }}
           />
           <input
@@ -198,10 +281,14 @@ export default function SettingsPage() {
             value={passwordForm.confirmPassword}
             onChange={(e) => setPasswordForm((prev) => ({ ...prev, confirmPassword: e.target.value }))}
             style={{
-              width: '100%', padding: '10px 14px',
+              width: '100%',
+              padding: '10px 14px',
               background: 'var(--bg-secondary)',
               border: '1px solid var(--border)',
-              borderRadius: 8, fontSize: 14, color: 'var(--text-primary)', outline: 'none',
+              borderRadius: 8,
+              fontSize: 14,
+              color: 'var(--text-primary)',
+              outline: 'none',
             }}
           />
 
@@ -209,14 +296,13 @@ export default function SettingsPage() {
           {passwordSaved ? <div style={{ color: '#4CAF50', fontSize: 13 }}>{passwordSaved}</div> : null}
 
           <div>
-            <button className="btn btn-primary" onClick={handlePasswordSave} disabled={passwordLoading}>
+            <button className="btn btn-primary" onClick={() => void handlePasswordSave()} disabled={passwordLoading}>
               {passwordLoading ? '⏳ Đang lưu...' : currentUser?.has_password ? 'Cập nhật mật khẩu admin' : 'Đặt mật khẩu admin'}
             </button>
           </div>
         </div>
       </div>
 
-      {/* System Health */}
       <div className="stats-grid" style={{ marginBottom: 24 }}>
         <div className="stat-card success">
           <div className="stat-icon">🟢</div>
@@ -242,7 +328,6 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      {/* Settings Sections */}
       {SETTINGS_SECTIONS.map((section) => (
         <div key={section.title} className="data-card" style={{ marginBottom: 20 }}>
           <div className="data-card-header">
@@ -252,10 +337,15 @@ export default function SettingsPage() {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
               {section.settings.map((setting) => (
                 <div key={setting.key}>
-                  <label style={{
-                    display: 'block', fontSize: 13, fontWeight: 600,
-                    color: 'var(--text-secondary)', marginBottom: 6,
-                  }}>
+                  <label
+                    style={{
+                      display: 'block',
+                      fontSize: 13,
+                      fontWeight: 600,
+                      color: 'var(--text-secondary)',
+                      marginBottom: 6,
+                    }}
+                  >
                     {setting.label}
                   </label>
                   <input
@@ -263,13 +353,17 @@ export default function SettingsPage() {
                     placeholder={setting.placeholder}
                     value={values[setting.key] || ''}
                     onChange={(e) => handleChange(setting.key, e.target.value)}
+                    disabled={loading}
                     style={{
-                      width: '100%', padding: '10px 14px',
+                      width: '100%',
+                      padding: '10px 14px',
                       background: 'var(--bg-secondary)',
                       border: '1px solid var(--border)',
-                      borderRadius: 8, fontSize: 14,
+                      borderRadius: 8,
+                      fontSize: 14,
                       color: 'var(--text-primary)',
                       outline: 'none',
+                      opacity: loading ? 0.7 : 1,
                     }}
                   />
                 </div>

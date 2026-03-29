@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -24,6 +25,7 @@ type VNPayService struct {
 	returnURL       string
 	sandbox         bool
 	fallbackEnabled bool
+	mu              sync.RWMutex
 }
 
 func NewVNPayService(tmnCode, hashSecret, returnURL string, sandbox bool) *VNPayService {
@@ -31,15 +33,10 @@ func NewVNPayService(tmnCode, hashSecret, returnURL string, sandbox bool) *VNPay
 }
 
 func NewVNPayServiceWithFallback(tmnCode, hashSecret, returnURL string, sandbox bool, fallbackEnabled bool) *VNPayService {
-	paymentURL := "https://pay.vnpay.vn/vpcpay.html"
-	if sandbox {
-		paymentURL = "https://sandbox.vnpay.vn/paymentv2/vpcpay.html"
-	}
-
 	return &VNPayService{
 		tmnCode:         tmnCode,
 		hashSecret:      hashSecret,
-		paymentURL:      paymentURL,
+		paymentURL:      DefaultVNPayPaymentURL(sandbox),
 		returnURL:       returnURL,
 		sandbox:         sandbox,
 		fallbackEnabled: fallbackEnabled,
@@ -47,7 +44,48 @@ func NewVNPayServiceWithFallback(tmnCode, hashSecret, returnURL string, sandbox 
 }
 
 func (s *VNPayService) IsConfigured() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.tmnCode != "" && s.hashSecret != ""
+}
+
+func DefaultVNPayPaymentURL(sandbox bool) string {
+	if sandbox {
+		return "https://sandbox.vnpay.vn/paymentv2/vpcpay.html"
+	}
+	return "https://pay.vnpay.vn/vpcpay.html"
+}
+
+func (s *VNPayService) UpdateConfig(tmnCode, hashSecret, paymentURL string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tmnCode = tmnCode
+	s.hashSecret = hashSecret
+	if strings.TrimSpace(paymentURL) == "" {
+		s.paymentURL = DefaultVNPayPaymentURL(s.sandbox)
+		return
+	}
+	s.paymentURL = paymentURL
+}
+
+type vnPaySnapshot struct {
+	tmnCode         string
+	hashSecret      string
+	paymentURL      string
+	returnURL       string
+	fallbackEnabled bool
+}
+
+func (s *VNPayService) snapshot() vnPaySnapshot {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return vnPaySnapshot{
+		tmnCode:         s.tmnCode,
+		hashSecret:      s.hashSecret,
+		paymentURL:      s.paymentURL,
+		returnURL:       s.returnURL,
+		fallbackEnabled: s.fallbackEnabled,
+	}
 }
 
 // PaymentRequest represents a VNPay payment request
@@ -82,8 +120,10 @@ type PaymentCallback struct {
 // ============================================
 
 func (s *VNPayService) CreatePaymentURL(req PaymentRequest) (*PaymentResult, error) {
-	if !s.IsConfigured() {
-		if !s.fallbackEnabled {
+	cfg := s.snapshot()
+
+	if strings.TrimSpace(cfg.tmnCode) == "" || strings.TrimSpace(cfg.hashSecret) == "" {
+		if !cfg.fallbackEnabled {
 			return nil, fmt.Errorf("%w: VNPay credentials are missing", ErrServiceNotConfigured)
 		}
 		return s.mockPayment(req), nil
@@ -95,14 +135,14 @@ func (s *VNPayService) CreatePaymentURL(req PaymentRequest) (*PaymentResult, err
 	params := url.Values{}
 	params.Set("vnp_Version", "2.1.0")
 	params.Set("vnp_Command", "pay")
-	params.Set("vnp_TmnCode", s.tmnCode)
+	params.Set("vnp_TmnCode", cfg.tmnCode)
 	params.Set("vnp_Amount", fmt.Sprintf("%d", req.Amount*100)) // VNPay uses VND * 100
 	params.Set("vnp_CurrCode", "VND")
 	params.Set("vnp_TxnRef", txnRef)
 	params.Set("vnp_OrderInfo", req.Description)
 	params.Set("vnp_OrderType", "other")
 	params.Set("vnp_Locale", "vn")
-	params.Set("vnp_ReturnUrl", s.returnURL)
+	params.Set("vnp_ReturnUrl", cfg.returnURL)
 	params.Set("vnp_IpAddr", req.ClientIP)
 	params.Set("vnp_CreateDate", createDate)
 
@@ -112,10 +152,10 @@ func (s *VNPayService) CreatePaymentURL(req PaymentRequest) (*PaymentResult, err
 
 	// Create secure hash
 	hashData := s.buildHashData(params)
-	secureHash := s.hmacSHA512(hashData)
+	secureHash := s.hmacSHA512(cfg.hashSecret, hashData)
 	params.Set("vnp_SecureHash", secureHash)
 
-	paymentURL := s.paymentURL + "?" + params.Encode()
+	paymentURL := cfg.paymentURL + "?" + params.Encode()
 
 	return &PaymentResult{
 		PaymentURL: paymentURL,
@@ -129,6 +169,7 @@ func (s *VNPayService) CreatePaymentURL(req PaymentRequest) (*PaymentResult, err
 // ============================================
 
 func (s *VNPayService) VerifyCallback(params url.Values) (bool, *PaymentCallback) {
+	cfg := s.snapshot()
 	secureHash := params.Get("vnp_SecureHash")
 
 	// Remove hash fields before verification
@@ -140,9 +181,9 @@ func (s *VNPayService) VerifyCallback(params url.Values) (bool, *PaymentCallback
 	}
 
 	hashData := s.buildHashData(checkParams)
-	expectedHash := s.hmacSHA512(hashData)
+	expectedHash := s.hmacSHA512(cfg.hashSecret, hashData)
 
-	if !s.IsConfigured() {
+	if strings.TrimSpace(cfg.tmnCode) == "" || strings.TrimSpace(cfg.hashSecret) == "" {
 		// In mock mode, always verify
 		return true, &PaymentCallback{
 			TxnRef:        params.Get("vnp_TxnRef"),
@@ -224,8 +265,8 @@ func (s *VNPayService) buildHashData(params url.Values) string {
 	return strings.Join(parts, "&")
 }
 
-func (s *VNPayService) hmacSHA512(data string) string {
-	h := hmac.New(sha512.New, []byte(s.hashSecret))
+func (s *VNPayService) hmacSHA512(secret string, data string) string {
+	h := hmac.New(sha512.New, []byte(secret))
 	h.Write([]byte(data))
 	return hex.EncodeToString(h.Sum(nil))
 }

@@ -27,15 +27,17 @@ type ChatMessage struct {
 }
 
 type ChatRoom struct {
-	ID            uuid.UUID   `json:"id"`
-	BookingID     *uuid.UUID  `json:"booking_id,omitempty"`
-	Participants  []uuid.UUID `json:"participants"`
-	RoomType      string      `json:"room_type"` // direct, booking, group
-	LastMessage   *string     `json:"last_message,omitempty"`
-	LastMessageAt *time.Time  `json:"last_message_at,omitempty"`
-	UnreadCount   int         `json:"unread_count"`
-	CreatedAt     time.Time   `json:"created_at"`
-	UpdatedAt     time.Time   `json:"updated_at"`
+	ID               uuid.UUID   `json:"id"`
+	BookingID        *uuid.UUID  `json:"booking_id,omitempty"`
+	Participants     []uuid.UUID `json:"participants"`
+	RoomType         string      `json:"room_type"` // direct, booking, group
+	GroupName        *string     `json:"group_name,omitempty"`
+	ParticipantNames []string    `json:"participant_names,omitempty"`
+	LastMessage      *string     `json:"last_message,omitempty"`
+	LastMessageAt    *time.Time  `json:"last_message_at,omitempty"`
+	UnreadCount      int         `json:"unread_count"`
+	CreatedAt        time.Time   `json:"created_at"`
+	UpdatedAt        time.Time   `json:"updated_at"`
 
 	// Joined
 	OtherParticipant *ChatParticipant `json:"other_participant,omitempty"`
@@ -163,6 +165,38 @@ func (r *ChatRepository) ListRooms(ctx context.Context, userID uuid.UUID) ([]Cha
 			room.ID, userID,
 		).Scan(&room.UnreadCount)
 
+		if room.RoomType == "group" {
+			var groupName string
+			if err := r.pool.QueryRow(ctx,
+				`SELECT title FROM trips WHERE chat_room_id = $1 LIMIT 1`,
+				room.ID,
+			).Scan(&groupName); err == nil {
+				room.GroupName = &groupName
+			}
+
+			if room.GroupName == nil {
+				nameRows, err := r.pool.Query(ctx, `
+					SELECT full_name
+					FROM users
+					WHERE id = ANY($1::uuid[])
+					  AND id <> $2
+					ORDER BY full_name
+					LIMIT 3`,
+					room.Participants,
+					userID,
+				)
+				if err == nil {
+					for nameRows.Next() {
+						var fullName string
+						if err := nameRows.Scan(&fullName); err == nil {
+							room.ParticipantNames = append(room.ParticipantNames, fullName)
+						}
+					}
+					nameRows.Close()
+				}
+			}
+		}
+
 		rooms = append(rooms, room)
 	}
 
@@ -171,6 +205,40 @@ func (r *ChatRepository) ListRooms(ctx context.Context, userID uuid.UUID) ([]Cha
 	}
 
 	return rooms, nil
+}
+
+func (r *ChatRepository) UserHasAccessToRoom(ctx context.Context, roomID, userID uuid.UUID) (bool, error) {
+	var hasAccess bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1
+			FROM chat_rooms
+			WHERE id = $1
+			  AND $2::uuid = ANY(participants)
+		)`,
+		roomID,
+		userID,
+	).Scan(&hasAccess)
+	if err != nil {
+		return false, err
+	}
+
+	return hasAccess, nil
+}
+
+func (r *ChatRepository) GetRoomParticipantIDs(ctx context.Context, roomID uuid.UUID) ([]uuid.UUID, error) {
+	var participants []uuid.UUID
+	err := r.pool.QueryRow(ctx, `
+		SELECT participants
+		FROM chat_rooms
+		WHERE id = $1`,
+		roomID,
+	).Scan(&participants)
+	if err != nil {
+		return nil, err
+	}
+
+	return participants, nil
 }
 
 // ---- Messages ----

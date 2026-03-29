@@ -97,11 +97,17 @@ func (m *MockUserRepo) UpdateProfile(_ context.Context, userID uuid.UUID, fullNa
 	if !ok {
 		return fmt.Errorf("user not found")
 	}
+	if u.Email != nil {
+		delete(m.EmailIndex, strings.ToLower(*u.Email))
+	}
 	u.FullName = fullName
 	u.Email = email
 	u.Bio = bio
 	u.AvatarURL = avatarURL
-	u.Languages = languages
+	u.Languages = append([]string(nil), languages...)
+	if u.Email != nil {
+		m.EmailIndex[strings.ToLower(*u.Email)] = userID
+	}
 	return nil
 }
 

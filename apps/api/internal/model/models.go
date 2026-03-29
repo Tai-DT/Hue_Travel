@@ -41,6 +41,18 @@ type User struct {
 	UpdatedAt    time.Time  `json:"updated_at" db:"updated_at"`
 }
 
+type UserPreferences struct {
+	UserID                    uuid.UUID `json:"user_id" db:"user_id"`
+	Locale                    string    `json:"locale" db:"locale"`
+	Currency                  string    `json:"currency" db:"currency"`
+	Region                    string    `json:"region" db:"region"`
+	PushNotificationsEnabled  bool      `json:"push_notifications_enabled" db:"push_notifications_enabled"`
+	EmailNotificationsEnabled bool      `json:"email_notifications_enabled" db:"email_notifications_enabled"`
+	ChatNotificationsEnabled  bool      `json:"chat_notifications_enabled" db:"chat_notifications_enabled"`
+	PromoNotificationsEnabled bool      `json:"promo_notifications_enabled" db:"promo_notifications_enabled"`
+	UpdatedAt                 time.Time `json:"updated_at" db:"updated_at"`
+}
+
 // ============================================
 // Category & Place Models
 // ============================================

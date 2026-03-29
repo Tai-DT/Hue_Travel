@@ -30,6 +30,24 @@ func (h *ChatHandler) SetHub(hub *ws.Hub) {
 	h.hub = hub
 }
 
+func (h *ChatHandler) requireRoomParticipant(c *gin.Context, roomID uuid.UUID) (uuid.UUID, bool) {
+	userValue, _ := c.Get("user_id")
+	userID := userValue.(uuid.UUID)
+
+	hasAccess, err := h.chatRepo.UserHasAccessToRoom(c.Request.Context(), roomID, userID)
+	if err != nil {
+		response.InternalError(c, "Không thể kiểm tra quyền truy cập phòng chat")
+		return uuid.Nil, false
+	}
+
+	if !hasAccess {
+		response.Forbidden(c, "Bạn không có quyền truy cập phòng chat này")
+		return uuid.Nil, false
+	}
+
+	return userID, true
+}
+
 // ListRooms — danh sách phòng chat của user
 func (h *ChatHandler) ListRooms(c *gin.Context) {
 	userID, _ := c.Get("user_id")
@@ -95,6 +113,11 @@ func (h *ChatHandler) GetMessages(c *gin.Context) {
 		return
 	}
 
+	userID, ok := h.requireRoomParticipant(c, roomID)
+	if !ok {
+		return
+	}
+
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "30"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
@@ -105,8 +128,7 @@ func (h *ChatHandler) GetMessages(c *gin.Context) {
 	}
 
 	// Mark messages as read
-	userID, _ := c.Get("user_id")
-	_ = h.chatRepo.MarkAsRead(c.Request.Context(), roomID, userID.(uuid.UUID))
+	_ = h.chatRepo.MarkAsRead(c.Request.Context(), roomID, userID)
 
 	response.OK(c, gin.H{
 		"messages": messages,
@@ -119,6 +141,11 @@ func (h *ChatHandler) SendMessage(c *gin.Context) {
 	roomID, err := uuid.Parse(c.Param("room_id"))
 	if err != nil {
 		response.BadRequest(c, "HT-VAL-001", "Room ID không hợp lệ")
+		return
+	}
+
+	userID, ok := h.requireRoomParticipant(c, roomID)
+	if !ok {
 		return
 	}
 
@@ -141,12 +168,10 @@ func (h *ChatHandler) SendMessage(c *gin.Context) {
 		req.MessageType = "text"
 	}
 
-	userID, _ := c.Get("user_id")
-
 	msg, err := h.chatRepo.SendMessage(
 		c.Request.Context(),
 		roomID,
-		userID.(uuid.UUID),
+		userID,
 		req.Content,
 		req.MessageType,
 		req.Metadata,
@@ -161,14 +186,21 @@ func (h *ChatHandler) SendMessage(c *gin.Context) {
 		wsPayload := ws.WSMessage{
 			Type:     "message",
 			RoomID:   roomID.String(),
-			SenderID: userID.(uuid.UUID).String(),
+			SenderID: userID.String(),
 			Content:  req.Content,
 		}
 		if msgJSON, err := json.Marshal(msg); err == nil {
 			wsPayload.Data = msgJSON
 		}
-		data, _ := json.Marshal(wsPayload)
-		h.hub.BroadcastToRoom(roomID.String(), data)
+		participants, err := h.chatRepo.GetRoomParticipantIDs(c.Request.Context(), roomID)
+		if err == nil {
+			for _, participantID := range participants {
+				h.hub.SendToUser(participantID, wsPayload)
+			}
+		} else {
+			data, _ := json.Marshal(wsPayload)
+			h.hub.BroadcastToRoom(roomID.String(), data)
+		}
 	}
 
 	response.Created(c, gin.H{"message": msg})
@@ -182,8 +214,12 @@ func (h *ChatHandler) MarkRead(c *gin.Context) {
 		return
 	}
 
-	userID, _ := c.Get("user_id")
-	if err := h.chatRepo.MarkAsRead(c.Request.Context(), roomID, userID.(uuid.UUID)); err != nil {
+	userID, ok := h.requireRoomParticipant(c, roomID)
+	if !ok {
+		return
+	}
+
+	if err := h.chatRepo.MarkAsRead(c.Request.Context(), roomID, userID); err != nil {
 		response.InternalError(c, "Không thể đánh dấu đã đọc")
 		return
 	}

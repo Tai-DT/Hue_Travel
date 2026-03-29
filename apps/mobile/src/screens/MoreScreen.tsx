@@ -6,12 +6,13 @@ import {
 import { Colors, Fonts, Spacing, BorderRadius } from '@/constants/theme';
 import api, {
   Achievement, GamificationStats, WeatherCurrent, WeatherDay,
-  Promotion, Coupon, EmergencyContact, BlogPost, BlogComment, DiaryEntry, HueEvent, Collection,
+  Promotion, Coupon, EmergencyContact, BlogPost, BlogComment, DiaryEntry, HueEvent, Collection, TravelerCurrency,
 } from '@/services/api';
+import { formatDiscountValue } from '@/utils/currency';
 
 type MoreSection = 'menu' | 'gamification' | 'weather' | 'sos' | 'promotions' | 'blog' | 'diary' | 'map' | 'translate' | 'collections';
 
-export default function MoreScreen() {
+export default function MoreScreen({ currency }: { currency: TravelerCurrency }) {
   const [section, setSection] = useState<MoreSection>('menu');
 
   return (
@@ -40,7 +41,7 @@ export default function MoreScreen() {
       {section === 'gamification' && <GamificationSection />}
       {section === 'weather' && <WeatherSection />}
       {section === 'sos' && <SOSSection />}
-      {section === 'promotions' && <PromotionsSection />}
+      {section === 'promotions' && <PromotionsSection currency={currency} />}
       {section === 'blog' && <BlogSection />}
       {section === 'diary' && <DiarySection />}
       {section === 'map' && <MapSection />}
@@ -301,7 +302,7 @@ function SOSSection() {
 // ============================================
 // Promotions
 // ============================================
-function PromotionsSection() {
+function PromotionsSection({ currency }: { currency: TravelerCurrency }) {
   const [promos, setPromos] = useState<Promotion[]>([]);
   const [coupons, setCoupons] = useState<Coupon[]>([]);
   const [loading, setLoading] = useState(true);
@@ -330,7 +331,7 @@ function PromotionsSection() {
           <View key={p.id} style={styles.promoCard}>
             <View style={styles.promoDiscount}>
               <Text style={styles.promoDiscountText}>
-                {p.discount_type === 'percentage' ? `-${p.discount_value}%` : `-${p.discount_value.toLocaleString()}₫`}
+                {p.discount_type === 'percentage' ? `-${p.discount_value}%` : `-${formatDiscountValue(p.discount_value, currency)}`}
               </Text>
             </View>
             <View style={{ flex: 1 }}>
@@ -349,7 +350,7 @@ function PromotionsSection() {
             <View key={c.id} style={[styles.couponCard, c.is_used && styles.couponUsed]}>
               <Text style={styles.couponCode}>{c.code}</Text>
               <Text style={styles.couponValue}>
-                {c.discount_type === 'percentage' ? `-${c.discount_value}%` : `-${c.discount_value.toLocaleString()}₫`}
+                {c.discount_type === 'percentage' ? `-${c.discount_value}%` : `-${formatDiscountValue(c.discount_value, currency)}`}
               </Text>
               {c.is_used && <Text style={styles.couponUsedText}>Đã sử dụng</Text>}
             </View>

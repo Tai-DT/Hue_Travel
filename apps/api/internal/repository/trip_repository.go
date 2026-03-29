@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -15,6 +16,8 @@ import (
 type TripRepository struct {
 	pool *pgxpool.Pool
 }
+
+var ErrTripInviteNotFound = errors.New("trip invite not found")
 
 func NewTripRepository(pool *pgxpool.Pool) *TripRepository {
 	return &TripRepository{pool: pool}
@@ -220,20 +223,32 @@ func (r *TripRepository) InviteMember(ctx context.Context, tripID, userID, invit
 
 // AcceptInvite — chấp nhận lời mời
 func (r *TripRepository) AcceptInvite(ctx context.Context, tripID, userID uuid.UUID) error {
-	_, err := r.pool.Exec(ctx, `
+	result, err := r.pool.Exec(ctx, `
 		UPDATE trip_members SET status = 'accepted', joined_at = NOW()
 		WHERE trip_id = $1 AND user_id = $2 AND status = 'invited'
 	`, tripID, userID)
-	return err
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() == 0 {
+		return ErrTripInviteNotFound
+	}
+	return nil
 }
 
 // DeclineInvite — từ chối lời mời
 func (r *TripRepository) DeclineInvite(ctx context.Context, tripID, userID uuid.UUID) error {
-	_, err := r.pool.Exec(ctx, `
+	result, err := r.pool.Exec(ctx, `
 		UPDATE trip_members SET status = 'declined'
 		WHERE trip_id = $1 AND user_id = $2 AND status = 'invited'
 	`, tripID, userID)
-	return err
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() == 0 {
+		return ErrTripInviteNotFound
+	}
+	return nil
 }
 
 // JoinPublicTrip — tham gia chuyến đi public

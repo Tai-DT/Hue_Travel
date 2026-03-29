@@ -61,6 +61,10 @@ class PushNotificationService {
   private enabled = true;
   private expoPushToken: string | null = null;
   private initialized = false;
+  private preferences = {
+    chatEnabled: true,
+    promoEnabled: false,
+  };
 
   /**
    * Initialize push notifications — call this once at app startup
@@ -200,6 +204,7 @@ class PushNotificationService {
    */
   handleForegroundNotification(notification: PushNotification): void {
     if (!this.enabled) return;
+    if (!this.shouldDeliver(notification)) return;
 
     // Haptic feedback
     Vibration.vibrate(100);
@@ -274,6 +279,24 @@ class PushNotificationService {
    */
   setEnabled(enabled: boolean): void {
     this.enabled = enabled;
+  }
+
+  setPreferences(preferences: { chatEnabled?: boolean; promoEnabled?: boolean }): void {
+    this.preferences = {
+      ...this.preferences,
+      ...preferences,
+    };
+  }
+
+  private shouldDeliver(notification: PushNotification): boolean {
+    const type = notification.data?.type;
+    if (type === 'new_message' && !this.preferences.chatEnabled) {
+      return false;
+    }
+    if (type === 'promotion' && !this.preferences.promoEnabled) {
+      return false;
+    }
+    return true;
   }
 
   /**

@@ -123,20 +123,6 @@ type ReactionRepo interface {
 	GetReactionSummary(ctx context.Context, messageID, currentUserID uuid.UUID) ([]ReactionSummary, error)
 }
 
-// CallRepo defines the contract for voice/video call data access.
-type CallRepo interface {
-	InitiateCall(ctx context.Context, roomID, callerID uuid.UUID, callType string, isGroup bool) (*Call, error)
-	AddParticipants(ctx context.Context, callID uuid.UUID, userIDs []uuid.UUID) error
-	AnswerCall(ctx context.Context, callID, userID uuid.UUID) error
-	DeclineCall(ctx context.Context, callID, userID uuid.UUID) error
-	EndCall(ctx context.Context, callID uuid.UUID) error
-	LeaveCall(ctx context.Context, callID, userID uuid.UUID) error
-	GetActiveCall(ctx context.Context, roomID uuid.UUID) (*Call, error)
-	GetCallParticipants(ctx context.Context, callID uuid.UUID) ([]CallParticipant, error)
-	GetCallHistory(ctx context.Context, userID uuid.UUID, limit int) ([]Call, error)
-	GetByID(ctx context.Context, callID uuid.UUID) (*Call, error)
-}
-
 // PromotionRepo defines the contract for promotion/coupon data access.
 type PromotionRepo interface {
 	Create(ctx context.Context, p *Promotion) error
@@ -243,7 +229,6 @@ var _ ChatRepo = (*ChatRepository)(nil)
 var _ FriendRepo = (*FriendRepository)(nil)
 var _ TripRepo = (*TripRepository)(nil)
 var _ ReactionRepo = (*ReactionRepository)(nil)
-var _ CallRepo = (*CallRepository)(nil)
 var _ PromotionRepo = (*PromotionRepository)(nil)
 var _ GamificationRepo = (*GamificationRepository)(nil)
 var _ BlogRepo = (*BlogRepository)(nil)

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -12,10 +12,14 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Colors, Fonts, Spacing, BorderRadius } from '@/constants/theme';
-import api, { ChatMessage as APIChatMessage, ChatRoom as APIChatRoom } from '@/services/api';
+import api, {
+  ChatMessage as APIChatMessage,
+  ChatRoom as APIChatRoom,
+} from '@/services/api';
 
 type ChatRoom = {
   id: string;
+  room_type: string;
   other_name: string;
   other_avatar?: string;
   other_role: string;
@@ -32,6 +36,14 @@ type ChatMessage = {
   message_type: string;
   is_mine: boolean;
   created_at: string;
+};
+
+type ChatSocketPayload = {
+  type: string;
+  room_id?: string;
+  sender_id?: string;
+  content?: string;
+  data?: APIChatMessage;
 };
 
 function formatRelativeTime(value?: string) {
@@ -57,9 +69,14 @@ function formatClock(value: string) {
 }
 
 function normalizeRoom(room: APIChatRoom): ChatRoom {
+  const fallbackGroupName = room.participant_names?.length
+    ? room.participant_names.join(', ')
+    : 'Nhóm chuyến đi';
+
   return {
     id: room.id,
-    other_name: room.other_participant?.full_name || 'Huế Travel',
+    room_type: room.room_type,
+    other_name: room.group_name || room.other_participant?.full_name || fallbackGroupName,
     other_avatar: room.other_participant?.avatar_url,
     other_role: room.other_participant?.role || 'support',
     last_message: room.last_message,
@@ -80,7 +97,19 @@ function normalizeMessage(message: APIChatMessage, currentUserId: string | null)
   };
 }
 
-export default function ChatScreen() {
+function getConversationStatusLabel(roomType: string, role: string) {
+  if (roomType === 'group') return 'Nhóm chuyến đi';
+  if (role === 'guide') return 'Guide Huế Travel';
+  if (role === 'traveler') return 'Bạn bè';
+  return 'Hỗ trợ';
+}
+
+type ChatScreenProps = {
+  recipientUserId?: string | null;
+  initialRoomId?: string | null;
+};
+
+export default function ChatScreen({ recipientUserId = null, initialRoomId = null }: ChatScreenProps) {
   const [rooms, setRooms] = useState<ChatRoom[]>([]);
   const [selectedRoom, setSelectedRoom] = useState<ChatRoom | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -93,13 +122,18 @@ export default function ChatScreen() {
   const [error, setError] = useState('');
 
   const scrollRef = useRef<FlatList>(null);
+  const socketRef = useRef<WebSocket | null>(null);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const selectedRoomIdRef = useRef<string | null>(null);
+  const currentUserIdRef = useRef<string | null>(null);
 
   const filteredRooms = useMemo(
     () => rooms.filter((room) => room.other_name.toLowerCase().includes(search.trim().toLowerCase())),
     [rooms, search]
   );
 
-  const loadRooms = async () => {
+  const loadRooms = useCallback(async () => {
+    setLoadingRooms(true);
     const [meResult, roomsResult] = await Promise.all([api.getMe(), api.getChatRooms()]);
 
     if (meResult.success && meResult.data) {
@@ -115,12 +149,15 @@ export default function ChatScreen() {
     }
 
     setLoadingRooms(false);
-  };
+  }, []);
 
-  const loadMessages = async (roomId: string) => {
+  const loadMessages = useCallback(async (roomId: string) => {
     setLoadingMessages(true);
 
     const result = await api.getChatMessages(roomId);
+    const activeRoomId = selectedRoomIdRef.current;
+    if (activeRoomId && activeRoomId !== roomId) return;
+
     if (result.success && result.data?.messages) {
       const normalized = [...result.data.messages]
         .reverse()
@@ -133,17 +170,202 @@ export default function ChatScreen() {
 
     setLoadingMessages(false);
     setTimeout(() => scrollRef.current?.scrollToEnd(), 80);
-  };
+  }, [currentUserId]);
 
-  useEffect(() => {
-    loadRooms();
+  const markRoomRead = useCallback(async (roomId: string) => {
+    const result = await api.markChatRead(roomId);
+    if (!result.success) return;
+
+    setRooms((prev) => prev.map((room) => (
+      room.id === roomId ? { ...room, unread_count: 0 } : room
+    )));
+    setSelectedRoom((prev) => (
+      prev?.id === roomId ? { ...prev, unread_count: 0 } : prev
+    ));
   }, []);
 
   useEffect(() => {
-    if (selectedRoom) {
-      loadMessages(selectedRoom.id);
+    void loadRooms();
+  }, [loadRooms]);
+
+  useEffect(() => {
+    if (!selectedRoom) {
+      setMessages([]);
+      return;
     }
-  }, [selectedRoom, currentUserId]);
+
+    void loadMessages(selectedRoom.id);
+  }, [loadMessages, selectedRoom]);
+
+  useEffect(() => {
+    if (!selectedRoom?.id || selectedRoom.unread_count <= 0) return;
+    void markRoomRead(selectedRoom.id);
+  }, [markRoomRead, selectedRoom]);
+
+  useEffect(() => {
+    selectedRoomIdRef.current = selectedRoom?.id || null;
+  }, [selectedRoom]);
+
+  useEffect(() => {
+    currentUserIdRef.current = currentUserId;
+  }, [currentUserId]);
+
+  useEffect(() => {
+    if (!recipientUserId) return;
+
+    let cancelled = false;
+
+    (async () => {
+      setLoadingRooms(true);
+      const roomResult = await api.getOrCreateRoom(recipientUserId);
+      if (cancelled) return;
+
+      if (roomResult.success && roomResult.data?.room) {
+        const nextRoom = normalizeRoom(roomResult.data.room);
+        setRooms((prev) => {
+          const existing = prev.filter((room) => room.id !== nextRoom.id);
+          return [nextRoom, ...existing];
+        });
+        setSelectedRoom(nextRoom);
+        setError('');
+      } else {
+        setError(roomResult.error?.message || 'Không thể mở cuộc trò chuyện');
+      }
+
+      setLoadingRooms(false);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [recipientUserId]);
+
+  useEffect(() => {
+    if (!initialRoomId || rooms.length === 0) return;
+    if (selectedRoom?.id === initialRoomId) return;
+
+    const room = rooms.find((item) => item.id === initialRoomId);
+    if (room) {
+      setSelectedRoom(room);
+      setError('');
+    }
+  }, [initialRoomId, rooms, selectedRoom?.id]);
+
+  const upsertRoomPreview = useCallback((roomId: string, incoming: APIChatMessage, unreadDelta: number) => {
+    setRooms((prev) => {
+      const nextRooms = [...prev];
+      const roomIndex = nextRooms.findIndex((room) => room.id === roomId);
+
+      if (roomIndex === -1) {
+        void loadRooms();
+        return prev;
+      }
+
+      const [room] = nextRooms.splice(roomIndex, 1);
+      nextRooms.unshift({
+        ...room,
+        last_message: incoming.content,
+        last_message_time: formatRelativeTime(incoming.created_at),
+        unread_count: Math.max(0, (room.unread_count || 0) + unreadDelta),
+      });
+      return nextRooms;
+    });
+  }, [loadRooms]);
+
+  const handleSocketEvent = useCallback((payload: ChatSocketPayload) => {
+    if (payload.type !== 'message' || !payload.room_id || !payload.data) return;
+
+    const incoming = payload.data;
+    const isOwnMessage = Boolean(currentUserIdRef.current) && incoming.sender_id === currentUserIdRef.current;
+    const isSelectedRoom = selectedRoomIdRef.current === payload.room_id;
+
+    if (isSelectedRoom) {
+      const normalized = normalizeMessage(incoming, currentUserIdRef.current);
+      setMessages((prev) => (
+        prev.some((item) => item.id === normalized.id) ? prev : [...prev, normalized]
+      ));
+
+      if (!isOwnMessage) {
+        void api.markChatRead(payload.room_id);
+      }
+    }
+
+    if (isSelectedRoom) {
+      upsertRoomPreview(payload.room_id, incoming, 0);
+      return;
+    }
+
+    upsertRoomPreview(payload.room_id, incoming, isOwnMessage ? 0 : 1);
+  }, [upsertRoomPreview]);
+
+  useEffect(() => {
+    const socketUrl = api.getWebSocketUrl();
+    if (!socketUrl) return;
+
+    let cancelled = false;
+
+    const connect = () => {
+      if (cancelled) return;
+
+      const socket = new WebSocket(socketUrl);
+      socketRef.current = socket;
+
+      socket.onopen = () => {
+        const roomId = selectedRoomIdRef.current;
+        if (roomId) {
+          socket.send(JSON.stringify({ type: 'join', room_id: roomId }));
+        }
+      };
+
+      socket.onmessage = (event) => {
+        try {
+          handleSocketEvent(JSON.parse(event.data) as ChatSocketPayload);
+        } catch {
+          // Ignore malformed payloads.
+        }
+      };
+
+      socket.onerror = () => {
+        socket.close();
+      };
+
+      socket.onclose = () => {
+        if (socketRef.current === socket) {
+          socketRef.current = null;
+        }
+
+        if (!cancelled) {
+          reconnectTimerRef.current = setTimeout(connect, 1500);
+        }
+      };
+    };
+
+    connect();
+
+    return () => {
+      cancelled = true;
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
+      socketRef.current?.close();
+      socketRef.current = null;
+    };
+  }, [handleSocketEvent]);
+
+  useEffect(() => {
+    const roomId = selectedRoom?.id;
+    const socket = socketRef.current;
+    if (!roomId || !socket || socket.readyState !== WebSocket.OPEN) return;
+
+    socket.send(JSON.stringify({ type: 'join', room_id: roomId }));
+
+    return () => {
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: 'leave', room_id: roomId }));
+      }
+    };
+  }, [selectedRoom?.id]);
 
   const sendMessage = async () => {
     if (!selectedRoom || !message.trim() || sending) return;
@@ -154,7 +376,9 @@ export default function ChatScreen() {
 
     if (result.success && result.data?.message) {
       const normalized = normalizeMessage(result.data.message, currentUserId);
-      setMessages((prev) => [...prev, normalized]);
+      setMessages((prev) => (
+        prev.some((item) => item.id === normalized.id) ? prev : [...prev, normalized]
+      ));
       setMessage('');
       setTimeout(() => scrollRef.current?.scrollToEnd(), 80);
       await loadRooms();
@@ -181,7 +405,7 @@ export default function ChatScreen() {
           <View style={styles.convHeaderInfo}>
             <Text style={styles.convHeaderName}>{selectedRoom.other_name}</Text>
             <Text style={styles.convHeaderStatus}>
-              {selectedRoom.other_role === 'guide' ? 'Guide Huế Travel' : 'Hỗ trợ'}
+              {getConversationStatusLabel(selectedRoom.room_type, selectedRoom.other_role)}
             </Text>
           </View>
         </View>

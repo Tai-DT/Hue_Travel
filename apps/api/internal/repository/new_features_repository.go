@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -13,15 +14,15 @@ import (
 // ============================================
 
 type Report struct {
-	ID          uuid.UUID  `json:"id"`
-	ReporterID  uuid.UUID  `json:"reporter_id"`
-	TargetType  string     `json:"target_type"`
-	TargetID    uuid.UUID  `json:"target_id"`
-	Reason      string     `json:"reason"`
-	Description *string    `json:"description"`
-	Status      string     `json:"status"`
-	AdminNote   *string    `json:"admin_note,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
+	ID          uuid.UUID `json:"id"`
+	ReporterID  uuid.UUID `json:"reporter_id"`
+	TargetType  string    `json:"target_type"`
+	TargetID    uuid.UUID `json:"target_id"`
+	Reason      string    `json:"reason"`
+	Description *string   `json:"description"`
+	Status      string    `json:"status"`
+	AdminNote   *string   `json:"admin_note,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 type BlockedUser struct {
@@ -309,6 +310,10 @@ func (r *StoryRepository) Feed(ctx context.Context, viewerID uuid.UUID, limit, o
 	return stories, nil
 }
 
+func (r *StoryRepository) FeedAdmin(ctx context.Context, limit, offset int) ([]Story, error) {
+	return r.Feed(ctx, uuid.Nil, limit, offset)
+}
+
 func (r *StoryRepository) ToggleLike(ctx context.Context, storyID, userID uuid.UUID) (bool, error) {
 	var exists bool
 	r.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM story_likes WHERE story_id=$1 AND user_id=$2)`,
@@ -361,6 +366,17 @@ func (r *StoryRepository) ListComments(ctx context.Context, storyID uuid.UUID) (
 func (r *StoryRepository) Delete(ctx context.Context, storyID, userID uuid.UUID) error {
 	_, err := r.pool.Exec(ctx, `UPDATE stories SET is_active = FALSE WHERE id=$1 AND author_id=$2`, storyID, userID)
 	return err
+}
+
+func (r *StoryRepository) DeleteAdmin(ctx context.Context, storyID uuid.UUID) error {
+	tag, err := r.pool.Exec(ctx, `UPDATE stories SET is_active = FALSE WHERE id=$1 AND is_active = TRUE`, storyID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
 }
 
 // ============================================

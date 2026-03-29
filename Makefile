@@ -1,4 +1,4 @@
-.PHONY: help dev infra-up infra-down api migrate seed smoke smoke-api smoke-auth smoke-booking
+.PHONY: help dev infra-up infra-down infra-reset api api-build api-test migrate seed seed-real db-shell db-reset db-schema-reset smoke smoke-api smoke-auth smoke-booking setup backup restore ssl-setup deploy
 
 # ============================================
 # Huế Travel — Development Commands
@@ -36,19 +36,24 @@ api-test: ## Run Go API tests
 
 # ---- Database ----
 migrate: ## Run database migrations
-	@echo "Running migrations..."
-	docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U huetravel -d hue_travel -f /docker-entrypoint-initdb.d/001_initial_schema.sql
+	./scripts/migrate_all.sh
 
 seed: ## Load demo seed data
 	@echo "Seeding demo data..."
 	docker compose exec -T postgres psql -U huetravel -d hue_travel < scripts/seed.sql
 
+seed-real: ## Load comprehensive local seed data (expects a clean DB)
+	@echo "Seeding comprehensive local data..."
+	docker compose exec -T postgres psql -U huetravel -d hue_travel < scripts/seed_real_data.sql
+
 db-shell: ## Open PostgreSQL shell
 	docker compose exec postgres psql -U huetravel -d hue_travel
 
-db-reset: ## Reset database
+db-schema-reset: ## Reset database schema only (no migrations or seed)
 	docker compose exec -T postgres psql -U huetravel -d hue_travel -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
-	$(MAKE) migrate
+
+db-reset: ## Reset DB and rebuild a clean local dev dataset
+	./scripts/reset_dev_db.sh
 
 smoke: ## Validate local infra health and schema consistency
 	./scripts/smoke-stack.sh

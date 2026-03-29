@@ -75,7 +75,6 @@ Tài liệu này tách rõ 3 lớp:
 ### Realtime / Multi-role
 
 - `[ ]` Chat realtime qua WebSocket
-- `[ ]` Calls flow
 - `[ ]` Notification read/unread đồng bộ
 - `[ ]` Luồng traveler -> guide -> admin xuyên vai trò
 

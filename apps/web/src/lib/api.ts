@@ -5,6 +5,9 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080/api/v1';
 const API_ROOT = API_BASE.replace(/\/api\/v1\/?$/, '');
 
+const toWebSocketBaseURL = (httpBase: string) =>
+  httpBase.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:');
+
 export type DashboardStats = {
   total_users: number;
   total_bookings: number;
@@ -52,6 +55,22 @@ export type ApiResponse<T> = {
   data?: T;
   error?: { code: string; message: string };
   meta?: { total?: number; page?: number; per_page?: number };
+};
+
+export type AdminNotification = {
+  id: string;
+  user_id: string;
+  type: string;
+  title: string;
+  body: string;
+  is_read: boolean;
+  created_at: string;
+};
+
+export type AdminSettingsPayload = {
+  settings: Record<string, string>;
+  updated_at?: string | null;
+  count?: number;
 };
 
 type DashboardResponse = {
@@ -136,6 +155,15 @@ class AdminApi {
       return this.token;
     }
     return null;
+  }
+
+  getWebSocketUrl(): string | null {
+    const token = this.getToken();
+    if (!token) return null;
+
+    const url = new URL(`${toWebSocketBaseURL(API_ROOT)}/ws`);
+    url.searchParams.set('token', token);
+    return url.toString();
   }
 
   getRefreshToken(): string | null {
@@ -399,6 +427,36 @@ class AdminApi {
     return this.request<any>('/search/stats');
   }
 
+  async getSettings() {
+    return this.request<AdminSettingsPayload>('/admin/settings');
+  }
+
+  async saveSettings(settings: Record<string, string>) {
+    return this.request<AdminSettingsPayload>('/admin/settings', {
+      method: 'PUT',
+      body: { settings },
+    });
+  }
+
+  // ---- Notifications ----
+  async getNotifications() {
+    return this.request<{
+      notifications: AdminNotification[];
+      unread_count: number;
+      total: number;
+    }>('/notifications');
+  }
+
+  async getUnreadNotificationCount() {
+    return this.request<{ unread_count: number }>('/notifications/unread');
+  }
+
+  async markNotificationRead(id: string) {
+    return this.request<{ message: string; id?: string; count?: number }>(`/notifications/${id}/read`, {
+      method: 'POST',
+    });
+  }
+
   // ---- Reviews ----
   async getReviews(params?: Record<string, string | number>) {
     return this.request<any[]>(this.withQuery('/admin/reviews', params as any));
@@ -422,6 +480,17 @@ class AdminApi {
   async getChatMessages(roomId: string, page?: number) {
     const query = page ? `?page=${page}` : '';
     return this.request<any>(`/chat/rooms/${roomId}/messages${query}`);
+  }
+
+  async sendChatMessage(roomId: string, content: string, messageType: string = 'text') {
+    return this.request<any>(`/chat/rooms/${roomId}/messages`, {
+      method: 'POST',
+      body: { content, message_type: messageType },
+    });
+  }
+
+  async markChatRead(roomId: string) {
+    return this.request<any>(`/chat/rooms/${roomId}/read`, { method: 'POST' });
   }
 }
 

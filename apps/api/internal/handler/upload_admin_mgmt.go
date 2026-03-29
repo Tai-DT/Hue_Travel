@@ -97,6 +97,7 @@ type AdminManagementHandler struct {
 	expRepo     *repository.ExperienceRepository
 	bookingRepo *repository.BookingRepository
 	reviewRepo  *repository.ReviewRepository
+	storyRepo   *repository.StoryRepository
 }
 
 func NewAdminManagementHandler(
@@ -104,12 +105,14 @@ func NewAdminManagementHandler(
 	expRepo *repository.ExperienceRepository,
 	bookingRepo *repository.BookingRepository,
 	reviewRepo *repository.ReviewRepository,
+	storyRepo *repository.StoryRepository,
 ) *AdminManagementHandler {
 	return &AdminManagementHandler{
 		userRepo:    userRepo,
 		expRepo:     expRepo,
 		bookingRepo: bookingRepo,
 		reviewRepo:  reviewRepo,
+		storyRepo:   storyRepo,
 	}
 }
 
@@ -433,4 +436,41 @@ func (h *AdminManagementHandler) UpdateBookingStatus(c *gin.Context) {
 	}
 
 	response.OK(c, gin.H{"message": "Đã cập nhật booking", "id": id, "status": req.Status})
+}
+
+// ---- Stories ----
+
+func (h *AdminManagementHandler) ListStories(c *gin.Context) {
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+
+	stories, err := h.storyRepo.FeedAdmin(c.Request.Context(), limit, offset)
+	if err != nil {
+		response.InternalError(c, "Không thể tải stories")
+		return
+	}
+	if stories == nil {
+		stories = []repository.Story{}
+	}
+
+	response.OK(c, gin.H{"stories": stories, "total": len(stories)})
+}
+
+func (h *AdminManagementHandler) DeleteStory(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		response.BadRequest(c, "HT-VAL-001", "ID không hợp lệ")
+		return
+	}
+
+	if err := h.storyRepo.DeleteAdmin(c.Request.Context(), id); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			response.NotFound(c, "Story không tồn tại")
+			return
+		}
+		response.InternalError(c, "Không thể xóa story")
+		return
+	}
+
+	response.OK(c, gin.H{"message": "Đã xóa story"})
 }

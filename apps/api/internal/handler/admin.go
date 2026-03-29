@@ -1,13 +1,20 @@
 package handler
 
 import (
+	"context"
+	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/huetravel/api/internal/config"
+	"github.com/huetravel/api/internal/repository"
+	"github.com/huetravel/api/internal/service"
 	"github.com/huetravel/api/pkg/response"
 )
 
@@ -17,11 +24,315 @@ import (
 // ============================================
 
 type AdminHandler struct {
-	pool *pgxpool.Pool // nil = mock mode
+	pool          *pgxpool.Pool // nil = mock mode
+	settingsRepo  *repository.AdminSettingsRepository
+	baseConfig    *config.Config
+	aiService     *service.AITripPlannerService
+	vnpayService  *service.VNPayService
+	notifService  *service.NotificationService
+	searchService *service.SearchService
+	uploadService *service.FileUploadService
 }
 
-func NewAdminHandler(pool *pgxpool.Pool) *AdminHandler {
-	return &AdminHandler{pool: pool}
+func NewAdminHandler(
+	pool *pgxpool.Pool,
+	settingsRepo *repository.AdminSettingsRepository,
+	baseConfig *config.Config,
+	aiService *service.AITripPlannerService,
+	vnpayService *service.VNPayService,
+	notifService *service.NotificationService,
+	searchService *service.SearchService,
+	uploadService *service.FileUploadService,
+) *AdminHandler {
+	return &AdminHandler{
+		pool:          pool,
+		settingsRepo:  settingsRepo,
+		baseConfig:    baseConfig,
+		aiService:     aiService,
+		vnpayService:  vnpayService,
+		notifService:  notifService,
+		searchService: searchService,
+		uploadService: uploadService,
+	}
+}
+
+var allowedAdminSettingKeys = map[string]struct{}{
+	"gemini_api_key":    {},
+	"ai_temperature":    {},
+	"ai_max_tokens":     {},
+	"vnpay_tmn_code":    {},
+	"vnpay_hash_secret": {},
+	"vnpay_url":         {},
+	"fcm_server_key":    {},
+	"minio_endpoint":    {},
+	"minio_bucket":      {},
+	"minio_access_key":  {},
+	"minio_secret_key":  {},
+	"meili_url":         {},
+	"meili_master_key":  {},
+}
+
+type adminSettingsRequest struct {
+	Settings map[string]string `json:"settings"`
+}
+
+type adminRuntimeSettings struct {
+	GeminiAPIKey   string
+	AITemperature  *float64
+	AIMaxTokens    *int
+	VNPayTMNCode   string
+	VNPaySecret    string
+	VNPayURL       string
+	FCMServerKey   string
+	MinIOEndpoint  string
+	MinIOBucket    string
+	MinIOAccess    string
+	MinIOSecret    string
+	MeiliURL       string
+	MeiliMasterKey string
+}
+
+func (h *AdminHandler) ApplyStoredSettings(ctx context.Context) error {
+	if h.settingsRepo == nil {
+		return nil
+	}
+
+	settings, _, err := h.settingsRepo.List(ctx)
+	if err != nil {
+		return err
+	}
+
+	h.applyRuntimeSettings(ctx, settings)
+	return nil
+}
+
+func (h *AdminHandler) applyRuntimeSettings(ctx context.Context, stored map[string]string) {
+	if h.baseConfig == nil {
+		return
+	}
+
+	effective := h.effectiveRuntimeSettings(stored)
+
+	if h.aiService != nil {
+		h.aiService.UpdateConfig(effective.GeminiAPIKey, effective.AITemperature, effective.AIMaxTokens)
+	}
+	if h.vnpayService != nil {
+		h.vnpayService.UpdateConfig(effective.VNPayTMNCode, effective.VNPaySecret, effective.VNPayURL)
+	}
+	if h.notifService != nil {
+		h.notifService.UpdateConfig(effective.FCMServerKey)
+	}
+	if h.searchService != nil {
+		h.searchService.UpdateConfig(ctx, effective.MeiliURL, effective.MeiliMasterKey, h.pool)
+	}
+	if h.uploadService != nil {
+		h.uploadService.UpdateConfig(
+			effective.MinIOEndpoint,
+			effective.MinIOBucket,
+			effective.MinIOAccess,
+			effective.MinIOSecret,
+		)
+	}
+}
+
+func (h *AdminHandler) effectiveRuntimeSettings(stored map[string]string) adminRuntimeSettings {
+	runtime := adminRuntimeSettings{
+		GeminiAPIKey:   h.baseConfig.AI.GeminiAPIKey,
+		VNPayTMNCode:   h.baseConfig.VNPay.TmnCode,
+		VNPaySecret:    h.baseConfig.VNPay.HashSecret,
+		VNPayURL:       service.DefaultVNPayPaymentURL(h.baseConfig.VNPay.Sandbox),
+		FCMServerKey:   h.baseConfig.FCM.ServerKey,
+		MinIOEndpoint:  h.baseConfig.MinIO.Endpoint,
+		MinIOBucket:    h.baseConfig.MinIO.Bucket,
+		MinIOAccess:    h.baseConfig.MinIO.User,
+		MinIOSecret:    h.baseConfig.MinIO.Password,
+		MeiliURL:       h.baseConfig.Meilisearch.URL,
+		MeiliMasterKey: h.baseConfig.Meilisearch.MasterKey,
+	}
+
+	for key, value := range stored {
+		switch key {
+		case "gemini_api_key":
+			runtime.GeminiAPIKey = value
+		case "ai_temperature":
+			runtime.AITemperature = mustParseOptionalFloat(value)
+		case "ai_max_tokens":
+			runtime.AIMaxTokens = mustParseOptionalInt(value)
+		case "vnpay_tmn_code":
+			runtime.VNPayTMNCode = value
+		case "vnpay_hash_secret":
+			runtime.VNPaySecret = value
+		case "vnpay_url":
+			if strings.TrimSpace(value) != "" {
+				runtime.VNPayURL = value
+			}
+		case "fcm_server_key":
+			runtime.FCMServerKey = value
+		case "minio_endpoint":
+			runtime.MinIOEndpoint = value
+		case "minio_bucket":
+			runtime.MinIOBucket = value
+		case "minio_access_key":
+			runtime.MinIOAccess = value
+		case "minio_secret_key":
+			runtime.MinIOSecret = value
+		case "meili_url":
+			runtime.MeiliURL = value
+		case "meili_master_key":
+			runtime.MeiliMasterKey = value
+		}
+	}
+
+	return runtime
+}
+
+func validateAdminSetting(key, value string) error {
+	switch key {
+	case "ai_temperature":
+		parsed, err := parseOptionalFloat(value)
+		if err != nil {
+			return fmt.Errorf("Giá trị temperature không hợp lệ")
+		}
+		if parsed != nil && (*parsed < 0 || *parsed > 2) {
+			return fmt.Errorf("Temperature phải nằm trong khoảng 0-2")
+		}
+	case "ai_max_tokens":
+		parsed, err := parseOptionalInt(value)
+		if err != nil {
+			return fmt.Errorf("Giá trị max tokens không hợp lệ")
+		}
+		if parsed != nil && (*parsed < 1 || *parsed > 8192) {
+			return fmt.Errorf("Max tokens phải nằm trong khoảng 1-8192")
+		}
+	case "vnpay_url", "meili_url":
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" && !strings.HasPrefix(trimmed, "http://") && !strings.HasPrefix(trimmed, "https://") {
+			return fmt.Errorf("URL không hợp lệ cho %s", key)
+		}
+	}
+	return nil
+}
+
+func parseOptionalFloat(value string) (*float64, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil, nil
+	}
+	parsed, err := strconv.ParseFloat(trimmed, 64)
+	if err != nil {
+		return nil, err
+	}
+	return &parsed, nil
+}
+
+func mustParseOptionalFloat(value string) *float64 {
+	parsed, err := parseOptionalFloat(value)
+	if err != nil {
+		return nil
+	}
+	return parsed
+}
+
+func parseOptionalInt(value string) (*int, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil, nil
+	}
+	parsed, err := strconv.Atoi(trimmed)
+	if err != nil {
+		return nil, err
+	}
+	return &parsed, nil
+}
+
+func mustParseOptionalInt(value string) *int {
+	parsed, err := parseOptionalInt(value)
+	if err != nil {
+		return nil
+	}
+	return parsed
+}
+
+// GetSettings returns centrally stored admin settings for the dashboard UI.
+func (h *AdminHandler) GetSettings(c *gin.Context) {
+	if h.settingsRepo == nil {
+		response.OK(c, gin.H{
+			"settings":   map[string]string{},
+			"updated_at": nil,
+		})
+		return
+	}
+
+	settings, updatedAt, err := h.settingsRepo.List(c.Request.Context())
+	if err != nil {
+		response.InternalError(c, "Không thể tải cài đặt hệ thống")
+		return
+	}
+
+	response.OK(c, gin.H{
+		"settings":   settings,
+		"updated_at": updatedAt,
+	})
+}
+
+// SaveSettings persists admin-managed configuration drafts to the database.
+func (h *AdminHandler) SaveSettings(c *gin.Context) {
+	if h.settingsRepo == nil {
+		response.InternalError(c, "Hệ thống hiện chưa sẵn sàng để lưu cài đặt")
+		return
+	}
+
+	var req adminSettingsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "HT-VAL-001", "Dữ liệu cài đặt không hợp lệ")
+		return
+	}
+
+	sanitized := make(map[string]string, len(req.Settings))
+	for key, value := range req.Settings {
+		if _, ok := allowedAdminSettingKeys[key]; !ok {
+			response.BadRequest(c, "HT-VAL-002", "Khóa cài đặt không hợp lệ: "+key)
+			return
+		}
+		if len(strings.TrimSpace(value)) > 4096 {
+			response.BadRequest(c, "HT-VAL-003", "Giá trị cài đặt quá dài: "+key)
+			return
+		}
+		if err := validateAdminSetting(key, value); err != nil {
+			response.BadRequest(c, "HT-VAL-004", err.Error())
+			return
+		}
+		sanitized[key] = value
+	}
+
+	rawUserID, exists := c.Get("user_id")
+	if !exists {
+		response.Unauthorized(c, "Không xác định được tài khoản admin")
+		return
+	}
+
+	userID, ok := rawUserID.(uuid.UUID)
+	if !ok {
+		response.Unauthorized(c, "Không xác định được tài khoản admin")
+		return
+	}
+
+	updatedAt, err := h.settingsRepo.UpsertMany(c.Request.Context(), sanitized, userID)
+	if err != nil {
+		response.InternalError(c, "Không thể lưu cài đặt hệ thống")
+		return
+	}
+
+	storedSettings, _, err := h.settingsRepo.List(c.Request.Context())
+	if err == nil {
+		h.applyRuntimeSettings(c.Request.Context(), storedSettings)
+	}
+
+	response.OK(c, gin.H{
+		"settings":   sanitized,
+		"updated_at": updatedAt,
+		"count":      len(sanitized),
+	})
 }
 
 // DashboardStats — tổng quan admin

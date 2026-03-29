@@ -105,7 +105,7 @@ export default function ProfileScreen({
     const res = await api.updateProfile({
       full_name: form.full_name.trim(),
       email: form.email.trim() || undefined,
-      bio: form.bio.trim() || undefined,
+      bio: form.bio.trim(),
     });
     setSaving(false);
 

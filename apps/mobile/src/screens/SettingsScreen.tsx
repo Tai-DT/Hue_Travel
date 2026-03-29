@@ -10,55 +10,36 @@ import {
   Alert,
   TextInput,
   ActivityIndicator,
+  Linking,
+  Platform,
 } from 'react-native';
-import * as SecureStore from 'expo-secure-store';
 import { Colors, Fonts, Spacing, BorderRadius } from '@/constants/theme';
 import { useTranslation } from '@/hooks/useTranslation';
 import { SUPPORTED_LOCALES, SupportedLocale } from '@/i18n';
-import api from '@/services/api';
+import api, { TravelerCurrency, TravelerPreferencesPayload } from '@/services/api';
+import { offlineCache } from '@/services/cache';
+import { pushService } from '@/services/push';
+import { CURRENCY_OPTIONS } from '@/utils/currency';
 
 // ============================================
-// Settings Screen — with i18n + persistence
+// Settings Screen — synced traveler preferences
 // ============================================
-
-const SETTINGS_STORAGE_KEY = 'ht_user_settings';
-
-const DEFAULT_TOGGLES: Record<string, boolean> = {
-  pushNotif: true,
-  emailNotif: true,
-  chatNotif: true,
-  promoNotif: false,
-  darkMode: true,
-  twoFactor: false,
-};
-
-async function loadSavedToggles(): Promise<Record<string, boolean>> {
-  try {
-    const raw = await SecureStore.getItemAsync(SETTINGS_STORAGE_KEY);
-    if (!raw) return { ...DEFAULT_TOGGLES };
-    return { ...DEFAULT_TOGGLES, ...JSON.parse(raw) };
-  } catch {
-    return { ...DEFAULT_TOGGLES };
-  }
-}
-
-async function saveToggles(toggles: Record<string, boolean>) {
-  try {
-    await SecureStore.setItemAsync(SETTINGS_STORAGE_KEY, JSON.stringify(toggles));
-  } catch {
-    // Silently fail — settings are still in memory
-  }
-}
 
 export default function SettingsScreen({
   onBack,
   onLogout,
+  preferences,
+  onPreferencesUpdated,
 }: {
   onBack: () => void;
   onLogout?: () => void;
+  preferences: TravelerPreferencesPayload;
+  onPreferencesUpdated: (preferences: TravelerPreferencesPayload) => void;
 }) {
   const { t, locale, setLocale, supportedLocales } = useTranslation();
   const [showLanguagePicker, setShowLanguagePicker] = useState(false);
+  const [showCurrencyPicker, setShowCurrencyPicker] = useState(false);
+  const [showRegionModal, setShowRegionModal] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [hasPassword, setHasPassword] = useState(false);
   const [passwordForm, setPasswordForm] = useState({
@@ -69,31 +50,161 @@ export default function SettingsScreen({
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [passwordError, setPasswordError] = useState('');
   const [passwordSuccess, setPasswordSuccess] = useState('');
+  const [prefs, setPrefs] = useState<TravelerPreferencesPayload>(preferences);
+  const [regionDraft, setRegionDraft] = useState(preferences.preferences.region || '');
+  const [syncingKey, setSyncingKey] = useState<string | null>(null);
+  const [cacheSummary, setCacheSummary] = useState('0 mục trong phiên');
 
-  const [toggles, setToggles] = useState<Record<string, boolean>>({ ...DEFAULT_TOGGLES });
+  const refreshCacheSummary = useCallback(() => {
+    const stats = offlineCache.getStats();
+    setCacheSummary(`${stats.memoryEntries} mục trong phiên`);
+  }, []);
 
   useEffect(() => {
-    loadSavedToggles().then(setToggles);
+    setPrefs(preferences);
+    setRegionDraft(preferences.preferences.region || '');
+  }, [preferences]);
+
+  useEffect(() => {
+    refreshCacheSummary();
     api.getMe().then((res) => {
       if (res.success && res.data) {
         const user = (res.data as any).user || res.data;
         setHasPassword(Boolean(user?.has_password));
       }
     });
-  }, []);
+  }, [refreshCacheSummary]);
 
-  const handleToggle = useCallback((key: string) => {
-    setToggles((prev) => {
-      const next = { ...prev, [key]: !prev[key] };
-      saveToggles(next);
-      return next;
+  const syncPreferences = useCallback(async (next: TravelerPreferencesPayload, key: string) => {
+    setSyncingKey(key);
+    const result = await api.updateMyPreferences({
+      locale: next.preferences.locale,
+      currency: next.preferences.currency,
+      region: next.preferences.region,
+      notification_preferences: next.preferences.notification_preferences,
     });
-  }, []);
+    setSyncingKey(null);
+
+    if (!result.success || !result.data) {
+      Alert.alert('Không thể lưu cài đặt', result.error?.message || 'Vui lòng thử lại.');
+      return false;
+    }
+
+    setPrefs(result.data);
+    onPreferencesUpdated(result.data);
+
+    if (result.data.preferences.notification_preferences.push_enabled) {
+      void pushService.initialize();
+    }
+
+    return true;
+  }, [onPreferencesUpdated]);
+
+  const handleToggle = useCallback(async (key: 'pushNotif' | 'emailNotif' | 'chatNotif' | 'promoNotif') => {
+    const previous = prefs;
+    const nextNotifications = {
+      ...prefs.preferences.notification_preferences,
+      push_enabled: key === 'pushNotif'
+        ? !prefs.preferences.notification_preferences.push_enabled
+        : prefs.preferences.notification_preferences.push_enabled,
+      email_enabled: key === 'emailNotif'
+        ? !prefs.preferences.notification_preferences.email_enabled
+        : prefs.preferences.notification_preferences.email_enabled,
+      chat_enabled: key === 'chatNotif'
+        ? !prefs.preferences.notification_preferences.chat_enabled
+        : prefs.preferences.notification_preferences.chat_enabled,
+      promo_enabled: key === 'promoNotif'
+        ? !prefs.preferences.notification_preferences.promo_enabled
+        : prefs.preferences.notification_preferences.promo_enabled,
+    };
+
+    const next = {
+      ...prefs,
+      preferences: {
+        ...prefs.preferences,
+        notification_preferences: nextNotifications,
+      },
+    };
+
+    setPrefs(next);
+    const ok = await syncPreferences(next, key);
+    if (!ok) {
+      setPrefs(previous);
+    }
+  }, [prefs, syncPreferences]);
 
   const handleLanguageSelect = (code: SupportedLocale) => {
+    const previous = prefs;
+    const next = {
+      ...prefs,
+      preferences: {
+        ...prefs.preferences,
+        locale: code,
+      },
+    };
+
     setLocale(code);
+    setPrefs(next);
     setShowLanguagePicker(false);
+    void syncPreferences(next, 'locale').then((ok) => {
+      if (!ok) {
+        setPrefs(previous);
+        setLocale(previous.preferences.locale as SupportedLocale);
+      }
+    });
   };
+
+  const handleCurrencySelect = (currency: TravelerCurrency) => {
+    const previous = prefs;
+    const next = {
+      ...prefs,
+      preferences: {
+        ...prefs.preferences,
+        currency,
+      },
+    };
+
+    setPrefs(next);
+    setShowCurrencyPicker(false);
+    void syncPreferences(next, 'currency').then((ok) => {
+      if (!ok) {
+        setPrefs(previous);
+      }
+    });
+  };
+
+  const openRegionModal = useCallback(() => {
+    setRegionDraft(prefs.preferences.region || t('settings.regionName'));
+    setShowRegionModal(true);
+  }, [prefs.preferences.region, t]);
+
+  const handleRegionSave = useCallback(async () => {
+    const normalizedRegion = regionDraft.trim();
+    if (!normalizedRegion) {
+      Alert.alert('Thiếu khu vực', 'Vui lòng nhập khu vực ưu tiên của bạn.');
+      return;
+    }
+
+    const previous = prefs;
+    const next = {
+      ...prefs,
+      preferences: {
+        ...prefs.preferences,
+        region: normalizedRegion,
+      },
+    };
+
+    setPrefs(next);
+    const ok = await syncPreferences(next, 'region');
+    if (!ok) {
+      setPrefs(previous);
+      setRegionDraft(previous.preferences.region || '');
+      return;
+    }
+
+    setRegionDraft(normalizedRegion);
+    setShowRegionModal(false);
+  }, [prefs, regionDraft, syncPreferences]);
 
   const handleLogout = () => {
     if (!onLogout) return;
@@ -109,6 +220,81 @@ export default function SettingsScreen({
     setPasswordSuccess('');
     setShowPasswordModal(true);
   };
+
+  const openExternalLink = useCallback(async (url: string) => {
+    const supported = await Linking.canOpenURL(url);
+    if (!supported) {
+      Alert.alert('Không thể mở liên kết', url);
+      return;
+    }
+    await Linking.openURL(url);
+  }, []);
+
+  const openTerms = useCallback(() => {
+    void openExternalLink('https://huetravel.vn/terms');
+  }, [openExternalLink]);
+
+  const openPrivacy = useCallback(() => {
+    void openExternalLink('https://huetravel.vn/privacy');
+  }, [openExternalLink]);
+
+  const openRateApp = useCallback(() => {
+    const url = Platform.select({
+      ios: 'https://apps.apple.com',
+      android: 'https://play.google.com/store',
+      default: 'https://huetravel.vn',
+    }) || 'https://huetravel.vn';
+    void openExternalLink(url);
+  }, [openExternalLink]);
+
+  const handleClearCache = useCallback(() => {
+    Alert.alert(
+      t('settings.cacheSize'),
+      'Xóa dữ liệu cache cục bộ của ứng dụng trên thiết bị này?',
+      [
+        { text: t('common.cancel'), style: 'cancel' },
+        {
+          text: 'Xóa cache',
+          style: 'destructive',
+          onPress: async () => {
+            await offlineCache.clear();
+            refreshCacheSummary();
+            Alert.alert('Đã dọn cache', 'Cache cục bộ trong phiên hiện tại đã được xóa.');
+          },
+        },
+      ],
+    );
+  }, [refreshCacheSummary, t]);
+
+  const handleDeleteAccount = useCallback(() => {
+    Alert.alert(
+      t('settings.deleteAccount'),
+      'Tài khoản sẽ bị vô hiệu hóa và bạn sẽ bị đăng xuất khỏi thiết bị này.',
+      [
+        { text: t('common.cancel'), style: 'cancel' },
+        {
+          text: t('settings.deleteAccount'),
+          style: 'destructive',
+          onPress: async () => {
+            const res = await api.deleteAccount();
+            if (!res.success) {
+              Alert.alert('Không thể xoá tài khoản', res.error?.message || 'Vui lòng thử lại.');
+              return;
+            }
+
+            Alert.alert('Đã xoá tài khoản', res.data?.message || 'Tài khoản của bạn đã được vô hiệu hóa.');
+
+            if (onLogout) {
+              onLogout();
+              return;
+            }
+
+            await api.clearSession();
+          },
+        },
+      ],
+    );
+  }, [onLogout, t]);
 
   const handlePasswordSave = async () => {
     if (passwordForm.newPassword.length < 8) {
@@ -141,7 +327,8 @@ export default function SettingsScreen({
     setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
   };
 
-  const currentLang = supportedLocales.find((l) => l.code === locale);
+  const currentLang = supportedLocales.find((l) => l.code === prefs.preferences.locale) || supportedLocales.find((l) => l.code === locale);
+  const currentCurrency = CURRENCY_OPTIONS.find((item) => item.code === prefs.preferences.currency) || CURRENCY_OPTIONS[0];
 
   type SettingGroup = {
     title: string;
@@ -172,7 +359,6 @@ export default function SettingsScreen({
     {
       title: t('settings.customization'),
       items: [
-        { icon: '🌙', label: t('settings.darkMode'), type: 'toggle', key: 'darkMode' },
         {
           icon: '🌐',
           label: t('settings.language'),
@@ -180,16 +366,28 @@ export default function SettingsScreen({
           value: `${currentLang?.flag} ${currentLang?.nativeName}`,
           onPress: () => setShowLanguagePicker(true),
         },
-        { icon: '💱', label: t('settings.currency'), type: 'value', value: t('settings.currencyName') },
-        { icon: '📍', label: t('settings.region'), type: 'value', value: t('settings.regionName') },
+        {
+          icon: '💱',
+          label: t('settings.currency'),
+          type: 'value',
+          value: `${currentCurrency.symbol} ${currentCurrency.label}`,
+          onPress: () => setShowCurrencyPicker(true),
+        },
+        {
+          icon: '📍',
+          label: t('settings.region'),
+          type: 'value',
+          value: prefs.preferences.region || t('settings.regionName'),
+          onPress: openRegionModal,
+        },
       ],
     },
     {
       title: t('settings.security'),
       items: [
         { icon: '🔐', label: t('settings.changePassword'), type: 'link', onPress: openPasswordModal },
-        { icon: '📱', label: t('settings.twoFactor'), type: 'toggle', key: 'twoFactor' },
-        { icon: '👤', label: t('settings.sessions'), type: 'value', value: t('settings.devices', { count: 2 }) },
+        { icon: '📱', label: t('settings.twoFactor'), type: 'value', value: 'Sắp hỗ trợ' },
+        { icon: '👤', label: t('settings.sessions'), type: 'value', value: t('settings.devices', { count: prefs.device_count }) },
         {
           icon: '🔑',
           label: 'Mật khẩu nội bộ',
@@ -202,18 +400,18 @@ export default function SettingsScreen({
     {
       title: t('settings.app'),
       items: [
-        { icon: '💾', label: t('settings.cacheSize'), type: 'value', value: '24.5 MB' },
+        { icon: '💾', label: t('settings.cacheSize'), type: 'value', value: cacheSummary, onPress: handleClearCache },
         { icon: '📊', label: t('settings.version'), type: 'value', value: '1.0.0' },
-        { icon: '📋', label: t('settings.terms'), type: 'link' },
-        { icon: '🔒', label: t('settings.privacy'), type: 'link' },
-        { icon: '⭐', label: t('settings.rateApp'), type: 'link' },
+        { icon: '📋', label: t('settings.terms'), type: 'link', onPress: openTerms },
+        { icon: '🔒', label: t('settings.privacy'), type: 'link', onPress: openPrivacy },
+        { icon: '⭐', label: t('settings.rateApp'), type: 'link', onPress: openRateApp },
       ],
     },
     {
       title: t('settings.danger'),
       items: [
         { icon: '🚪', label: t('settings.logout'), type: 'link', danger: true, onPress: handleLogout },
-        { icon: '🗑️', label: t('settings.deleteAccount'), type: 'link', danger: true },
+        { icon: '🗑️', label: t('settings.deleteAccount'), type: 'link', danger: true, onPress: handleDeleteAccount },
       ],
     },
   ];
@@ -238,7 +436,7 @@ export default function SettingsScreen({
                 <View key={item.label}>
                   <TouchableOpacity
                     style={styles.settingItem}
-                    activeOpacity={item.type === 'toggle' ? 1 : 0.6}
+                    activeOpacity={item.type === 'toggle' || !item.onPress ? 1 : 0.6}
                     onPress={item.onPress}
                   >
                     <Text style={styles.settingIcon}>{item.icon}</Text>
@@ -250,12 +448,34 @@ export default function SettingsScreen({
                     </Text>
 
                     {item.type === 'toggle' && item.key && (
-                      <Switch
-                        value={toggles[item.key] || false}
-                        onValueChange={() => handleToggle(item.key!)}
-                        trackColor={{ false: Colors.border, true: 'rgba(249,168,37,0.4)' }}
-                        thumbColor={toggles[item.key!] ? Colors.primary : Colors.textMuted}
-                      />
+                      syncingKey === item.key ? (
+                        <ActivityIndicator size="small" color={Colors.primary} />
+                      ) : (
+                        <Switch
+                          value={
+                            item.key === 'pushNotif'
+                              ? prefs.preferences.notification_preferences.push_enabled
+                              : item.key === 'emailNotif'
+                                ? prefs.preferences.notification_preferences.email_enabled
+                                : item.key === 'chatNotif'
+                                  ? prefs.preferences.notification_preferences.chat_enabled
+                                  : prefs.preferences.notification_preferences.promo_enabled
+                          }
+                          onValueChange={() => handleToggle(item.key as any)}
+                          trackColor={{ false: Colors.border, true: 'rgba(249,168,37,0.4)' }}
+                          thumbColor={
+                            (
+                              item.key === 'pushNotif'
+                                ? prefs.preferences.notification_preferences.push_enabled
+                                : item.key === 'emailNotif'
+                                  ? prefs.preferences.notification_preferences.email_enabled
+                                  : item.key === 'chatNotif'
+                                    ? prefs.preferences.notification_preferences.chat_enabled
+                                    : prefs.preferences.notification_preferences.promo_enabled
+                            ) ? Colors.primary : Colors.textMuted
+                          }
+                        />
+                      )
                     )}
 
                     {item.type === 'value' && (
@@ -267,7 +487,7 @@ export default function SettingsScreen({
                       </Text>
                     )}
 
-                    {item.type === 'link' && !item.danger && (
+                    {item.type !== 'toggle' && item.onPress && !item.danger && (
                       <Text style={styles.settingArrow}>›</Text>
                     )}
                   </TouchableOpacity>
@@ -323,6 +543,49 @@ export default function SettingsScreen({
                 {locale === lang.code && (
                   <Text style={styles.langCheck}>✓</Text>
                 )}
+              </TouchableOpacity>
+            ))}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      <Modal
+        visible={showCurrencyPicker}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowCurrencyPicker(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowCurrencyPicker(false)}
+        >
+          <View style={styles.modalContent}>
+            <View style={styles.modalHandle} />
+            <Text style={styles.modalTitle}>{t('settings.currency')}</Text>
+            {CURRENCY_OPTIONS.map((option) => (
+              <TouchableOpacity
+                key={option.code}
+                style={[
+                  styles.langOption,
+                  prefs.preferences.currency === option.code && styles.langOptionActive,
+                ]}
+                onPress={() => handleCurrencySelect(option.code)}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.langFlag}>{option.symbol}</Text>
+                <View style={styles.langInfo}>
+                  <Text style={[
+                    styles.langNative,
+                    prefs.preferences.currency === option.code && styles.langNativeActive,
+                  ]}>
+                    {option.label}
+                  </Text>
+                  <Text style={styles.langName}>{option.code}</Text>
+                </View>
+                {prefs.preferences.currency === option.code ? (
+                  <Text style={styles.langCheck}>✓</Text>
+                ) : null}
               </TouchableOpacity>
             ))}
           </View>
@@ -391,6 +654,50 @@ export default function SettingsScreen({
                 <ActivityIndicator color="#fff" />
               ) : (
                 <Text style={styles.passwordButtonText}>{hasPassword ? 'Cập nhật mật khẩu' : 'Đặt mật khẩu'}</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      <Modal
+        visible={showRegionModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowRegionModal(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowRegionModal(false)}
+        >
+          <View style={styles.modalContent}>
+            <View style={styles.modalHandle} />
+            <Text style={styles.modalTitle}>{t('settings.region')}</Text>
+            <Text style={styles.passwordHint}>
+              Khu vực này được dùng để cá nhân hóa nội dung traveler như ưu tiên ngôn ngữ và đề xuất địa phương.
+            </Text>
+
+            <TextInput
+              style={styles.passwordInput}
+              value={regionDraft}
+              onChangeText={setRegionDraft}
+              placeholder={t('settings.regionName')}
+              placeholderTextColor={Colors.textMuted}
+              autoCapitalize="words"
+              autoCorrect={false}
+            />
+
+            <TouchableOpacity
+              style={styles.passwordButton}
+              onPress={handleRegionSave}
+              disabled={syncingKey === 'region'}
+              activeOpacity={0.85}
+            >
+              {syncingKey === 'region' ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.passwordButtonText}>{t('common.save')}</Text>
               )}
             </TouchableOpacity>
           </View>

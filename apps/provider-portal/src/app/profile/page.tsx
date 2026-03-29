@@ -86,6 +86,13 @@ export default function ProfilePage() {
     loadProfile();
   };
 
+  const handleCancelEdit = async () => {
+    setEditing(false);
+    setSaved(false);
+    setError('');
+    await loadProfile();
+  };
+
   const handlePasswordSave = async () => {
     if (passwordForm.newPassword.length < 8) {
       setPasswordError('Mật khẩu mới phải có ít nhất 8 ký tự.');
@@ -169,7 +176,7 @@ export default function ProfilePage() {
               <button className="p-btn p-btn-primary" onClick={() => setEditing(true)}>✏️ Chỉnh sửa</button>
             ) : (
               <div style={{ display: 'flex', gap: 8 }}>
-                <button className="p-btn" onClick={() => setEditing(false)}>Huỷ</button>
+                <button className="p-btn" onClick={handleCancelEdit}>Huỷ</button>
                 <button className="p-btn p-btn-primary" onClick={handleSave} disabled={saving}>
                   {saving ? '⏳...' : '💾 Lưu'}
                 </button>

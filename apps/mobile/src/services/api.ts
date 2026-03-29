@@ -8,6 +8,15 @@ import * as SecureStore from 'expo-secure-store';
 const LOCAL_API_BASE = 'http://localhost:8080/api/v1';
 const DEV_API_PORT = '8080';
 
+function isLoopbackApiBase(url: string) {
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
+  } catch {
+    return url.includes('localhost') || url.includes('127.0.0.1');
+  }
+}
+
 function resolveExpoDevAPIBase() {
   const hostUri =
     Constants.expoConfig?.hostUri ||
@@ -33,12 +42,21 @@ function resolveExpoDevAPIBase() {
 }
 
 function resolveAPIBase() {
-  if (process.env.EXPO_PUBLIC_API_URL) {
-    return process.env.EXPO_PUBLIC_API_URL;
+  const envApiBase = process.env.EXPO_PUBLIC_API_URL?.trim();
+  const expoDevApiBase = __DEV__ ? resolveExpoDevAPIBase() : null;
+
+  if (envApiBase) {
+    // On physical devices, Metro often runs on a LAN IP while .env keeps localhost.
+    // Prefer the live Expo host in dev so device requests don't depend on adb reverse.
+    if (__DEV__ && expoDevApiBase && isLoopbackApiBase(envApiBase)) {
+      return expoDevApiBase;
+    }
+
+    return envApiBase;
   }
 
   if (__DEV__) {
-    return resolveExpoDevAPIBase() || LOCAL_API_BASE;
+    return expoDevApiBase || LOCAL_API_BASE;
   }
 
   if (typeof window !== 'undefined') {
@@ -52,6 +70,99 @@ function resolveAPIBase() {
 }
 
 const API_BASE = resolveAPIBase();
+const API_ROOT = API_BASE.replace(/\/api\/v1\/?$/, '');
+
+function toWebSocketBaseURL(httpBase: string) {
+  return httpBase.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:');
+}
+
+function normalizeTrip(raw: any): Trip {
+  return {
+    id: raw.id,
+    title: raw.title,
+    description: raw.description || undefined,
+    destination: raw.destination || 'Huế',
+    start_date: raw.start_date || '',
+    end_date: raw.end_date || '',
+    is_public: Boolean(raw.is_public),
+    owner_id: raw.owner_id || raw.creator_id || '',
+    member_count: raw.member_count || 0,
+    status: raw.status || 'planning',
+    created_at: raw.created_at || '',
+    chat_room_id: raw.chat_room_id || undefined,
+    owner: raw.owner || (raw.creator_name ? { full_name: raw.creator_name } : undefined),
+  };
+}
+
+function normalizeTripInvitation(raw: any): TripInvitation {
+  return {
+    trip_id: raw.trip_id || raw.id,
+    trip_title: raw.trip_title || raw.title || 'Chuyến đi',
+    inviter_name: raw.inviter_name || raw.creator_name || raw.owner?.full_name || 'Huế Travel',
+    created_at: raw.created_at || '',
+  };
+}
+
+function normalizeStory(raw: any): Story {
+  return {
+    id: raw.id,
+    user_id: raw.user_id || raw.author_id || '',
+    content: raw.content || '',
+    image_urls: Array.isArray(raw.image_urls)
+      ? raw.image_urls
+      : Array.isArray(raw.media_urls)
+        ? raw.media_urls
+        : undefined,
+    location: raw.location || raw.location_name || undefined,
+    like_count: Number(raw.like_count || 0),
+    comment_count: Number(raw.comment_count || 0),
+    is_liked: Boolean(raw.is_liked),
+    created_at: raw.created_at || '',
+    user: raw.user || raw.author_name
+      ? {
+        full_name: raw.user?.full_name || raw.author_name || 'Người dùng',
+        avatar_url: raw.user?.avatar_url || raw.author_avatar || undefined,
+      }
+      : undefined,
+  };
+}
+
+function normalizeStoryComment(raw: any): StoryComment {
+  return {
+    id: raw.id,
+    story_id: raw.story_id || '',
+    user_id: raw.user_id || raw.author_id || '',
+    content: raw.content || '',
+    created_at: raw.created_at || '',
+    user: raw.user || raw.author_name
+      ? {
+        full_name: raw.user?.full_name || raw.author_name || 'Người dùng',
+        avatar_url: raw.user?.avatar_url || raw.author_avatar || undefined,
+      }
+      : undefined,
+  };
+}
+
+function normalizeFriendInfo(raw: any): FriendInfo {
+  return {
+    user_id: raw.user_id || '',
+    full_name: raw.full_name || raw.user?.full_name || 'Người dùng',
+    avatar_url: raw.avatar_url || raw.user?.avatar_url || undefined,
+    level: raw.level || raw.user?.level || undefined,
+    friendship_id: raw.friendship_id || raw.id || '',
+    since: raw.since || raw.created_at || undefined,
+  };
+}
+
+function normalizeTripMember(raw: any): TripMember {
+  return {
+    user_id: raw.user_id || '',
+    full_name: raw.full_name || raw.user?.full_name || 'Người dùng',
+    avatar_url: raw.avatar_url || raw.user?.avatar_url || undefined,
+    role: raw.role || 'member',
+    status: raw.status || 'accepted',
+  };
+}
 
 type RequestOptions = {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -111,6 +222,19 @@ class ApiService {
 
   isLoggedIn(): boolean {
     return !!this.token;
+  }
+
+  getToken(): string | null {
+    return this.token;
+  }
+
+  getWebSocketUrl(): string | null {
+    const token = this.getToken();
+    if (!token) return null;
+
+    const url = new URL(`${toWebSocketBaseURL(API_ROOT)}/ws`);
+    url.searchParams.set('token', token);
+    return url.toString();
   }
 
   async setSession(token: string, refreshToken: string) {
@@ -462,6 +586,28 @@ class ApiService {
     });
   }
 
+  async deleteAccount() {
+    return this.request<{ message: string }>('/me', {
+      method: 'DELETE',
+    });
+  }
+
+  async getMyPreferences() {
+    return this.request<TravelerPreferencesPayload>('/me/preferences');
+  }
+
+  async updateMyPreferences(data: {
+    locale: string;
+    currency: TravelerCurrency;
+    region: string;
+    notification_preferences: TravelerNotificationPreferences;
+  }) {
+    return this.request<TravelerPreferencesPayload>('/me/preferences', {
+      method: 'PUT',
+      body: data,
+    });
+  }
+
   // ---- Places ----
   async searchPlaces(q: string, category?: string) {
     const params = new URLSearchParams({ q });
@@ -728,11 +874,31 @@ class ApiService {
   }
 
   async getFriends() {
-    return this.request<{ friends: FriendInfo[]; total: number }>('/friends');
+    const res = await this.request<{ friends: any[]; total: number }>('/friends');
+    if (res.success) {
+      return {
+        ...res,
+        data: {
+          friends: Array.isArray(res.data?.friends) ? res.data.friends.map(normalizeFriendInfo) : [],
+          total: res.data?.total || 0,
+        },
+      } as APIResponse<{ friends: FriendInfo[]; total: number }>;
+    }
+    return res as APIResponse<{ friends: FriendInfo[]; total: number }>;
   }
 
   async getPendingFriendRequests() {
-    return this.request<{ requests: FriendInfo[]; total: number }>('/friends/pending');
+    const res = await this.request<{ requests: any[]; total: number }>('/friends/pending');
+    if (res.success) {
+      return {
+        ...res,
+        data: {
+          requests: Array.isArray(res.data?.requests) ? res.data.requests.map(normalizeFriendInfo) : [],
+          total: res.data?.total || 0,
+        },
+      } as APIResponse<{ requests: FriendInfo[]; total: number }>;
+    }
+    return res as APIResponse<{ requests: FriendInfo[]; total: number }>;
   }
 
   async getFriendStatus(userId: string) {
@@ -740,20 +906,40 @@ class ApiService {
   }
 
   // ---- Trips (Group Travel) ----
-  async createTrip(data: { title: string; description?: string; start_date: string; end_date: string; is_public?: boolean }) {
-    return this.request<{ trip: Trip }>('/trips', { method: 'POST', body: data });
+  async createTrip(data: { title: string; description?: string; destination?: string; start_date?: string; end_date?: string; is_public?: boolean }) {
+    const res = await this.request<{ trip: any }>('/trips', { method: 'POST', body: data });
+    if (res.success && res.data?.trip) {
+      return { ...res, data: { trip: normalizeTrip(res.data.trip) } } as APIResponse<{ trip: Trip }>;
+    }
+    return res as APIResponse<{ trip: Trip }>;
   }
 
   async getMyTrips() {
-    return this.request<{ trips: Trip[] }>('/trips');
+    const res = await this.request<{ trips: any[] | null }>('/trips');
+    if (res.success) {
+      const trips = Array.isArray(res.data?.trips) ? res.data.trips.map(normalizeTrip) : [];
+      return { ...res, data: { trips } } as APIResponse<{ trips: Trip[] }>;
+    }
+    return res as APIResponse<{ trips: Trip[] }>;
   }
 
   async getTrip(id: string) {
-    return this.request<{ trip: Trip }>(`/trips/${id}`);
+    const res = await this.request<{ trip: any; members?: any[] | null }>(`/trips/${id}`);
+    if (res.success && res.data?.trip) {
+      const trip = normalizeTrip(res.data.trip);
+      const members = Array.isArray(res.data?.members) ? res.data.members.map(normalizeTripMember) : [];
+      return { ...res, data: { trip: { ...trip, members } } } as APIResponse<{ trip: Trip }>;
+    }
+    return res as APIResponse<{ trip: Trip }>;
   }
 
   async discoverTrips() {
-    return this.request<{ trips: Trip[] }>('/trips/discover');
+    const res = await this.request<{ trips: any[] | null }>('/trips/discover');
+    if (res.success) {
+      const trips = Array.isArray(res.data?.trips) ? res.data.trips.map(normalizeTrip) : [];
+      return { ...res, data: { trips } } as APIResponse<{ trips: Trip[] }>;
+    }
+    return res as APIResponse<{ trips: Trip[] }>;
   }
 
   async inviteTripMember(tripId: string, userId: string) {
@@ -781,21 +967,44 @@ class ApiService {
   }
 
   async getTripInvitations() {
-    return this.request<{ invitations: TripInvitation[] }>('/trips/invitations');
+    const res = await this.request<{ invitations: any[] | null }>('/trips/invitations');
+    if (res.success) {
+      const invitations = Array.isArray(res.data?.invitations)
+        ? res.data.invitations.map(normalizeTripInvitation)
+        : [];
+      return { ...res, data: { invitations } } as APIResponse<{ invitations: TripInvitation[] }>;
+    }
+    return res as APIResponse<{ invitations: TripInvitation[] }>;
   }
 
   async searchGuidesForTrip(tripId: string) {
-    return this.request(`/trips/${tripId}/guides`);
+    return this.request<{ guides: Guide[] }>(`/trips/${tripId}/guides`);
   }
 
   // ---- Stories / Feed ----
   async createStory(data: { content: string; image_urls?: string[]; location?: string }) {
-    return this.request<{ story: Story }>('/feed', { method: 'POST', body: data });
+    const res = await this.request<{ story: any }>('/feed', { method: 'POST', body: data });
+    if (res.success && res.data?.story) {
+      return {
+        ...res,
+        data: { story: normalizeStory(res.data.story) },
+      } as APIResponse<{ story: Story }>;
+    }
+    return res as APIResponse<{ story: Story }>;
   }
 
   async getFeed(page?: number) {
     const query = page ? `?page=${page}` : '';
-    return this.request<{ stories: Story[] }>(`/feed${query}`);
+    const res = await this.request<{ stories: any[] }>(`/feed${query}`);
+    if (res.success) {
+      return {
+        ...res,
+        data: {
+          stories: Array.isArray(res.data?.stories) ? res.data.stories.map(normalizeStory) : [],
+        },
+      } as APIResponse<{ stories: Story[] }>;
+    }
+    return res as APIResponse<{ stories: Story[] }>;
   }
 
   async likeStory(id: string) {
@@ -803,14 +1012,30 @@ class ApiService {
   }
 
   async commentStory(id: string, content: string) {
-    return this.request<{ comment: StoryComment }>(`/feed/${id}/comment`, {
+    const res = await this.request<{ comment: any }>(`/feed/${id}/comment`, {
       method: 'POST',
       body: { content },
     });
+    if (res.success && res.data?.comment) {
+      return {
+        ...res,
+        data: { comment: normalizeStoryComment(res.data.comment) },
+      } as APIResponse<{ comment: StoryComment }>;
+    }
+    return res as APIResponse<{ comment: StoryComment }>;
   }
 
   async getStoryComments(id: string) {
-    return this.request<{ comments: StoryComment[] }>(`/feed/${id}/comments`);
+    const res = await this.request<{ comments: any[] }>(`/feed/${id}/comments`);
+    if (res.success) {
+      return {
+        ...res,
+        data: {
+          comments: Array.isArray(res.data?.comments) ? res.data.comments.map(normalizeStoryComment) : [],
+        },
+      } as APIResponse<{ comments: StoryComment[] }>;
+    }
+    return res as APIResponse<{ comments: StoryComment[] }>;
   }
 
   async deleteStory(id: string) {
@@ -891,31 +1116,6 @@ class ApiService {
 
   async getNearbyHospitals() {
     return this.request<{ hospitals: NearbyHospital[] }>('/emergency/hospitals');
-  }
-
-  // ---- Calls ----
-  async initiateCall(roomId: string, callType: 'audio' | 'video') {
-    return this.request(`/calls/rooms/${roomId}/call`, { method: 'POST', body: { call_type: callType } });
-  }
-
-  async getActiveCall(roomId: string) {
-    return this.request(`/calls/rooms/${roomId}/active`);
-  }
-
-  async answerCall(callId: string) {
-    return this.request(`/calls/${callId}/answer`, { method: 'POST' });
-  }
-
-  async declineCall(callId: string) {
-    return this.request(`/calls/${callId}/decline`, { method: 'POST' });
-  }
-
-  async endCall(callId: string) {
-    return this.request(`/calls/${callId}/end`, { method: 'POST' });
-  }
-
-  async getCallHistory() {
-    return this.request('/calls/history');
   }
 
   // ---- Reactions ----
@@ -1073,6 +1273,27 @@ export type User = {
   xp: number;
   level: string;
   is_verified: boolean;
+};
+
+export type TravelerCurrency = 'VND' | 'USD' | 'EUR';
+
+export type TravelerNotificationPreferences = {
+  push_enabled: boolean;
+  email_enabled: boolean;
+  chat_enabled: boolean;
+  promo_enabled: boolean;
+};
+
+export type TravelerPreferencesPayload = {
+  preferences: {
+    locale: string;
+    currency: TravelerCurrency;
+    region: string;
+    notification_preferences: TravelerNotificationPreferences;
+  };
+  device_count: number;
+  updated_at?: string | null;
+  message?: string;
 };
 
 export type Booking = {
@@ -1252,6 +1473,8 @@ export type ChatRoom = {
   booking_id?: string;
   participants: string[];
   room_type: string;
+  group_name?: string;
+  participant_names?: string[];
   last_message?: string;
   last_message_at?: string;
   unread_count: number;
@@ -1317,6 +1540,7 @@ export type Trip = {
   id: string;
   title: string;
   description?: string;
+  destination?: string;
   start_date: string;
   end_date: string;
   is_public: boolean;
@@ -1324,6 +1548,7 @@ export type Trip = {
   member_count: number;
   status: string;
   created_at: string;
+  chat_room_id?: string;
   owner?: { full_name: string; avatar_url?: string };
   members?: TripMember[];
 };

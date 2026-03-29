@@ -8,9 +8,11 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -22,6 +24,7 @@ import (
 type NotificationService struct {
 	fcmServerKey string
 	pool         *pgxpool.Pool
+	mu           sync.RWMutex
 }
 
 func NewNotificationService(fcmServerKey string, pool *pgxpool.Pool) *NotificationService {
@@ -29,7 +32,15 @@ func NewNotificationService(fcmServerKey string, pool *pgxpool.Pool) *Notificati
 }
 
 func (s *NotificationService) IsConfigured() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return strings.TrimSpace(s.fcmServerKey) != ""
+}
+
+func (s *NotificationService) UpdateConfig(serverKey string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.fcmServerKey = serverKey
 }
 
 // Notification represents a push notification
@@ -152,18 +163,63 @@ func (s *NotificationService) send(ctx context.Context, notif Notification) {
 		}
 	}
 
-	if !s.IsConfigured() {
+	s.mu.RLock()
+	serverKey := s.fcmServerKey
+	s.mu.RUnlock()
+
+	if strings.TrimSpace(serverKey) == "" {
 		log.Printf("📣 [NOTIF] FCM not configured, saved to DB/log only. To=%s | %s: %s — %s",
 			notif.UserID.String()[:8], notif.Type, notif.Title, notif.Body)
 		return
 	}
 
+	if !s.shouldPush(ctx, notif) {
+		log.Printf("📣 [NOTIF] Push skipped by user preferences. To=%s | %s", notif.UserID.String()[:8], notif.Type)
+		return
+	}
+
 	// Real FCM push notification
-	s.pushFCM(ctx, notif)
+	s.pushFCM(ctx, notif, serverKey)
+}
+
+func (s *NotificationService) shouldPush(ctx context.Context, notif Notification) bool {
+	if s.pool == nil {
+		return true
+	}
+
+	var pushEnabled bool
+	var chatEnabled bool
+	var promoEnabled bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT push_notifications_enabled, chat_notifications_enabled, promo_notifications_enabled
+		FROM user_preferences
+		WHERE user_id = $1`,
+		notif.UserID,
+	).Scan(&pushEnabled, &chatEnabled, &promoEnabled)
+	if err == pgx.ErrNoRows {
+		return notif.Type != NotifPromotion
+	}
+	if err != nil {
+		log.Printf("⚠️ Failed to read notification preferences: %v", err)
+		return true
+	}
+
+	if !pushEnabled {
+		return false
+	}
+
+	switch notif.Type {
+	case NotifNewMessage:
+		return chatEnabled
+	case NotifPromotion:
+		return promoEnabled
+	default:
+		return true
+	}
 }
 
 // pushFCM sends a real push notification via Firebase Cloud Messaging Legacy HTTP API
-func (s *NotificationService) pushFCM(ctx context.Context, notif Notification) {
+func (s *NotificationService) pushFCM(ctx context.Context, notif Notification, serverKey string) {
 	if s.pool == nil {
 		return
 	}
@@ -212,7 +268,7 @@ func (s *NotificationService) pushFCM(ctx context.Context, notif Notification) {
 		bodyBytes, _ := json.Marshal(payload)
 		req, _ := http.NewRequestWithContext(ctx, "POST", "https://fcm.googleapis.com/fcm/send", bytes.NewReader(bodyBytes))
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "key="+s.fcmServerKey)
+		req.Header.Set("Authorization", "key="+serverKey)
 
 		client := &http.Client{Timeout: 10 * time.Second}
 		resp, err := client.Do(req)

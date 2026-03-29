@@ -12,8 +12,9 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Colors, Fonts, Spacing, BorderRadius, Shadows } from '@/constants/theme';
-import api, { Experience, Guide } from '@/services/api';
+import api, { Experience, Guide, TravelerCurrency } from '@/services/api';
 import { useTranslation } from '@/hooks/useTranslation';
+import { formatCurrencyFromVND } from '@/utils/currency';
 
 const { width } = Dimensions.get('window');
 const CARD_WIDTH = width * 0.7;
@@ -24,6 +25,7 @@ type Props = {
   onOpenExplore: () => void;
   onOpenAI: () => void;
   userName?: string;
+  currency: TravelerCurrency;
 };
 
 type GuideCardItem = {
@@ -72,7 +74,7 @@ function getGreetingName(userName: string | undefined, defaultUser: string, defa
   return userName.trim().split(' ').slice(-1)[0];
 }
 
-export default function HomeScreen({ onSelectExperience, onSelectGuide, onOpenExplore, onOpenAI, userName }: Props) {
+export default function HomeScreen({ onSelectExperience, onSelectGuide, onOpenExplore, onOpenAI, userName, currency }: Props) {
   const { t } = useTranslation();
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [experiences, setExperiences] = useState<Experience[]>([]);
@@ -249,6 +251,7 @@ export default function HomeScreen({ onSelectExperience, onSelectGuide, onOpenEx
                 isFavorited={favoritedIds.has(item.id)}
                 onPress={() => onSelectExperience(item)}
                 onToggleFavorite={() => handleToggleFavorite(item.id)}
+                currency={currency}
               />
             )}
           />
@@ -344,16 +347,15 @@ function ExperienceCard({
   isFavorited,
   onPress,
   onToggleFavorite,
+  currency,
 }: {
   experience: Experience;
   isFavorited: boolean;
   onPress: () => void;
   onToggleFavorite: () => void;
+  currency: TravelerCurrency;
 }) {
   const { t } = useTranslation();
-  const formatPrice = (price: number) => {
-    return new Intl.NumberFormat('vi-VN').format(price) + '₫';
-  };
 
   return (
     <TouchableOpacity style={styles.expCard} activeOpacity={0.85} onPress={onPress}>
@@ -401,7 +403,7 @@ function ExperienceCard({
         </View>
 
         <View style={styles.expFooter}>
-          <Text style={styles.expPrice}>{formatPrice(experience.price)}</Text>
+          <Text style={styles.expPrice}>{formatCurrencyFromVND(experience.price, currency)}</Text>
           <Text style={styles.expPriceUnit}>{t('common.perPerson')}</Text>
         </View>
       </View>

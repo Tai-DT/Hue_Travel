@@ -118,7 +118,7 @@ Nguồn đối chiếu chính:
    bật strict mode trên môi trường staging và điền đủ secrets thật cho AI, maps, payment, upload, weather, push.
 
 2. Viết smoke/UAT theo nhóm chức năng:
-   social, trips, chat/calls, admin moderation/support, provider my-tours/revenue/calendar.
+   social, trips, chat, admin moderation/support, provider my-tours/revenue/calendar.
 
 3. Chốt tiêu chí release:
    repo sạch, env production rõ ràng, test checklist rõ ràng, và một vòng UAT đa vai trò: traveler, guide, admin.

@@ -54,6 +54,11 @@ Seed demo data:
 make seed
 ```
 
+Reset local DB to a clean dev dataset:
+```bash
+make db-reset
+```
+
 ### 3. Mobile App
 ```bash
 cd apps/mobile

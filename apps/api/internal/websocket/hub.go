@@ -28,7 +28,7 @@ var upgrader = websocket.Upgrader{
 
 // WSMessage represents a WebSocket message
 type WSMessage struct {
-	Type     string          `json:"type"`     // message, typing, read, online
+	Type     string          `json:"type"` // message, typing, read, online
 	RoomID   string          `json:"room_id"`
 	SenderID string          `json:"sender_id"`
 	Content  string          `json:"content,omitempty"`
@@ -45,7 +45,7 @@ type Client struct {
 
 // Hub manages all WebSocket clients
 type Hub struct {
-	clients    map[uuid.UUID]*Client
+	clients    map[uuid.UUID]map[*Client]bool
 	rooms      map[string]map[uuid.UUID]bool // roomID -> set of userIDs
 	register   chan *Client
 	unregister chan *Client
@@ -56,7 +56,7 @@ type Hub struct {
 
 func NewHub() *Hub {
 	return &Hub{
-		clients:    make(map[uuid.UUID]*Client),
+		clients:    make(map[uuid.UUID]map[*Client]bool),
 		rooms:      make(map[string]map[uuid.UUID]bool),
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
@@ -68,14 +68,24 @@ func NewHub() *Hub {
 // Stop gracefully shuts down the hub: close all client connections then stop the Run loop.
 func (h *Hub) Stop() {
 	h.mu.Lock()
-	for _, client := range h.clients {
-		close(client.Send)
-		client.Conn.Close()
+	for _, connections := range h.clients {
+		for client := range connections {
+			close(client.Send)
+			client.Conn.Close()
+		}
 	}
-	h.clients = make(map[uuid.UUID]*Client)
+	h.clients = make(map[uuid.UUID]map[*Client]bool)
 	h.mu.Unlock()
 	close(h.done)
 	log.Println("🛑 WebSocket hub stopped")
+}
+
+func (h *Hub) connectionCountLocked() int {
+	total := 0
+	for _, connections := range h.clients {
+		total += len(connections)
+	}
+	return total
 }
 
 func (h *Hub) Run() {
@@ -85,33 +95,44 @@ func (h *Hub) Run() {
 			return
 		case client := <-h.register:
 			h.mu.Lock()
-			// Close existing connection for the same user (prevent duplicate sessions)
-			if existing, ok := h.clients[client.UserID]; ok {
-				close(existing.Send)
-				existing.Conn.Close()
+			userConnections, ok := h.clients[client.UserID]
+			if !ok {
+				userConnections = make(map[*Client]bool)
+				h.clients[client.UserID] = userConnections
 			}
-			h.clients[client.UserID] = client
+			wasOffline := len(userConnections) == 0
+			userConnections[client] = true
+			totalConnections := h.connectionCountLocked()
 			h.mu.Unlock()
 
-			log.Printf("🟢 User %s connected (total: %d)", client.UserID.String()[:8], len(h.clients))
+			log.Printf("🟢 User %s connected (connections: %d)", client.UserID.String()[:8], totalConnections)
 
 			// Broadcast online status
-			h.broadcastStatus(client.UserID, true)
+			if wasOffline {
+				h.broadcastStatus(client.UserID, true)
+			}
 
 		case client := <-h.unregister:
 			h.mu.Lock()
-			if existing, ok := h.clients[client.UserID]; ok {
-				// Only remove if it's the same connection (prevent removing a newer session)
-				if existing == client {
-					delete(h.clients, client.UserID)
+			wentOffline := false
+			if userConnections, ok := h.clients[client.UserID]; ok {
+				if _, exists := userConnections[client]; exists {
+					delete(userConnections, client)
 					close(client.Send)
 				}
+				if len(userConnections) == 0 {
+					delete(h.clients, client.UserID)
+					wentOffline = true
+				}
 			}
+			totalConnections := h.connectionCountLocked()
 			h.mu.Unlock()
 
-			log.Printf("🔴 User %s disconnected (total: %d)", client.UserID.String()[:8], len(h.clients))
+			log.Printf("🔴 User %s disconnected (connections: %d)", client.UserID.String()[:8], totalConnections)
 
-			h.broadcastStatus(client.UserID, false)
+			if wentOffline {
+				h.broadcastStatus(client.UserID, false)
+			}
 
 		case message := <-h.broadcast:
 			var wsMsg WSMessage
@@ -123,12 +144,14 @@ func (h *Hub) Run() {
 			h.mu.RLock()
 			if roomUsers, ok := h.rooms[wsMsg.RoomID]; ok {
 				for userID := range roomUsers {
-					if client, ok := h.clients[userID]; ok {
-						select {
-						case client.Send <- message:
-						default:
-							// Buffer full — skip this message (don't close the connection)
-							log.Printf("⚠️ Send buffer full for user %s, skipping message", userID.String()[:8])
+					if userConnections, exists := h.clients[userID]; exists {
+						for client := range userConnections {
+							select {
+							case client.Send <- message:
+							default:
+								// Buffer full — skip this message (don't close the connection)
+								log.Printf("⚠️ Send buffer full for user %s, skipping message", userID.String()[:8])
+							}
 						}
 					}
 				}
@@ -165,14 +188,16 @@ func (h *Hub) LeaveRoom(roomID string, userID uuid.UUID) {
 // SendToUser sends a message to a specific user
 func (h *Hub) SendToUser(userID uuid.UUID, msg WSMessage) {
 	h.mu.RLock()
-	client, ok := h.clients[userID]
+	userConnections, ok := h.clients[userID]
 	h.mu.RUnlock()
 
 	if ok {
 		data, _ := json.Marshal(msg)
-		select {
-		case client.Send <- data:
-		default:
+		for client := range userConnections {
+			select {
+			case client.Send <- data:
+			default:
+			}
 		}
 	}
 }
@@ -181,8 +206,7 @@ func (h *Hub) SendToUser(userID uuid.UUID, msg WSMessage) {
 func (h *Hub) IsOnline(userID uuid.UUID) bool {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	_, ok := h.clients[userID]
-	return ok
+	return len(h.clients[userID]) > 0
 }
 
 // GetOnlineUsers returns list of online user IDs
@@ -209,11 +233,13 @@ func (h *Hub) BroadcastToRoom(roomID string, data []byte) {
 		return
 	}
 	for userID := range roomUsers {
-		if client, exists := h.clients[userID]; exists {
-			select {
-			case client.Send <- data:
-			default:
-				// Buffer full — skip this message
+		if userConnections, exists := h.clients[userID]; exists {
+			for client := range userConnections {
+				select {
+				case client.Send <- data:
+				default:
+					// Buffer full — skip this message
+				}
 			}
 		}
 	}
@@ -234,10 +260,12 @@ func (h *Hub) broadcastStatus(userID uuid.UUID, online bool) {
 	data, _ := json.Marshal(msg)
 
 	h.mu.RLock()
-	for _, client := range h.clients {
-		select {
-		case client.Send <- data:
-		default:
+	for _, connections := range h.clients {
+		for client := range connections {
+			select {
+			case client.Send <- data:
+			default:
+			}
 		}
 	}
 	h.mu.RUnlock()

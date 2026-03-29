@@ -7,6 +7,8 @@ import {
   ViewStyle,
 } from 'react-native';
 import { Colors, Fonts, Spacing, BorderRadius, Shadows } from '@/constants/theme';
+import { TravelerCurrency } from '@/services/api';
+import { formatCurrencyFromVND } from '@/utils/currency';
 
 // ============================================
 // ExperienceCard — Tour/Experience display card
@@ -21,6 +23,7 @@ type ExperienceCardProps = {
   isInstant?: boolean;
   imageUrl?: string;
   guideName?: string;
+  currency?: TravelerCurrency;
   onPress?: () => void;
   onFavorite?: () => void;
   isFavorite?: boolean;
@@ -36,12 +39,12 @@ export default function ExperienceCard({
   durationMins,
   isInstant,
   guideName,
+  currency = 'VND',
   onPress,
   onFavorite,
   isFavorite = false,
   style,
 }: ExperienceCardProps) {
-  const formatPrice = (n: number) => new Intl.NumberFormat('vi-VN').format(n) + '₫';
   const durationText = durationMins >= 60
     ? `${Math.floor(durationMins / 60)}h${durationMins % 60 > 0 ? durationMins % 60 + 'm' : ''}`
     : `${durationMins}m`;
@@ -87,7 +90,7 @@ export default function ExperienceCard({
 
         <View style={styles.footer}>
           <View style={styles.priceRow}>
-            <Text style={styles.price}>{formatPrice(price)}</Text>
+            <Text style={styles.price}>{formatCurrencyFromVND(price, currency)}</Text>
             <Text style={styles.priceUnit}>/người</Text>
           </View>
           {guideName && (

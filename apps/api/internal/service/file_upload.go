@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,6 +29,7 @@ type FileUploadService struct {
 	client          *minio.Client
 	httpClient      *http.Client
 	fallbackEnabled bool
+	mu              sync.RWMutex
 }
 
 func NewFileUploadService(endpoint, accessKey, secretKey, bucket string, useSSL bool) *FileUploadService {
@@ -45,37 +47,76 @@ func NewFileUploadServiceWithFallback(endpoint, accessKey, secretKey, bucket str
 		fallbackEnabled: fallbackEnabled,
 	}
 
-	// Initialize MinIO client
-	if endpoint != "" && accessKey != "" {
-		client, err := minio.New(endpoint, &minio.Options{
-			Creds:  credentials.NewStaticV4(accessKey, secretKey, ""),
-			Secure: useSSL,
-		})
-		if err != nil {
-			log.Printf("⚠️ MinIO client init failed: %v (falling back to mock)", err)
-		} else {
-			svc.client = client
-			log.Printf("✅ MinIO connected: %s (bucket: %s)", endpoint, bucket)
-
-			// Ensure bucket exists
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			exists, err := client.BucketExists(ctx, bucket)
-			if err != nil {
-				log.Printf("⚠️ MinIO bucket check failed: %v", err)
-			} else if !exists {
-				if err := client.MakeBucket(ctx, bucket, minio.MakeBucketOptions{}); err != nil {
-					log.Printf("⚠️ MinIO create bucket failed: %v", err)
-				} else {
-					log.Printf("✅ MinIO bucket created: %s", bucket)
-				}
-			}
-		}
-	} else {
-		log.Println("⚠️ MinIO not configured — file upload will use mock mode")
-	}
+	svc.client = svc.newMinIOClient(endpoint, accessKey, secretKey, bucket)
 
 	return svc
+}
+
+func (s *FileUploadService) UpdateConfig(endpoint, bucket, accessKey, secretKey string) {
+	client := s.newMinIOClient(endpoint, accessKey, secretKey, bucket)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.endpoint = endpoint
+	s.bucket = bucket
+	s.accessKey = accessKey
+	s.secretKey = secretKey
+	s.client = client
+}
+
+type fileUploadSnapshot struct {
+	endpoint        string
+	bucket          string
+	client          *minio.Client
+	useSSL          bool
+	fallbackEnabled bool
+}
+
+func (s *FileUploadService) snapshot() fileUploadSnapshot {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return fileUploadSnapshot{
+		endpoint:        s.endpoint,
+		bucket:          s.bucket,
+		client:          s.client,
+		useSSL:          s.useSSL,
+		fallbackEnabled: s.fallbackEnabled,
+	}
+}
+
+func (s *FileUploadService) newMinIOClient(endpoint, accessKey, secretKey, bucket string) *minio.Client {
+	if endpoint == "" || accessKey == "" {
+		log.Println("⚠️ MinIO not configured — file upload will use mock mode")
+		return nil
+	}
+
+	client, err := minio.New(endpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(accessKey, secretKey, ""),
+		Secure: s.useSSL,
+	})
+	if err != nil {
+		log.Printf("⚠️ MinIO client init failed: %v (falling back to mock)", err)
+		return nil
+	}
+
+	log.Printf("✅ MinIO connected: %s (bucket: %s)", endpoint, bucket)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	exists, err := client.BucketExists(ctx, bucket)
+	if err != nil {
+		log.Printf("⚠️ MinIO bucket check failed: %v", err)
+		return client
+	}
+	if !exists {
+		if err := client.MakeBucket(ctx, bucket, minio.MakeBucketOptions{}); err != nil {
+			log.Printf("⚠️ MinIO create bucket failed: %v", err)
+		} else {
+			log.Printf("✅ MinIO bucket created: %s", bucket)
+		}
+	}
+
+	return client
 }
 
 // UploadResult represents the result of a file upload
@@ -105,11 +146,12 @@ func (s *FileUploadService) GenerateKey(folder, originalFilename string) string 
 
 // GetPublicURL returns the public URL for a file
 func (s *FileUploadService) GetPublicURL(key string) string {
+	cfg := s.snapshot()
 	scheme := "http"
-	if s.useSSL {
+	if cfg.useSSL {
 		scheme = "https"
 	}
-	return fmt.Sprintf("%s://%s/%s/%s", scheme, s.endpoint, s.bucket, key)
+	return fmt.Sprintf("%s://%s/%s/%s", scheme, cfg.endpoint, cfg.bucket, key)
 }
 
 // ValidateUpload checks file size and MIME type
@@ -142,10 +184,11 @@ func (s *FileUploadService) ValidateUpload(filename string, size int64, allowedT
 func (s *FileUploadService) Upload(ctx context.Context, folder string, filename string, reader io.Reader, size int64) (*UploadResult, error) {
 	key := s.GenerateKey(folder, filename)
 	mimeType := getMimeType(filename)
+	cfg := s.snapshot()
 
 	// Real MinIO upload
-	if s.client != nil {
-		_, err := s.client.PutObject(ctx, s.bucket, key, reader, size, minio.PutObjectOptions{
+	if cfg.client != nil {
+		_, err := cfg.client.PutObject(ctx, cfg.bucket, key, reader, size, minio.PutObjectOptions{
 			ContentType: mimeType,
 		})
 		if err != nil {
@@ -156,7 +199,7 @@ func (s *FileUploadService) Upload(ctx context.Context, folder string, filename 
 
 		return &UploadResult{
 			Key:        key,
-			URL:        s.GetPublicURL(key),
+			URL:        formatPublicUploadURL(cfg.useSSL, cfg.endpoint, cfg.bucket, key),
 			FileName:   filename,
 			FileSize:   size,
 			MimeType:   mimeType,
@@ -164,7 +207,7 @@ func (s *FileUploadService) Upload(ctx context.Context, folder string, filename 
 		}, nil
 	}
 
-	if !s.fallbackEnabled {
+	if !cfg.fallbackEnabled {
 		return nil, fmt.Errorf("%w: object storage is not configured", ErrServiceNotConfigured)
 	}
 
@@ -172,7 +215,7 @@ func (s *FileUploadService) Upload(ctx context.Context, folder string, filename 
 	log.Printf("📁 [MOCK] Would upload: %s (%d bytes)", key, size)
 	return &UploadResult{
 		Key:        key,
-		URL:        s.GetPublicURL(key),
+		URL:        formatPublicUploadURL(cfg.useSSL, cfg.endpoint, cfg.bucket, key),
 		FileName:   filename,
 		FileSize:   size,
 		MimeType:   mimeType,
@@ -182,13 +225,14 @@ func (s *FileUploadService) Upload(ctx context.Context, folder string, filename 
 
 // Delete removes a file from MinIO
 func (s *FileUploadService) Delete(ctx context.Context, key string) error {
-	if s.client != nil {
-		if err := s.client.RemoveObject(ctx, s.bucket, key, minio.RemoveObjectOptions{}); err != nil {
+	cfg := s.snapshot()
+	if cfg.client != nil {
+		if err := cfg.client.RemoveObject(ctx, cfg.bucket, key, minio.RemoveObjectOptions{}); err != nil {
 			return fmt.Errorf("%w: MinIO delete failed: %v", ErrServiceUnavailable, err)
 		}
 		return nil
 	}
-	if !s.fallbackEnabled {
+	if !cfg.fallbackEnabled {
 		return fmt.Errorf("%w: object storage is not configured", ErrServiceNotConfigured)
 	}
 	log.Printf("📁 [MOCK] Would delete: %s", key)
@@ -210,4 +254,12 @@ func getMimeType(filename string) string {
 		return mt
 	}
 	return "application/octet-stream"
+}
+
+func formatPublicUploadURL(useSSL bool, endpoint, bucket, key string) string {
+	scheme := "http"
+	if useSSL {
+		scheme = "https"
+	}
+	return fmt.Sprintf("%s://%s/%s/%s", scheme, endpoint, bucket, key)
 }

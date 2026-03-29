@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
-import { adminApi } from '@/lib/api';
+import { useState, useEffect, useCallback, lazy, Suspense, useRef } from 'react';
+import { adminApi, AdminNotification } from '@/lib/api';
 import LoginPage from '@/components/LoginPage';
 
 const UsersPage = lazy(() => import('./users/page'));
@@ -58,7 +58,7 @@ const NAV_ITEMS: NavSection[] = [
 // ============================================
 // Dashboard Content — Connected to Real API
 // ============================================
-function DashboardContent() {
+function DashboardContent({ onNavigate }: { onNavigate: (page: string) => void }) {
   const [stats, setStats] = useState<any>(null);
   const [recentBookings, setRecentBookings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -207,23 +207,38 @@ function DashboardContent() {
         gap: 16,
         marginTop: 32,
       }}>
-        <div className="chart-card" style={{ textAlign: 'center', cursor: 'pointer' }}>
+        <button
+          type="button"
+          className="chart-card"
+          onClick={() => onNavigate('settings')}
+          style={{ textAlign: 'center', cursor: 'pointer', border: 'none', width: '100%' }}
+        >
           <div style={{ fontSize: 32, marginBottom: 8 }}>🤖</div>
           <div style={{ fontWeight: 700, marginBottom: 4 }}>AI Config</div>
           <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Cấu hình Gemini API</div>
-        </div>
-        <div className="chart-card" style={{ textAlign: 'center', cursor: 'pointer' }}>
+        </button>
+        <button
+          type="button"
+          className="chart-card"
+          onClick={() => onNavigate('settings')}
+          style={{ textAlign: 'center', cursor: 'pointer', border: 'none', width: '100%' }}
+        >
           <div style={{ fontSize: 32, marginBottom: 8 }}>💳</div>
           <div style={{ fontWeight: 700, marginBottom: 4 }}>VNPay Config</div>
           <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Quản lý thanh toán</div>
-        </div>
-        <div className="chart-card" style={{ textAlign: 'center', cursor: 'pointer' }}>
+        </button>
+        <button
+          type="button"
+          className="chart-card"
+          onClick={() => onNavigate('settings')}
+          style={{ textAlign: 'center', cursor: 'pointer', border: 'none', width: '100%' }}
+        >
           <div style={{ fontSize: 32, marginBottom: 8 }}>📊</div>
           <div style={{ fontWeight: 700, marginBottom: 4 }}>API Health</div>
           <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>
             <span style={{ color: 'var(--success)' }}>● Online</span> — Backend API
           </div>
-        </div>
+        </button>
       </div>
     </>
   );
@@ -237,6 +252,63 @@ export default function AdminDashboard() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [currentUser, setCurrentUser] = useState<any>(null);
+  const [notifications, setNotifications] = useState<AdminNotification[]>([]);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [notifLoading, setNotifLoading] = useState(false);
+  const [notifError, setNotifError] = useState('');
+
+  const notifRef = useRef<HTMLDivElement | null>(null);
+
+  const unreadCount = notifications.filter((item) => !item.is_read).length;
+  const recentNotifications = notifications.slice(0, 6);
+
+  const formatRelativeTime = useCallback((value: string) => {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return 'Vừa xong';
+
+    const diffMs = Date.now() - date.getTime();
+    const diffMinutes = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMinutes / 60);
+    const diffDays = Math.floor(diffHours / 24);
+
+    if (diffMinutes < 1) return 'Vừa xong';
+    if (diffMinutes < 60) return `${diffMinutes} phút trước`;
+    if (diffHours < 24) return `${diffHours} giờ trước`;
+    return `${diffDays} ngày trước`;
+  }, []);
+
+  const loadNotifications = useCallback(async () => {
+    setNotifLoading(true);
+    const res = await adminApi.getNotifications();
+    if (res.success && res.data) {
+      setNotifications(res.data.notifications || []);
+      setNotifError('');
+    } else {
+      setNotifError(res.error?.message || 'Không thể tải thông báo');
+    }
+    setNotifLoading(false);
+  }, []);
+
+  const markNotificationRead = useCallback(async (id: string) => {
+    const target = notifications.find((item) => item.id === id);
+    if (!target || target.is_read) return;
+
+    const res = await adminApi.markNotificationRead(id);
+    if (!res.success) return;
+
+    setNotifications((prev) => prev.map((item) => (
+      item.id === id ? { ...item, is_read: true } : item
+    )));
+  }, [notifications]);
+
+  const markAllNotificationsRead = useCallback(async () => {
+    if (unreadCount <= 0) return;
+
+    const res = await adminApi.markNotificationRead('all');
+    if (!res.success) return;
+
+    setNotifications((prev) => prev.map((item) => ({ ...item, is_read: true })));
+  }, [unreadCount]);
 
   useEffect(() => {
     // Check if already logged in
@@ -262,10 +334,36 @@ export default function AdminDashboard() {
     const handleLogout = () => {
       setIsLoggedIn(false);
       setCurrentUser(null);
+      setNotifications([]);
+      setNotifOpen(false);
     };
     window.addEventListener('auth:logout', handleLogout);
     return () => window.removeEventListener('auth:logout', handleLogout);
   }, []);
+
+  useEffect(() => {
+    if (!isLoggedIn) return;
+
+    void loadNotifications();
+    const timer = window.setInterval(() => {
+      void loadNotifications();
+    }, 30000);
+
+    return () => window.clearInterval(timer);
+  }, [isLoggedIn, loadNotifications]);
+
+  useEffect(() => {
+    if (!notifOpen) return;
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (notifRef.current && !notifRef.current.contains(event.target as Node)) {
+        setNotifOpen(false);
+      }
+    };
+
+    window.addEventListener('mousedown', handleClickOutside);
+    return () => window.removeEventListener('mousedown', handleClickOutside);
+  }, [notifOpen]);
 
   const handleLogout = async () => {
     await adminApi.logout();
@@ -363,7 +461,85 @@ export default function AdminDashboard() {
               <span>🔍</span>
               <input type="text" placeholder="Tìm kiếm..." />
             </div>
-            <div className="topbar-btn">🔔</div>
+            <div ref={notifRef} style={{ position: 'relative' }}>
+              <button
+                type="button"
+                className="topbar-btn"
+                onClick={() => setNotifOpen((prev) => !prev)}
+                aria-label="Thông báo"
+              >
+                🔔
+                {unreadCount > 0 ? <span className="badge">{unreadCount > 9 ? '9+' : unreadCount}</span> : null}
+              </button>
+
+              {notifOpen ? (
+                <div
+                  className="data-card"
+                  style={{
+                    position: 'absolute',
+                    top: 48,
+                    right: 0,
+                    width: 360,
+                    maxHeight: 420,
+                    overflowY: 'auto',
+                    padding: 0,
+                    zIndex: 40,
+                  }}
+                >
+                  <div className="data-card-header">
+                    <h2 className="data-card-title">🔔 Thông báo</h2>
+                    {unreadCount > 0 ? (
+                      <button className="btn" onClick={() => void markAllNotificationsRead()}>
+                        Đọc tất cả
+                      </button>
+                    ) : null}
+                  </div>
+
+                  {notifLoading ? (
+                    <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}>⏳ Đang tải...</div>
+                  ) : notifError ? (
+                    <div style={{ padding: 16, color: 'var(--error)', fontSize: 13 }}>{notifError}</div>
+                  ) : recentNotifications.length === 0 ? (
+                    <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}>
+                      Không có thông báo nào
+                    </div>
+                  ) : (
+                    recentNotifications.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => void markNotificationRead(item.id)}
+                        style={{
+                          width: '100%',
+                          textAlign: 'left',
+                          background: item.is_read ? 'transparent' : 'rgba(249,168,37,0.08)',
+                          border: 'none',
+                          borderTop: '1px solid var(--border)',
+                          padding: '14px 16px',
+                          cursor: 'pointer',
+                          color: 'var(--text)',
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 6 }}>
+                          <div style={{ fontSize: 14, fontWeight: item.is_read ? 600 : 700 }}>
+                            {item.title}
+                          </div>
+                          {!item.is_read ? (
+                            <span style={{ width: 8, height: 8, borderRadius: 999, background: 'var(--primary)', flexShrink: 0, marginTop: 6 }} />
+                          ) : null}
+                        </div>
+                        <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                          {item.body}
+                        </div>
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8 }}>
+                          {formatRelativeTime(item.created_at)}
+                        </div>
+                      </button>
+                    ))
+                  )}
+                </div>
+              ) : null}
+            </div>
             <div className="topbar-avatar" title={currentUser?.full_name || 'Admin'}>
               {currentUser?.full_name?.[0] || 'A'}
             </div>
@@ -393,7 +569,7 @@ export default function AdminDashboard() {
           ) : activePage === 'moderation' ? (
             <Suspense fallback={<PageFallback />}><ModerationPage /></Suspense>
           ) : (
-            <DashboardContent />
+            <DashboardContent onNavigate={setActivePage} />
           )}
         </div>
       </main>

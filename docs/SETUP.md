@@ -56,6 +56,9 @@ make migrate
 
 # Seed data (nếu có):
 make seed
+
+# Reset local DB về seed sạch:
+make db-reset
 ```
 
 ---
@@ -167,6 +170,7 @@ Hoặc dùng Makefile:
 make infra-up # Docker services
 make api      # Go API
 make seed     # Demo data
+make db-reset # Clean local dataset
 ```
 
 ---

@@ -130,16 +130,6 @@ func (h *DocsHandler) GetDocs(c *gin.Context) {
 		{Method: "POST", Path: "/api/v1/messages/:id/reactions", Description: "Thả/gỡ emoji reaction", Auth: true, Category: "Reactions"},
 		{Method: "GET", Path: "/api/v1/messages/:id/reactions", Description: "Danh sách reactions", Auth: true, Category: "Reactions"},
 
-		// Calls (Voice & Video)
-		{Method: "POST", Path: "/api/v1/calls/rooms/:room_id/call", Description: "Bắt đầu cuộc gọi voice/video", Auth: true, Category: "Calls"},
-		{Method: "GET", Path: "/api/v1/calls/rooms/:room_id/active", Description: "Cuộc gọi đang diễn ra", Auth: true, Category: "Calls"},
-		{Method: "POST", Path: "/api/v1/calls/:id/answer", Description: "Trả lời cuộc gọi", Auth: true, Category: "Calls"},
-		{Method: "POST", Path: "/api/v1/calls/:id/decline", Description: "Từ chối cuộc gọi", Auth: true, Category: "Calls"},
-		{Method: "POST", Path: "/api/v1/calls/:id/end", Description: "Kết thúc cuộc gọi", Auth: true, Category: "Calls"},
-		{Method: "POST", Path: "/api/v1/calls/:id/leave", Description: "Rời cuộc gọi (group)", Auth: true, Category: "Calls"},
-		{Method: "GET", Path: "/api/v1/calls/:id/participants", Description: "Participants cuộc gọi", Auth: true, Category: "Calls"},
-		{Method: "GET", Path: "/api/v1/calls/history", Description: "Lịch sử cuộc gọi", Auth: true, Category: "Calls"},
-
 		// Weather
 		{Method: "GET", Path: "/api/v1/weather/current", Description: "Thời tiết Huế hiện tại", Category: "Weather"},
 		{Method: "GET", Path: "/api/v1/weather/forecast", Description: "Dự báo 7 ngày", Category: "Weather"},

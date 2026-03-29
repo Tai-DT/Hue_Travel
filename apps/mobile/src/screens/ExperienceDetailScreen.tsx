@@ -13,7 +13,8 @@ import {
   View,
 } from 'react-native';
 import { Colors, Fonts, Spacing, BorderRadius } from '@/constants/theme';
-import api, { Booking, Experience, Review, ReviewSummary } from '@/services/api';
+import api, { Booking, Experience, Review, ReviewSummary, TravelerCurrency } from '@/services/api';
+import { formatCurrencyFromVND } from '@/utils/currency';
 
 const { height } = Dimensions.get('window');
 
@@ -33,11 +34,8 @@ type Props = {
   experience: Experience;
   onBack: () => void;
   onBookingCreated: (booking: Booking) => void;
+  currency: TravelerCurrency;
 };
-
-function formatPrice(price: number) {
-  return new Intl.NumberFormat('vi-VN').format(price) + '₫';
-}
 
 function formatDuration(durationMins: number) {
   const hours = Math.floor(durationMins / 60);
@@ -76,7 +74,7 @@ function getReviewSortDate(booking: Booking) {
   return new Date(booking.completed_at || booking.booking_date).getTime();
 }
 
-export default function ExperienceDetailScreen({ experience, onBack, onBookingCreated }: Props) {
+export default function ExperienceDetailScreen({ experience, onBack, onBookingCreated, currency }: Props) {
   const [showBooking, setShowBooking] = useState(false);
   const [isFavorited, setIsFavorited] = useState(false);
   const [loadingEngagement, setLoadingEngagement] = useState(true);
@@ -194,7 +192,7 @@ export default function ExperienceDetailScreen({ experience, onBack, onBookingCr
     try {
       await Share.share({
         title: experience.title,
-        message: `${experience.title}\n${formatPrice(experience.price)}/người\n${experience.description}`,
+        message: `${experience.title}\n${formatCurrencyFromVND(experience.price, currency)}/người\n${experience.description}`,
       });
     } catch {}
   };
@@ -633,7 +631,7 @@ export default function ExperienceDetailScreen({ experience, onBack, onBookingCr
       <View style={styles.bottomBar}>
         <View style={styles.priceSection}>
           <Text style={styles.priceLabel}>Từ</Text>
-          <Text style={styles.price}>{formatPrice(experience.price)}</Text>
+          <Text style={styles.price}>{formatCurrencyFromVND(experience.price, currency)}</Text>
           <Text style={styles.priceUnit}>/người</Text>
         </View>
         <TouchableOpacity
@@ -648,6 +646,7 @@ export default function ExperienceDetailScreen({ experience, onBack, onBookingCr
       <BookingModal
         visible={showBooking}
         experience={experience}
+        currency={currency}
         onClose={() => setShowBooking(false)}
         onBookingCreated={onBookingCreated}
       />
@@ -658,11 +657,13 @@ export default function ExperienceDetailScreen({ experience, onBack, onBookingCr
 function BookingModal({
   visible,
   experience,
+  currency,
   onClose,
   onBookingCreated,
 }: {
   visible: boolean;
   experience: Experience;
+  currency: TravelerCurrency;
   onClose: () => void;
   onBookingCreated: (booking: Booking) => void;
 }) {
@@ -816,18 +817,18 @@ function BookingModal({
             <View style={modalStyles.priceBreakdown}>
               <View style={modalStyles.priceRow}>
                 <Text style={modalStyles.priceLabel}>
-                  {formatPrice(experience.price)} × {guests} khách
+                  {formatCurrencyFromVND(experience.price, currency)} × {guests} khách
                 </Text>
-                <Text style={modalStyles.priceValue}>{formatPrice(totalPrice)}</Text>
+                <Text style={modalStyles.priceValue}>{formatCurrencyFromVND(totalPrice, currency)}</Text>
               </View>
               <View style={modalStyles.priceRow}>
                 <Text style={modalStyles.priceLabel}>Phí dịch vụ (5%)</Text>
-                <Text style={modalStyles.priceValue}>{formatPrice(serviceFee)}</Text>
+                <Text style={modalStyles.priceValue}>{formatCurrencyFromVND(serviceFee, currency)}</Text>
               </View>
               <View style={[modalStyles.priceRow, modalStyles.totalRow]}>
                 <Text style={modalStyles.totalLabel}>Tổng cộng</Text>
                 <Text style={modalStyles.totalValue}>
-                  {formatPrice(totalPrice + serviceFee)}
+                  {formatCurrencyFromVND(totalPrice + serviceFee, currency)}
                 </Text>
               </View>
             </View>
@@ -843,7 +844,7 @@ function BookingModal({
               <ActivityIndicator color={Colors.textOnPrimary} />
             ) : (
               <Text style={modalStyles.confirmText}>
-                Xác nhận đặt — {formatPrice(totalPrice + serviceFee)}
+                Xác nhận đặt — {formatCurrencyFromVND(totalPrice + serviceFee, currency)}
               </Text>
             )}
           </TouchableOpacity>

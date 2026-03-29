@@ -6,6 +6,16 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080/api/v
 
 type ProviderResponse<T> = { success: boolean; data?: T; error?: any; meta?: any };
 
+export type ProviderNotification = {
+  id: string;
+  user_id: string;
+  type: string;
+  title: string;
+  body: string;
+  is_read: boolean;
+  created_at: string;
+};
+
 type ProviderBooking = {
   id: string;
   booking_code: string;
@@ -262,7 +272,23 @@ class ProviderApi {
   }
 
   // ---- Notifications ----
-  async getNotifications() { return this.request<any[]>('/notifications'); }
+  async getNotifications() {
+    return this.request<{
+      notifications: ProviderNotification[];
+      unread_count: number;
+      total: number;
+    }>('/notifications');
+  }
+
+  async getUnreadNotificationCount() {
+    return this.request<{ unread_count: number }>('/notifications/unread');
+  }
+
+  async markNotificationRead(id: string) {
+    return this.request<{ message: string; id?: string; count?: number }>(`/notifications/${id}/read`, {
+      method: 'POST',
+    });
+  }
 
   // ---- Chat ----
   async getChatRooms() { return this.request<any[]>('/chat/rooms'); }

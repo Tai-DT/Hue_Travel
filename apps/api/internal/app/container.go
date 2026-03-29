@@ -23,27 +23,28 @@ type Container struct {
 	Redis  *redis.Client
 
 	// Repositories
-	UserRepo       *repository.UserRepository
-	ExpRepo        *repository.ExperienceRepository
-	BookingRepo    *repository.BookingRepository
-	ReviewRepo     *repository.ReviewRepository
-	FavRepo        *repository.FavoriteRepository
-	GuideRepo      *repository.GuideProfileRepository
-	ChatRepo       *repository.ChatRepository
-	FriendRepo     *repository.FriendRepository
-	TripRepo       *repository.TripRepository
-	ReactionRepo   *repository.ReactionRepository
-	CallRepo       *repository.CallRepository
-	PromoRepo      *repository.PromotionRepository
-	GamRepo        *repository.GamificationRepository
-	BlogRepo       *repository.BlogRepository
-	DiaryRepo      *repository.DiaryRepository
-	EventRepo      *repository.EventRepository
-	SOSRepo        *repository.SOSRepository
-	ReportRepo     *repository.ReportBlockRepository
-	GuideAppRepo   *repository.GuideAppRepository
-	StoryRepo      *repository.StoryRepository
-	CollectionRepo *repository.CollectionRepository
+	UserRepo          *repository.UserRepository
+	ExpRepo           *repository.ExperienceRepository
+	BookingRepo       *repository.BookingRepository
+	ReviewRepo        *repository.ReviewRepository
+	FavRepo           *repository.FavoriteRepository
+	GuideRepo         *repository.GuideProfileRepository
+	ChatRepo          *repository.ChatRepository
+	FriendRepo        *repository.FriendRepository
+	TripRepo          *repository.TripRepository
+	ReactionRepo      *repository.ReactionRepository
+	PromoRepo         *repository.PromotionRepository
+	GamRepo           *repository.GamificationRepository
+	BlogRepo          *repository.BlogRepository
+	DiaryRepo         *repository.DiaryRepository
+	EventRepo         *repository.EventRepository
+	SOSRepo           *repository.SOSRepository
+	ReportRepo        *repository.ReportBlockRepository
+	GuideAppRepo      *repository.GuideAppRepository
+	StoryRepo         *repository.StoryRepository
+	CollectionRepo    *repository.CollectionRepository
+	AdminSettingsRepo *repository.AdminSettingsRepository
+	UserPrefRepo      *repository.UserPreferencesRepository
 
 	// Services
 	AuthSvc    *service.AuthService
@@ -78,7 +79,6 @@ type Container struct {
 	FriendH       *handler.FriendHandler
 	TripH         *handler.TripHandler
 	ReactionH     *handler.ReactionHandler
-	CallH         *handler.CallHandler
 	WeatherH      *handler.WeatherHandler
 	PromoH        *handler.PromotionHandler
 	GamH          *handler.GamificationHandler
@@ -105,6 +105,7 @@ func NewContainer(ctx context.Context, cfg *config.Config) *Container {
 	c.initRepositories()
 	c.initServices(ctx)
 	c.initHandlers()
+	c.applyAdminRuntimeSettings(ctx)
 	c.initBackground()
 	return c
 }
@@ -156,7 +157,6 @@ func (c *Container) initRepositories() {
 	c.FriendRepo = repository.NewFriendRepository(c.Pool)
 	c.TripRepo = repository.NewTripRepository(c.Pool)
 	c.ReactionRepo = repository.NewReactionRepository(c.Pool)
-	c.CallRepo = repository.NewCallRepository(c.Pool)
 	c.PromoRepo = repository.NewPromotionRepository(c.Pool)
 	c.GamRepo = repository.NewGamificationRepository(c.Pool)
 	c.BlogRepo = repository.NewBlogRepository(c.Pool)
@@ -167,6 +167,8 @@ func (c *Container) initRepositories() {
 	c.GuideAppRepo = repository.NewGuideAppRepository(c.Pool)
 	c.StoryRepo = repository.NewStoryRepository(c.Pool)
 	c.CollectionRepo = repository.NewCollectionRepository(c.Pool)
+	c.AdminSettingsRepo = repository.NewAdminSettingsRepository(c.Pool)
+	c.UserPrefRepo = repository.NewUserPreferencesRepository(c.Pool)
 
 	slog.Info("All repositories initialized")
 }
@@ -225,14 +227,23 @@ func (c *Container) initHandlers() {
 	c.PlaceH = handler.NewPlaceHandler(c.PlacesSvc)
 	c.AIH = handler.NewAIHandler(c.AISvc)
 	c.NotifH = handler.NewNotificationHandler(c.NotifSvc, c.Pool, c.Config.App.AllowMockServices)
-	c.AdminH = handler.NewAdminHandler(c.Pool)
+	c.AdminH = handler.NewAdminHandler(
+		c.Pool,
+		c.AdminSettingsRepo,
+		c.Config,
+		c.AISvc,
+		c.VNPaySvc,
+		c.NotifSvc,
+		c.SearchSvc,
+		c.UploadSvc,
+	)
 	c.SearchH = handler.NewSearchHandler(c.SearchSvc)
 	c.DocsH = handler.NewDocsHandler()
 	c.UploadH = handler.NewUploadHandler(c.UploadSvc)
 
 	// DB-dependent handlers
 	if c.AuthSvc != nil {
-		c.AuthH = handler.NewAuthHandler(c.AuthSvc)
+		c.AuthH = handler.NewAuthHandler(c.AuthSvc, c.UserPrefRepo)
 	}
 	if c.ExpRepo != nil {
 		c.ExpH = handler.NewExperienceHandler(c.ExpRepo)
@@ -256,7 +267,7 @@ func (c *Container) initHandlers() {
 		c.PaymentH = handler.NewPaymentHandler(c.VNPaySvc, c.BookingRepo, c.UserRepo)
 	}
 	if c.UserRepo != nil && c.ExpRepo != nil && c.BookingRepo != nil {
-		c.AdminMgmtH = handler.NewAdminManagementHandler(c.UserRepo, c.ExpRepo, c.BookingRepo, c.ReviewRepo)
+		c.AdminMgmtH = handler.NewAdminManagementHandler(c.UserRepo, c.ExpRepo, c.BookingRepo, c.ReviewRepo, c.StoryRepo)
 	}
 	if c.FriendRepo != nil {
 		c.FriendH = handler.NewFriendHandler(c.FriendRepo)
@@ -266,9 +277,6 @@ func (c *Container) initHandlers() {
 	}
 	if c.ReactionRepo != nil {
 		c.ReactionH = handler.NewReactionHandler(c.ReactionRepo)
-	}
-	if c.CallRepo != nil {
-		c.CallH = handler.NewCallHandler(c.CallRepo, c.ChatRepo)
 	}
 
 	// Always-available (weather)
@@ -309,6 +317,19 @@ func (c *Container) initHandlers() {
 	}
 
 	slog.Info("All handlers initialized")
+}
+
+func (c *Container) applyAdminRuntimeSettings(ctx context.Context) {
+	if c.AdminH == nil || c.AdminSettingsRepo == nil {
+		return
+	}
+
+	if err := c.AdminH.ApplyStoredSettings(ctx); err != nil {
+		slog.Warn("Failed to apply stored admin runtime settings", "error", err)
+		return
+	}
+
+	slog.Info("Stored admin runtime settings applied")
 }
 
 func (c *Container) initBackground() {

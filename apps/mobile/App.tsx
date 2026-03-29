@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   Alert,
   View,
@@ -9,7 +9,13 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Colors, Fonts, Spacing } from './src/constants/theme';
-import api, { Booking, Experience, User } from './src/services/api';
+import api, {
+  Booking,
+  Experience,
+  TravelerCurrency,
+  TravelerPreferencesPayload,
+  User,
+} from './src/services/api';
 import { getInitialDeepLink, onDeepLink, DeepLinkRoute } from './src/services/deeplink';
 import { offlineCache, CacheKeys } from './src/services/cache';
 import { pushService } from './src/services/push';
@@ -34,6 +40,62 @@ import MoreScreen from './src/screens/MoreScreen';
 // ============================================
 type AppScreen = 'welcome' | 'login' | 'main';
 type MainTab = 'home' | 'social' | 'ai' | 'bookings' | 'more';
+type ChatSocketPayload = {
+  type: string;
+  room_id?: string;
+  sender_id?: string;
+  content?: string;
+  data?: {
+    sender_id?: string;
+    id?: string;
+    room_id?: string;
+    created_at?: string;
+  };
+};
+
+const DEFAULT_TRAVELER_PREFERENCES: TravelerPreferencesPayload = {
+  preferences: {
+    locale: 'vi',
+    currency: 'VND',
+    region: 'Hue, Vietnam',
+    notification_preferences: {
+      push_enabled: true,
+      email_enabled: true,
+      chat_enabled: true,
+      promo_enabled: false,
+    },
+  },
+  device_count: 1,
+  updated_at: null,
+};
+
+function normalizeTravelerPreferences(
+  raw?: Partial<TravelerPreferencesPayload> | null,
+): TravelerPreferencesPayload {
+  const next = (raw?.preferences || {}) as Partial<TravelerPreferencesPayload['preferences']>;
+  const notifications = (next.notification_preferences || {}) as Partial<
+    TravelerPreferencesPayload['preferences']['notification_preferences']
+  >;
+  return {
+    preferences: {
+      locale: next.locale || DEFAULT_TRAVELER_PREFERENCES.preferences.locale,
+      currency: (next.currency || DEFAULT_TRAVELER_PREFERENCES.preferences.currency) as TravelerCurrency,
+      region: next.region || DEFAULT_TRAVELER_PREFERENCES.preferences.region,
+      notification_preferences: {
+        push_enabled:
+          notifications.push_enabled ?? DEFAULT_TRAVELER_PREFERENCES.preferences.notification_preferences.push_enabled,
+        email_enabled:
+          notifications.email_enabled ?? DEFAULT_TRAVELER_PREFERENCES.preferences.notification_preferences.email_enabled,
+        chat_enabled:
+          notifications.chat_enabled ?? DEFAULT_TRAVELER_PREFERENCES.preferences.notification_preferences.chat_enabled,
+        promo_enabled:
+          notifications.promo_enabled ?? DEFAULT_TRAVELER_PREFERENCES.preferences.notification_preferences.promo_enabled,
+      },
+    },
+    device_count: raw?.device_count ?? DEFAULT_TRAVELER_PREFERENCES.device_count,
+    updated_at: raw?.updated_at ?? null,
+  };
+}
 
 const TAB_KEYS: Array<{
   key: MainTab;
@@ -58,7 +120,7 @@ export default function App() {
 }
 
 function AppContent() {
-  const { t } = useTranslation();
+  const { t, locale, setLocale } = useTranslation();
   const [screen, setScreen] = useState<AppScreen>('welcome');
   const [activeTab, setActiveTab] = useState<MainTab>('home');
   const [token, setToken] = useState<string | null>(null);
@@ -66,13 +128,35 @@ function AppContent() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [profileNeedsAttention, setProfileNeedsAttention] = useState(false);
   const [showChat, setShowChat] = useState(false);
+  const [chatRecipientUserId, setChatRecipientUserId] = useState<string | null>(null);
+  const [chatInitialRoomId, setChatInitialRoomId] = useState<string | null>(null);
   const [showNotifs, setShowNotifs] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [selectedExperience, setSelectedExperience] = useState<Experience | null>(null);
   const [paymentBooking, setPaymentBooking] = useState<Booking | null>(null);
+  const [travelerPreferences, setTravelerPreferences] = useState<TravelerPreferencesPayload>(DEFAULT_TRAVELER_PREFERENCES);
   const [chatUnread, setChatUnread] = useState(0);
   const [notifUnread, setNotifUnread] = useState(0);
+  const showFloatingShortcuts = activeTab !== 'ai';
+  const chatSocketRef = useRef<WebSocket | null>(null);
+  const chatReconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const currentUserIdRef = useRef<string | null>(null);
+
+  const applyTravelerPreferences = useCallback((prefs?: Partial<TravelerPreferencesPayload> | null) => {
+    const normalized = normalizeTravelerPreferences(prefs);
+    setTravelerPreferences(normalized);
+
+    if (normalized.preferences.locale !== locale) {
+      setLocale(normalized.preferences.locale as any);
+    }
+
+    pushService.setEnabled(normalized.preferences.notification_preferences.push_enabled);
+    pushService.setPreferences({
+      chatEnabled: normalized.preferences.notification_preferences.chat_enabled,
+      promoEnabled: normalized.preferences.notification_preferences.promo_enabled,
+    });
+  }, [locale, setLocale]);
 
   const requiresProfileCompletion = useCallback((user: User | null | undefined) => {
     if (!user) return true;
@@ -99,11 +183,14 @@ function AppContent() {
     setProfileNeedsAttention(false);
     setActiveTab('home');
     setShowChat(false);
+    setChatRecipientUserId(null);
+    setChatInitialRoomId(null);
     setShowNotifs(false);
     setShowSettings(false);
     setShowProfile(false);
     setSelectedExperience(null);
     setPaymentBooking(null);
+    setTravelerPreferences(DEFAULT_TRAVELER_PREFERENCES);
     setChatUnread(0);
     setNotifUnread(0);
     setScreen(nextScreen);
@@ -114,7 +201,13 @@ function AppContent() {
     setToken(t);
     applyAuthenticatedUser(user, isNewUser);
     setScreen('main');
-  }, [applyAuthenticatedUser]);
+    void (async () => {
+      const prefsRes = await api.getMyPreferences();
+      if (prefsRes.success && prefsRes.data) {
+        applyTravelerPreferences(prefsRes.data);
+      }
+    })();
+  }, [applyAuthenticatedUser, applyTravelerPreferences]);
 
   const handleLogout = useCallback(async () => {
     await api.logout();
@@ -137,6 +230,11 @@ function AppContent() {
 
       setToken(session.token);
       setScreen('main');
+
+      const prefsRes = await api.getMyPreferences();
+      if (!cancelled && prefsRes.success && prefsRes.data) {
+        applyTravelerPreferences(prefsRes.data);
+      }
 
       const cachedUser = await offlineCache.get<User>(CacheKeys.USER_PROFILE);
       if (!cancelled && cachedUser) {
@@ -161,13 +259,27 @@ function AppContent() {
     return () => {
       cancelled = true;
     };
-  }, [applyAuthenticatedUser, resetLoggedOutState]);
+  }, [applyAuthenticatedUser, applyTravelerPreferences, resetLoggedOutState]);
 
   useEffect(() => api.onAuthFailure(() => {
     void resetLoggedOutState('login');
   }), [resetLoggedOutState]);
 
   const handleOpenChat = useCallback(() => {
+    setChatRecipientUserId(null);
+    setChatInitialRoomId(null);
+    setShowChat(true);
+  }, []);
+
+  const handleOpenChatWithUser = useCallback((userId: string) => {
+    setChatRecipientUserId(userId);
+    setChatInitialRoomId(null);
+    setShowChat(true);
+  }, []);
+
+  const handleOpenChatRoom = useCallback((roomId: string) => {
+    setChatRecipientUserId(null);
+    setChatInitialRoomId(roomId);
     setShowChat(true);
   }, []);
 
@@ -195,6 +307,19 @@ function AppContent() {
     setActiveTab('bookings');
   }, []);
 
+  const applyChatUnread = useCallback((rooms: Array<{ unread_count?: number }>) => {
+    setChatUnread(rooms.reduce((sum, room) => sum + (room.unread_count || 0), 0));
+  }, []);
+
+  const refreshChatUnread = useCallback(async () => {
+    if (screen !== 'main' || !token) return;
+
+    const roomsRes = await api.getChatRooms();
+    if (roomsRes.success && roomsRes.data?.rooms) {
+      applyChatUnread(roomsRes.data.rooms);
+    }
+  }, [applyChatUnread, screen, token]);
+
   const refreshBadges = useCallback(async () => {
     if (screen !== 'main' || !token) return;
 
@@ -204,17 +329,88 @@ function AppContent() {
     ]);
 
     if (roomsRes.success && roomsRes.data?.rooms) {
-      setChatUnread(roomsRes.data.rooms.reduce((sum, room) => sum + (room.unread_count || 0), 0));
+      applyChatUnread(roomsRes.data.rooms);
     }
 
     if (notifRes.success && notifRes.data) {
       setNotifUnread(notifRes.data.unread_count || 0);
     }
-  }, [screen, token]);
+  }, [applyChatUnread, screen, token]);
 
   useEffect(() => {
     refreshBadges();
   }, [refreshBadges, activeTab, showChat, showNotifs]);
+
+  useEffect(() => {
+    if (screen !== 'main' || !token || !travelerPreferences.preferences.notification_preferences.push_enabled) return;
+    void pushService.initialize();
+  }, [screen, token, travelerPreferences.preferences.notification_preferences.push_enabled]);
+
+  useEffect(() => {
+    currentUserIdRef.current = currentUser?.id || null;
+  }, [currentUser?.id]);
+
+  const handleGlobalChatEvent = useCallback((payload: ChatSocketPayload) => {
+    if (payload.type === 'message') {
+      const senderId = payload.data?.sender_id || payload.sender_id;
+      if (senderId && currentUserIdRef.current && senderId === currentUserIdRef.current) {
+        return;
+      }
+
+      void refreshChatUnread();
+      return;
+    }
+  }, [refreshChatUnread]);
+
+  useEffect(() => {
+    if (screen !== 'main' || !token || showChat) return;
+
+    const socketUrl = api.getWebSocketUrl();
+    if (!socketUrl) return;
+
+    let cancelled = false;
+
+    const connect = () => {
+      if (cancelled) return;
+
+      const socket = new WebSocket(socketUrl);
+      chatSocketRef.current = socket;
+
+      socket.onmessage = (event) => {
+        try {
+          handleGlobalChatEvent(JSON.parse(event.data) as ChatSocketPayload);
+        } catch {
+          // Ignore malformed payloads.
+        }
+      };
+
+      socket.onerror = () => {
+        socket.close();
+      };
+
+      socket.onclose = () => {
+        if (chatSocketRef.current === socket) {
+          chatSocketRef.current = null;
+        }
+
+        if (!cancelled) {
+          chatReconnectTimerRef.current = setTimeout(connect, 1500);
+        }
+      };
+    };
+
+    connect();
+
+    return () => {
+      cancelled = true;
+      if (chatReconnectTimerRef.current) {
+        clearTimeout(chatReconnectTimerRef.current);
+        chatReconnectTimerRef.current = null;
+      }
+      chatSocketRef.current?.close();
+      chatSocketRef.current = null;
+    };
+  }, [handleGlobalChatEvent, screen, showChat, token]);
 
   // Deep Linking handler
   const handleDeepLinkRoute = useCallback(async (route: DeepLinkRoute) => {
@@ -228,6 +424,7 @@ function AppContent() {
         setActiveTab('bookings');
         break;
       case 'chat':
+        setChatRecipientUserId(null);
         setShowChat(true);
         break;
       case 'profile':
@@ -329,7 +526,11 @@ function AppContent() {
     return (
       <>
         <StatusBar barStyle="light-content" backgroundColor={Colors.background} />
-        <PaymentScreen booking={paymentBooking} onBack={handleClosePayment} />
+        <PaymentScreen
+          booking={paymentBooking}
+          onBack={handleClosePayment}
+          currency={travelerPreferences.preferences.currency}
+        />
       </>
     );
   }
@@ -342,6 +543,7 @@ function AppContent() {
           experience={selectedExperience}
           onBack={() => setSelectedExperience(null)}
           onBookingCreated={handleBookingCreated}
+          currency={travelerPreferences.preferences.currency}
         />
       </>
     );
@@ -352,10 +554,14 @@ function AppContent() {
     return (
       <>
         <StatusBar barStyle="light-content" backgroundColor={Colors.background} />
-        <ChatScreen />
+        <ChatScreen recipientUserId={chatRecipientUserId} initialRoomId={chatInitialRoomId} />
         <TouchableOpacity
           style={styles.chatBackBtn}
-          onPress={() => setShowChat(false)}
+          onPress={() => {
+            setShowChat(false);
+            setChatRecipientUserId(null);
+            setChatInitialRoomId(null);
+          }}
         >
           <Text style={styles.chatBackText}>← {t('common.back')}</Text>
         </TouchableOpacity>
@@ -381,6 +587,8 @@ function AppContent() {
         <SettingsScreen
           onBack={() => setShowSettings(false)}
           onLogout={handleLogout}
+          preferences={travelerPreferences}
+          onPreferencesUpdated={applyTravelerPreferences}
         />
       </>
     );
@@ -399,7 +607,7 @@ function AppContent() {
           }}
           onOpenSettings={() => { setShowProfile(false); setShowSettings(true); }}
           onOpenBookings={() => { setShowProfile(false); setActiveTab('bookings'); }}
-          onOpenChat={() => { setShowProfile(false); setShowChat(true); }}
+          onOpenChat={() => { setShowProfile(false); handleOpenChat(); }}
           onLogout={handleLogout}
         />
         <TouchableOpacity
@@ -426,38 +634,51 @@ function AppContent() {
             onSelectExperience={handleOpenExperience}
             onSelectGuide={handleOpenGuide}
             userName={currentUser?.full_name}
+            currency={travelerPreferences.preferences.currency}
           />
         )}
-        {activeTab === 'social' && <SocialScreen />}
+        {activeTab === 'social' && (
+          <SocialScreen
+            onOpenChatWithUser={handleOpenChatWithUser}
+            onOpenChatRoom={handleOpenChatRoom}
+          />
+        )}
         {activeTab === 'ai' && <AIGuideScreen />}
         {activeTab === 'bookings' && (
-          <BookingScreen onOpenPayment={setPaymentBooking} />
+          <BookingScreen
+            onOpenPayment={setPaymentBooking}
+            currency={travelerPreferences.preferences.currency}
+          />
         )}
-        {activeTab === 'more' && <MoreScreen />}
+        {activeTab === 'more' && <MoreScreen currency={travelerPreferences.preferences.currency} />}
       </View>
 
       {/* Floating Buttons */}
-      <TouchableOpacity style={styles.floatingProfile} onPress={() => setShowProfile(true)}>
-        <Text style={styles.floatingNotifIcon}>👤</Text>
-      </TouchableOpacity>
+      {showFloatingShortcuts ? (
+        <>
+          <TouchableOpacity style={styles.floatingProfile} onPress={() => setShowProfile(true)}>
+            <Text style={styles.floatingNotifIcon}>👤</Text>
+          </TouchableOpacity>
 
-      <TouchableOpacity style={styles.floatingNotif} onPress={() => setShowNotifs(true)}>
-        <Text style={styles.floatingNotifIcon}>🔔</Text>
-        {notifUnread > 0 ? (
-          <View style={styles.floatingChatBadge}>
-            <Text style={styles.floatingChatBadgeText}>{notifUnread}</Text>
-          </View>
-        ) : null}
-      </TouchableOpacity>
+          <TouchableOpacity style={styles.floatingNotif} onPress={() => setShowNotifs(true)}>
+            <Text style={styles.floatingNotifIcon}>🔔</Text>
+            {notifUnread > 0 ? (
+              <View style={styles.floatingChatBadge}>
+                <Text style={styles.floatingChatBadgeText}>{notifUnread}</Text>
+              </View>
+            ) : null}
+          </TouchableOpacity>
 
-      <TouchableOpacity style={styles.floatingChat} onPress={handleOpenChat}>
-        <Text style={styles.floatingChatIcon}>💬</Text>
-        {chatUnread > 0 ? (
-          <View style={styles.floatingChatBadge}>
-            <Text style={styles.floatingChatBadgeText}>{chatUnread}</Text>
-          </View>
-        ) : null}
-      </TouchableOpacity>
+          <TouchableOpacity style={styles.floatingChat} onPress={handleOpenChat}>
+            <Text style={styles.floatingChatIcon}>💬</Text>
+            {chatUnread > 0 ? (
+              <View style={styles.floatingChatBadge}>
+                <Text style={styles.floatingChatBadgeText}>{chatUnread}</Text>
+              </View>
+            ) : null}
+          </TouchableOpacity>
+        </>
+      ) : null}
 
       {/* Bottom Tab Bar */}
       <View style={styles.tabBar}>

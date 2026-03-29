@@ -3,7 +3,8 @@
 // No external packages needed!
 // ============================================
 
-import React, { createContext, useContext, useState, useCallback, useMemo } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, useMemo } from 'react';
+import * as SecureStore from 'expo-secure-store';
 import translations, { SupportedLocale, DEFAULT_LOCALE, SUPPORTED_LOCALES } from '@/i18n';
 
 // ---- Types ----
@@ -22,6 +23,35 @@ type I18nContextType = {
 
 // ---- Context ----
 const I18nContext = createContext<I18nContextType | null>(null);
+const LOCALE_STORAGE_KEY = 'ht_locale';
+
+function canUseWebStorage() {
+  return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
+}
+
+async function readStoredLocale(): Promise<SupportedLocale | null> {
+  try {
+    const raw = canUseWebStorage()
+      ? window.localStorage.getItem(LOCALE_STORAGE_KEY)
+      : await SecureStore.getItemAsync(LOCALE_STORAGE_KEY);
+    if (!raw) return null;
+    return SUPPORTED_LOCALES.some((item) => item.code === raw) ? (raw as SupportedLocale) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function persistLocale(locale: SupportedLocale) {
+  try {
+    if (canUseWebStorage()) {
+      window.localStorage.setItem(LOCALE_STORAGE_KEY, locale);
+      return;
+    }
+    await SecureStore.setItemAsync(LOCALE_STORAGE_KEY, locale);
+  } catch {
+    // Keep locale in memory even if persistence fails.
+  }
+}
 
 // ---- Helper: get nested value ----
 function getNestedValue(obj: any, path: string): string | undefined {
@@ -41,6 +71,24 @@ function interpolate(text: string, params?: Record<string, string | number>): st
 export function I18nProvider({ children }: { children: React.ReactNode }) {
   const [locale, setLocale] = useState<SupportedLocale>(DEFAULT_LOCALE);
 
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const stored = await readStoredLocale();
+      if (!cancelled && stored) {
+        setLocale(stored);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const setLocaleAndPersist = useCallback((nextLocale: SupportedLocale) => {
+    setLocale(nextLocale);
+    void persistLocale(nextLocale);
+  }, []);
+
   const t = useCallback(
     (key: string, params?: Record<string, string | number>): string => {
       const value = getNestedValue(translations[locale], key);
@@ -57,8 +105,8 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
   );
 
   const value = useMemo(
-    () => ({ locale, setLocale, t, supportedLocales: SUPPORTED_LOCALES }),
-    [locale, t],
+    () => ({ locale, setLocale: setLocaleAndPersist, t, supportedLocales: SUPPORTED_LOCALES }),
+    [locale, setLocaleAndPersist, t],
   );
 
   return React.createElement(I18nContext.Provider, { value }, children);
