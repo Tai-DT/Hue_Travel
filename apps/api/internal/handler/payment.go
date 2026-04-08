@@ -33,6 +33,11 @@ func NewPaymentHandler(vnpay *service.VNPayService, bookingRepo *repository.Book
 
 // CreatePayment — tạo link thanh toán VNPay
 func (h *PaymentHandler) CreatePayment(c *gin.Context) {
+	if h.bookingRepo == nil || h.userRepo == nil {
+		response.ServiceUnavailable(c, "HT-SYS-001", "Dịch vụ đang khởi động hoặc mất kết nối cơ sở dữ liệu")
+		return
+	}
+
 	var req struct {
 		BookingID string `json:"booking_id" binding:"required"`
 		BankCode  string `json:"bank_code"` // optional: VNPAYQR, VNBANK, INTCARD
@@ -119,6 +124,11 @@ func (h *PaymentHandler) CreatePayment(c *gin.Context) {
 
 // PaymentCallback — VNPay gọi sau khi thanh toán
 func (h *PaymentHandler) PaymentCallback(c *gin.Context) {
+	if h.bookingRepo == nil || h.userRepo == nil {
+		response.ServiceUnavailable(c, "HT-SYS-001", "Dịch vụ đang khởi động hoặc mất kết nối cơ sở dữ liệu")
+		return
+	}
+
 	// VNPay sends params via GET
 	isValid, callback := h.vnpayService.VerifyCallback(c.Request.URL.Query())
 
