@@ -263,9 +263,7 @@ func (c *Container) initHandlers() {
 	if c.ChatRepo != nil {
 		c.ChatH = handler.NewChatHandler(c.ChatRepo)
 	}
-	if c.BookingRepo != nil && c.UserRepo != nil {
-		c.PaymentH = handler.NewPaymentHandler(c.VNPaySvc, c.BookingRepo, c.UserRepo)
-	}
+	c.PaymentH = handler.NewPaymentHandler(c.VNPaySvc, c.BookingRepo, c.UserRepo)
 	if c.UserRepo != nil && c.ExpRepo != nil && c.BookingRepo != nil {
 		c.AdminMgmtH = handler.NewAdminManagementHandler(c.UserRepo, c.ExpRepo, c.BookingRepo, c.ReviewRepo, c.StoryRepo)
 	}
