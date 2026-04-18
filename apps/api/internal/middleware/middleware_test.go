@@ -14,6 +14,34 @@ func init() {
 	gin.SetMode(gin.TestMode)
 }
 
+func TestCORS_IsOriginAllowed(t *testing.T) {
+	allowedOrigins := []string{"http://localhost:3000", "http://localhost:8080"}
+
+	// Valid exact match
+	if !isOriginAllowed("http://localhost:3000", allowedOrigins) {
+		t.Errorf("expected http://localhost:3000 to be allowed")
+	}
+
+	// Valid loopback/localhost parsing
+	if !isOriginAllowed("http://localhost:19006", allowedOrigins) {
+		t.Errorf("expected http://localhost:19006 to be allowed")
+	}
+	if !isOriginAllowed("http://127.0.0.1:8081", allowedOrigins) {
+		t.Errorf("expected http://127.0.0.1:8081 to be allowed")
+	}
+
+	// Invalid origins attempting to bypass loopback check
+	if isOriginAllowed("http://localhost.attacker.com", allowedOrigins) {
+		t.Errorf("expected http://localhost.attacker.com to be blocked")
+	}
+	if isOriginAllowed("http://127.0.0.1.attacker.com", allowedOrigins) {
+		t.Errorf("expected http://127.0.0.1.attacker.com to be blocked")
+	}
+	if isOriginAllowed("https://attacker.com", allowedOrigins) {
+		t.Errorf("expected https://attacker.com to be blocked")
+	}
+}
+
 func TestAPIVersion_SetsHeader(t *testing.T) {
 	router := gin.New()
 	router.Use(APIVersion("1.0.0"))
