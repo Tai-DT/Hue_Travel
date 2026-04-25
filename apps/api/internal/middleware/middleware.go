@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -63,7 +64,7 @@ func isOriginAllowed(origin string, allowedOrigins []string) bool {
 	}
 
 	// In development, allow any localhost / loopback origin to avoid port friction.
-	if strings.HasPrefix(origin, "http://localhost:") || strings.HasPrefix(origin, "http://127.0.0.1:") {
+	if u, err := url.Parse(origin); err == nil && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1") {
 		return true
 	}
 
@@ -458,7 +459,9 @@ func APIVersion(version string) gin.HandlerFunc {
 // Security Headers Middleware
 // ============================================
 
-func SecurityHeaders() gin.HandlerFunc {
+func SecurityHeaders(env string) gin.HandlerFunc {
+	isProd := env == "production"
+
 	return func(c *gin.Context) {
 		// Prevent XSS attacks
 		c.Header("X-Content-Type-Options", "nosniff")
@@ -466,7 +469,7 @@ func SecurityHeaders() gin.HandlerFunc {
 		c.Header("X-XSS-Protection", "1; mode=block")
 
 		// HSTS — Force HTTPS in production
-		if os.Getenv("APP_ENV") == "production" {
+		if isProd {
 			c.Header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		}
 
