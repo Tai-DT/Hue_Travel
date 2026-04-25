@@ -24,7 +24,7 @@ func SetupRouter(c *Container) (*gin.Engine, *ws.Hub) {
 	r.Use(middleware.RequestID())
 	r.Use(middleware.Logger())
 	r.Use(middleware.CORS())
-	r.Use(middleware.SecurityHeaders())
+	r.Use(middleware.SecurityHeaders(c.Config.App.Env))
 	r.Use(middleware.APIVersion(APIVersion))
 	r.Use(middleware.RateLimit(100, time.Minute))
 	r.Use(middleware.MaxBodySize(10 * 1024 * 1024)) // 10MB max
