@@ -86,37 +86,59 @@ func (r *ChatRepository) GetOrCreateDirectRoom(ctx context.Context, userA, userB
 	// Check if room already exists between these two users
 	var room *ChatRoom
 	existing := &ChatRoom{}
+	var pID *uuid.UUID
+	var pFullName *string
+	var pAvatarURL *string
+	var pRole *string
+
 	err := r.pool.QueryRow(ctx, `
-		SELECT id, booking_id, participants, room_type, last_message, last_message_at, created_at, updated_at
-		FROM chat_rooms
-		WHERE room_type = 'direct'
-			AND $1::uuid = ANY(participants)
-			AND $2::uuid = ANY(participants)
+		SELECT cr.id, cr.booking_id, cr.participants, cr.room_type, cr.last_message, cr.last_message_at, cr.created_at, cr.updated_at,
+			   p.id, p.full_name, p.avatar_url, p.role
+		FROM chat_rooms cr
+		LEFT JOIN LATERAL (
+			SELECT id, full_name, avatar_url, role
+			FROM users
+			WHERE id = ANY(cr.participants) AND id != $1
+			LIMIT 1
+		) p ON true
+		WHERE cr.room_type = 'direct'
+			AND $1::uuid = ANY(cr.participants)
+			AND $2::uuid = ANY(cr.participants)
 		LIMIT 1`, userA, userB,
 	).Scan(
 		&existing.ID, &existing.BookingID, &existing.Participants, &existing.RoomType,
 		&existing.LastMessage, &existing.LastMessageAt, &existing.CreatedAt, &existing.UpdatedAt,
+		&pID, &pFullName, &pAvatarURL, &pRole,
 	)
 
 	if err == pgx.ErrNoRows {
 		room, err = r.CreateRoom(ctx, "direct", []uuid.UUID{userA, userB}, nil)
+		if err == nil {
+			for _, pid := range room.Participants {
+				if pid != userA {
+					var p ChatParticipant
+					if err := r.pool.QueryRow(ctx,
+						`SELECT id, full_name, avatar_url, role FROM users WHERE id = $1`, pid,
+					).Scan(&p.ID, &p.FullName, &p.AvatarURL, &p.Role); err == nil {
+						room.OtherParticipant = &p
+					}
+					break
+				}
+			}
+		}
 	} else if err == nil {
 		room = existing
+		if pID != nil && pFullName != nil && pRole != nil {
+			room.OtherParticipant = &ChatParticipant{
+				ID:        *pID,
+				FullName:  *pFullName,
+				AvatarURL: pAvatarURL,
+				Role:      *pRole,
+			}
+		}
 	}
 	if err != nil {
 		return nil, err
-	}
-
-	for _, pid := range room.Participants {
-		if pid != userA {
-			var p ChatParticipant
-			if err := r.pool.QueryRow(ctx,
-				`SELECT id, full_name, avatar_url, role FROM users WHERE id = $1`, pid,
-			).Scan(&p.ID, &p.FullName, &p.AvatarURL, &p.Role); err == nil {
-				room.OtherParticipant = &p
-			}
-			break
-		}
 	}
 
 	return room, nil

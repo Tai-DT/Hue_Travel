@@ -19,11 +19,32 @@ export type DashboardStats = {
   pending_bookings: number;
 };
 
+export interface RevenueChartData {
+  date: string;
+  revenue: number;
+}
+
+export interface TopExperience {
+  id: string;
+  title: string;
+  total_bookings: number;
+  revenue: number;
+}
+
+export interface DashboardBooking {
+  id: string;
+  experience_title: string;
+  booking_date: string;
+  total_price: number;
+  status: string;
+  user_name?: string;
+}
+
 export type DashboardOverview = {
   stats: DashboardStats;
-  revenue_chart: any[];
-  top_experiences: any[];
-  recent_bookings: any[];
+  revenue_chart: RevenueChartData[];
+  top_experiences: TopExperience[];
+  recent_bookings: DashboardBooking[];
   generated_at?: string;
 };
 
