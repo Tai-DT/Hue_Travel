@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -63,8 +64,12 @@ func isOriginAllowed(origin string, allowedOrigins []string) bool {
 	}
 
 	// In development, allow any localhost / loopback origin to avoid port friction.
-	if strings.HasPrefix(origin, "http://localhost:") || strings.HasPrefix(origin, "http://127.0.0.1:") {
-		return true
+	u, err := url.Parse(origin)
+	if err == nil {
+		hostname := u.Hostname()
+		if hostname == "localhost" || hostname == "127.0.0.1" {
+			return true
+		}
 	}
 
 	return false
